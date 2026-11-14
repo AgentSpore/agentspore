@@ -16,6 +16,8 @@ from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 from sqlalchemy import text
 from test_marketplace_tasks import marketplace_pg as marketplace_pg
+from test_welcome_reward_decisions import OTHER_KEY as OTHER_BENEFICIARY
+from test_welcome_reward_decisions import OWNER_KEY
 from test_welcome_reward_decisions import review as _review
 from test_welcome_rewards import ledger as _ledger
 
@@ -410,11 +412,12 @@ async def test_older_blocked_grant_does_not_starve_a_payable_one(linker, chain):
                 "INSERT INTO reward_eligibility_decisions(grant_id,owner_user_id,source_event,"
                 "policy_version,outcome,beneficiary_key,authority_ref,evidence_ref,expires_at,"
                 "email_proof_at) SELECT g.id,g.owner_user_id,g.source_event,'welcome-v1','allow',"
-                "'github:1002','op','second',clock_timestamp()+interval '1 hour',u.email_proof_at "
+                "CAST(:key AS text),'op','second',clock_timestamp()+interval '1 hour',"
+                "u.email_proof_at "
                 "FROM welcome_reward_grants g JOIN users u ON u.id=g.owner_user_id "
                 "WHERE g.owner_user_id=:o"
             ),
-            {"o": ledger.other},
+            {"o": ledger.other, "key": OTHER_BENEFICIARY},
         )
     candidates = await linker.service.candidates(10)
     assert [c["owner_user_id"] for c in candidates] == [ledger.owner, ledger.other]
@@ -624,3 +627,72 @@ async def test_get_multiple_accounts_params_pin_finalized_json_parsed(flag_on, c
         [GOOD_WALLET, GOOD_ATA],
         {"encoding": "jsonParsed", "commitment": "finalized"},
     ]
+
+
+async def allow_other(linker, key):
+    """Record an allow for the second account; its proof and grant come from the fixture."""
+    ledger = linker.ledger
+    async with ledger.maker.begin() as db:
+        grant_id, proof_at = (
+            await db.execute(
+                text(
+                    "SELECT g.id, u.email_proof_at FROM welcome_reward_grants g "
+                    "JOIN users u ON u.id=g.owner_user_id WHERE u.id=:o"
+                ),
+                {"o": ledger.other},
+            )
+        ).one()
+        await db.execute(
+            text("UPDATE users SET solana_wallet=:w WHERE id=:o"),
+            {"w": OTHER_WALLET, "o": ledger.other},
+        )
+        decision = linker.intent.model_copy(
+            update={
+                "grant_id": grant_id,
+                "owner_user_id": ledger.other,
+                "source_event": ledger.other,
+                "beneficiary_key": key,
+                "evidence_ref": "second-review",
+                "email_proof_at": proof_at,
+            }
+        )
+        return await WelcomeRewardDecisionService(WelcomeRewardRepository(db)).record(decision)
+
+
+async def test_same_normalized_email_cannot_be_paid_twice(linker):
+    ledger = linker.ledger
+    async with ledger.maker.begin() as db:
+        await db.execute(
+            text("UPDATE users SET email='Synthetic+promo@EXAMPLE.com' WHERE id=:o"),
+            {"o": ledger.other},
+        )
+        await db.execute(
+            text(
+                "UPDATE users SET email_proof_email=email, email_proof_source='email_code', "
+                "email_proof_at=clock_timestamp() - interval '1 minute' WHERE id=:o"
+            ),
+            {"o": ledger.other},
+        )
+    assert (await linker.service.link(10, apply=True))["linked"] == 1
+    await allow_other(linker, OWNER_KEY)
+    outcome, _ = await linker.service.link_one(ledger.other, apply=True)
+    assert outcome == "not_available"
+    assert await intents(ledger.maker) == 1
+
+
+async def test_same_wallet_cannot_be_paid_to_two_accounts(linker):
+    ledger = linker.ledger
+    assert (await linker.service.link(10, apply=True))["linked"] == 1
+    async with ledger.maker.begin() as db:
+        await db.execute(
+            text("UPDATE users SET solana_wallet=NULL WHERE id=:o"), {"o": ledger.owner}
+        )
+    await allow_other(linker, OTHER_BENEFICIARY)
+    async with ledger.maker.begin() as db:
+        await db.execute(
+            text("UPDATE users SET solana_wallet=:w WHERE id=:o"), {"w": WALLET, "o": ledger.other}
+        )
+    outcome, _ = await linker.service.link_one(ledger.other, apply=True)
+    assert outcome == "wallet_already_rewarded"
+    assert await intents(ledger.maker) == 1
+    assert (await linker.service.link(10, apply=True))["linked"] == 0

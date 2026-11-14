@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import text
 from test_marketplace_tasks import marketplace_pg as marketplace_pg
+from test_welcome_reward_decisions import OWNER_KEY
 from test_welcome_reward_decisions import review as _review
 from test_welcome_rewards import ledger as _ledger
 
@@ -79,7 +80,7 @@ async def test_dry_run_writes_nothing(review):
     "mutation",
     [
         "UPDATE users SET email_proof_at=NULL",
-        "UPDATE users SET email_proof_email='other@example.com'",
+        "UPDATE users SET email_proof_email='stale@example.com'",
         "UPDATE users SET oauth_provider='google'",
         "UPDATE users SET oauth_account_created_at=NULL",
         "UPDATE users SET oauth_account_created_at=clock_timestamp() - interval '2 days'",
@@ -93,6 +94,19 @@ async def test_failed_rule_leaves_application_untouched(review, mutation):
     code, out = await invoke(ledger.maker)
     assert (code, out["approved"], out["left"]) == (0, 0, 2)
     assert await decisions(ledger.maker) == 0
+
+
+async def test_user_without_github_uses_platform_account_age(review):
+    ledger, _ = review
+    async with ledger.maker.begin() as db:
+        await db.execute(
+            text(
+                "UPDATE users SET oauth_provider='google', oauth_account_created_at=NULL, "
+                "created_at=clock_timestamp() - interval '30 days'"
+            )
+        )
+    code, out = await invoke(ledger.maker)
+    assert (code, out["approved"], out["left"]) == (0, 2, 0)
 
 
 async def test_account_age_threshold_comes_from_configuration(review):
@@ -139,7 +153,7 @@ async def test_beneficiary_already_approved_is_left(review):
                 "g": other_grant,
                 "o": ledger.other,
                 "outcome": "allow",
-                "key": "github:1001",
+                "key": OWNER_KEY,
                 "ref": "manual-allow",
             },
         )
