@@ -4,12 +4,13 @@ import { WalletBind } from '@/components/welcome/WalletBind';
 import { localeTag } from '@/lib/i18n/locale';
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { welcomeRewardMessages } from '@/lib/i18n/welcomeReward';
-import type { WelcomeProgress } from '@/lib/welcome-progress';
+import type { HoldReason, WelcomeProgress } from '@/lib/welcome-progress';
 import type { WelcomeRewardStatus } from '@/lib/welcome-reward';
 import { WelcomeApplication } from './WelcomeApplication';
 import { WelcomeEmailProof } from './WelcomeEmailProof';
+import { WELCOME_FOCUS } from '@/components/welcome/focus';
 
-const BUTTON_LINK = 'inline-flex min-h-11 items-center rounded-lg border border-neutral-600 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800';
+const BUTTON_LINK = `inline-flex min-h-11 items-center rounded-lg border border-neutral-600 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800 ${WELCOME_FOCUS}`;
 interface Props { progress: WelcomeProgress; token: string; hasPassword?: boolean; onApplied: (value: WelcomeRewardStatus) => void; onChanged: (kind: 'confirmed' | 'walletSaved') => void }
 
 function Steps({ progress }: { progress: WelcomeProgress }) {
@@ -36,6 +37,11 @@ function Payout({ payout }: { payout: NonNullable<WelcomeProgress['payout']> }) 
   </div>;
 }
 
+/** With a disposable email held, the wallet comes second: the line says so. */
+function holdKey(progress: WelcomeProgress, hold: HoldReason) {
+  return hold === 'wallet_missing' && progress.holds.includes('disposable_email') ? 'hold_wallet_after_email' : `hold_${hold}` as const;
+}
+
 function Holds({ progress }: { progress: WelcomeProgress }) {
   const tr = useTranslations(welcomeRewardMessages);
   const { locale } = useLocale();
@@ -44,7 +50,7 @@ function Holds({ progress }: { progress: WelcomeProgress }) {
   return <div className="space-y-2">
     <h3 className="text-sm font-medium text-white">{tr('holdsTitle')}</h3>
     <ul className="list-disc space-y-1 pl-5 text-sm text-neutral-200">
-      {progress.holds.map(hold => <li key={hold}>{tr(`hold_${hold}`)}{hold === 'github_too_new' && date && <> {tr('waitUntil', { date })}</>}</li>)}
+      {progress.holds.map(hold => <li key={hold}>{tr(holdKey(progress, hold))}{hold === 'github_too_new' && date && <> {tr('waitUntil', { date })}</>}</li>)}
     </ul>
   </div>;
 }

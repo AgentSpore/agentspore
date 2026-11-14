@@ -4,24 +4,19 @@ import { FetchError } from '@/components/FetchError';
 import { SkeletonText } from '@/components/Skeleton';
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { welcomeRewardMessages } from '@/lib/i18n/welcomeReward';
-import { formatRewardAmount, type WelcomeRewardStatus } from '@/lib/welcome-reward';
+import { formatRewardAmount, rewardBadgeKey, showsRewardReason, type WelcomeRewardStatus } from '@/lib/welcome-reward';
 import type { ProfileRead } from './useProfileRead';
 import { WelcomeApplication } from './WelcomeApplication';
 import { WelcomeEmailProof } from './WelcomeEmailProof';
 import { WelcomeStepper } from './WelcomeStepper';
 
-const STATE_LABELS = {
-  disabled: 'disabled', not_applied: 'state_not_applied', application: 'application',
-  frozen: 'frozen', available: 'state_available', denied: 'state_denied',
-} as const;
-
 function RewardDetails({ data }: { data: WelcomeRewardStatus }) {
   const tr = useTranslations(welcomeRewardMessages);
   const { locale } = useLocale();
   return <>
-    <span className="inline-flex rounded-full border border-neutral-700 px-2.5 py-1 text-xs font-medium text-neutral-200">{tr(STATE_LABELS[data.state])}</span>
+    <span className="inline-flex rounded-full border border-neutral-700 px-2.5 py-1 text-xs font-medium text-neutral-200">{tr(rewardBadgeKey(data))}</span>
     {data.amount_raw !== null && <p className="break-words text-2xl font-semibold tabular-nums text-white">{formatRewardAmount(data.amount_raw, locale)} <span className="text-base text-neutral-300">ASPORE</span></p>}
-    {!data.progress?.payout && <p className="text-sm leading-relaxed text-neutral-300">{tr(data.reason)}</p>}
+    {showsRewardReason(data) && <p className="text-sm leading-relaxed text-neutral-300">{tr(data.reason)}</p>}
     {data.state === 'application' && <p className="text-xs leading-relaxed text-neutral-400">{tr('conditional')}</p>}
     {data.amount_raw !== null && !data.progress?.payout && <p className="text-xs leading-relaxed text-neutral-400">{tr('separate')}</p>}
   </>;

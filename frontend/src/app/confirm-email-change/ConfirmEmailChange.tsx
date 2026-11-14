@@ -12,7 +12,8 @@ export function ConfirmEmailChange() {
   const tr = useTranslations(emailChangeMessages);
   const { outcome, retry } = useEmailChangeConfirm();
   const busy = outcome === 'reading' || outcome === 'working';
-  return <main id="main-content" tabIndex={-1} className="mx-auto flex min-h-screen w-full max-w-md items-center px-4 py-10">
+  return <div className="min-h-screen bg-[#0a0a0a] text-white">
+    <main id="main-content" tabIndex={-1} className="mx-auto flex min-h-screen w-full max-w-md items-center px-4 py-10">
     <section aria-labelledby="confirm-email-title" aria-busy={busy} className="w-full min-w-0 space-y-4 rounded-xl border border-neutral-800/50 bg-neutral-900/30 p-5 sm:p-6">
       <h1 id="confirm-email-title" className="text-lg font-semibold text-white">{tr('pageTitle')}</h1>
       <p role={FAILED.includes(outcome) ? 'alert' : 'status'} className="break-words text-sm leading-relaxed text-neutral-200">
@@ -23,5 +24,6 @@ export function ConfirmEmailChange() {
       {(outcome === 'done' || outcome === 'approved' || outcome === 'invalid' || outcome === 'pending') &&
         <Link href="/profile" className={LINK}>{tr('toProfile')}</Link>}
     </section>
-  </main>;
+    </main>
+  </div>;
 }

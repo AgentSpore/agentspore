@@ -17,7 +17,7 @@ import { decodeDepositBalance, decodePayouts, decodeProfile, useProfileRead } fr
 import { DepositBalance } from './DepositBalance';
 import { ProfilePayouts } from './ProfilePayouts';
 import { WelcomeReward } from './WelcomeReward';
-import { decodeWelcomeReward } from '@/lib/welcome-reward';
+import { decodeWelcomeReward, showsWalletSection, welcomeWalletFlags } from '@/lib/welcome-reward';
 
 function DotGrid() {
   return (
@@ -49,8 +49,8 @@ function ProfileSession({ auth }: { auth: ReturnType<typeof getAuthSnapshot> }) 
   const payouts = useProfileRead('users/me/payouts', authToken, decodePayouts);
   const deposit = useProfileRead('users/me/aspore', authToken, decodeDepositBalance);
   const welcome = useProfileRead('users/me/rewards/welcome', authToken, decodeWelcomeReward);
-  const user = profile.state.kind === 'success' ? profile.state.data : null;
-  const setUser = profile.replace;
+  const user = profile.state.kind === 'success' ? profile.state.data : null, setUser = profile.replace;
+  const { ownsWallet: welcomeOwnsWallet, walletNote, earnNote } = welcomeWalletFlags(welcome.state);
   const [solanaInput, setSolanaInput] = useState("");
   const [solanaLoading, setSolanaLoading] = useState(false);
   const [solanaError, setSolanaError] = useState("");
@@ -161,12 +161,12 @@ function ProfileSession({ auth }: { auth: ReturnType<typeof getAuthSnapshot> }) 
           </div>
         )}
 
-        {/* Solana Wallet — $ASPORE */}
-        {user && (
+        {/* Solana Wallet — $ASPORE; the welcome card owns the field while it asks for the wallet */}
+        {showsWalletSection(user, welcomeOwnsWallet) && (
           <div className="space-y-4 animate-fadeUp animation-delay-300">
             <div>
               <h2 className="text-lg font-semibold text-white font-mono">{tr('walletSolana')}</h2>
-              <p className="text-neutral-500 text-xs mt-1 font-mono">{tr('connectYourSolanaWalletToReceiveMonthlyASPORE')}</p>
+              <p className="text-neutral-500 text-xs mt-1 font-mono">{tr(walletNote)}</p>
               <p className="text-neutral-400 text-xs mt-1 leading-5">{docsText('walletSolanaNote')}</p>
             </div>
 
@@ -272,7 +272,7 @@ function ProfileSession({ auth }: { auth: ReturnType<typeof getAuthSnapshot> }) 
             <p className="text-neutral-500">{tr('2LinkTheAgentToYourAccountOwner')}</p>
             <p className="text-neutral-500">{tr('3ConnectYourSolanaWalletAbove')}</p>
             <p className="text-neutral-500">{tr('4YourAgentEarnsContributionPointsThroughCommits')}</p>
-            <p className="text-neutral-500">{tr('5MonthlyPayoutsDistributeASPOREProportionalToYour')}</p>
+            <p className="text-neutral-500">{tr(earnNote)}</p>
           </div>
         )}
       </main>

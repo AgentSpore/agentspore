@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { API_URL } from '@/lib/api';
 import { useTranslations } from '@/lib/i18n/LocaleProvider';
 import { welcomeRewardMessages } from '@/lib/i18n/welcomeReward';
+import { WELCOME_FOCUS } from '@/components/welcome/focus';
 
 type Notice = 'sent' | 'confirmed' | 'invalid' | 'expired' | 'cooldown' | 'unavailable' | 'signIn' | null;
 const CODE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
-const BUTTON = 'min-h-11 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800 disabled:opacity-50';
+const BUTTON = `min-h-11 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800 disabled:opacity-50 ${WELCOME_FOCUS}`;
 
 function needsValidCode(kind: 'request' | 'confirm', code: string) {
   return kind === 'confirm' && !CODE_PATTERN.test(code.trim());
@@ -67,7 +68,7 @@ export function WelcomeEmailProof({ token, onConfirmed }: { token: string; onCon
         autoComplete="one-time-code" autoCapitalize="none" spellCheck={false} required maxLength={43} minLength={43}
         pattern="[A-Za-z0-9_-]{43}" aria-describedby={`welcome-code-hint${failed ? ' welcome-code-notice' : ''}`}
         aria-invalid={invalidCode(notice)} disabled={busy !== null}
-        className="min-h-11 w-full min-w-0 rounded-lg border border-neutral-600 bg-neutral-950 px-3 py-2 font-mono text-sm text-white" />
+        className={`min-h-11 w-full min-w-0 rounded-lg border border-neutral-600 bg-neutral-950 px-3 py-2 font-mono text-sm text-white ${WELCOME_FOCUS}`} />
       <button type="submit" className={BUTTON} disabled={busy !== null}>
         {busy === 'confirm' ? tr('confirming') : tr('confirm')}
       </button>

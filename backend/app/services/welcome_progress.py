@@ -109,7 +109,7 @@ def progress(view: WelcomeRewardView, facts: WelcomeFacts, now: datetime) -> Wel
     """Return `view` extended with progress; the original fields are untouched."""
     user = facts.user
     if view.state in ("disabled", "denied") or view.reason == "not_eligible":
-        return view.model_copy(update={"steps": steps(facts, None)})
+        return view.model_copy(update={"steps": steps(facts, None, "none")})
     payout = payout_view(facts.payout_row)
     holds = [] if payout else hold_reasons(user, now, facts.wallet_taken)
     step = next_step(view, holds, payout, facts.decided)
@@ -118,7 +118,7 @@ def progress(view: WelcomeRewardView, facts: WelcomeFacts, now: datetime) -> Wel
         wait = user.oauth_account_created_at + WelcomeBeneficiaryService.MIN_ACCOUNT_AGE
     return view.model_copy(
         update={
-            "steps": steps(facts, payout),
+            "steps": steps(facts, payout, step),
             "hold_reasons": holds,
             "payout": payout,
             "wait_until": wait,
@@ -128,11 +128,14 @@ def progress(view: WelcomeRewardView, facts: WelcomeFacts, now: datetime) -> Wel
     )
 
 
-def steps(facts: WelcomeFacts, payout: WelcomePayout | None) -> list[WelcomeStep]:
-    """The five-step path with each step's completion."""
+def steps(facts: WelcomeFacts, payout: WelcomePayout | None, next_action: str) -> list[WelcomeStep]:
+    """The five-step path; an email proof the owner must replace is not a finished step."""
     user = facts.user
     return [
-        WelcomeStep(id="email", done=EmailProofService.has_current_proof(user)),
+        WelcomeStep(
+            id="email",
+            done=EmailProofService.has_current_proof(user) and next_action != "change_email",
+        ),
         WelcomeStep(id="wallet", done=bool(user.solana_wallet) and not facts.wallet_taken),
         WelcomeStep(id="application", done=facts.grant is not None),
         WelcomeStep(id="review", done=facts.decided),
