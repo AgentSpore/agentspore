@@ -15,3 +15,8 @@ it('allows only public UUID claim routes and consumes continuation once within t
   vi.useFakeTimers(); rememberClaimReturn(path); vi.advanceTimersByTime(600001); expect(consumeClaimReturn()).toBeNull();
   rememberClaimReturn(path); rememberClaimReturn('/profile'); expect(consumeClaimReturn()).toBeNull();
 });
+it('also returns to the exact email-change confirmation page, nothing looser', () => {
+  const confirm = '/confirm-email-change';
+  for (const unsafe of ['//evil.test', confirm + '/x', confirm + '?next=//evil.test', confirm + '#token=x', 'https://evil.test' + confirm, '/confirm-email-changes']) expect(claimReturnPath(unsafe)).toBeNull();
+  rememberClaimReturn(confirm); expect(consumeClaimReturn()).toBe(confirm); expect(consumeClaimReturn()).toBeNull();
+});
