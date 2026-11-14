@@ -50,7 +50,7 @@ async function postConfirm(linkToken: string): Promise<EmailChangeOutcome> {
     body: JSON.stringify({ token: linkToken }),
   });
   if (response.status === 401) return 'needSignIn';
-  if (response.ok) return (await readEmailChangeStep(response, 'done')) === 'approve_old' ? 'approved' : 'done';
+  if (response.ok) return (await readEmailChangeStep(response, 'done')) === 'done' ? 'done' : 'approved';
   return FINAL[response.status] ?? 'down';
 }
 
@@ -70,11 +70,13 @@ export function useEmailChangeConfirm() {
   }, []);
 
   useEffect(() => {
-    const key = `${attempt}:${auth.accessToken}`;
+    // One request per attempt: a silent refresh swaps the token mid-flight, and the link is single-use.
+    const key = String(attempt);
     if (!link || !auth.accessToken || started.current === key) return;
     started.current = key;
     const finish = (outcome: EmailChangeOutcome) => {
       if (!mounted.current) return;
+      if (outcome === 'needSignIn') started.current = '';
       if (outcome !== 'network' && outcome !== 'needSignIn' && outcome !== 'down') stash(null);
       setResult(outcome);
     };

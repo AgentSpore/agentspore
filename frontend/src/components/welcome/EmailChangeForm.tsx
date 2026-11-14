@@ -10,6 +10,13 @@ type Notice = 'sentNew' | 'sentOld' | 'wrongPassword' | 'needsProof' | 'rewardPe
 const SENT: Notice[] = ['sentNew', 'sentOld'];
 const FIELD = 'min-h-11 w-full min-w-0 rounded-lg border border-neutral-600 bg-neutral-950 px-3 py-2 text-sm text-white';
 
+/** Exact 403 details of the backend's email change service (backend/app/services/email_change_service.py), lower-cased. */
+const FORBIDDEN: Partial<Record<string, Notice>> = {
+  'a verified account is required': 'needsProof',
+  'confirm your current email first': 'needsProof',
+  'current password is incorrect': 'wrongPassword',
+};
+
 async function detailOf(response: Response): Promise<string> {
   const body: unknown = await response.json().catch(() => null);
   const detail = typeof body === 'object' && body !== null && 'detail' in body ? body.detail : '';
@@ -19,7 +26,7 @@ async function detailOf(response: Response): Promise<string> {
 async function failureNotice(response: Response): Promise<Notice> {
   const detail = await detailOf(response);
   if (response.status === 401) return 'signIn';
-  if (response.status === 403) return detail.includes('password') ? 'wrongPassword' : detail.includes('verified') ? 'needsProof' : 'unavailable';
+  if (response.status === 403) return FORBIDDEN[detail] ?? 'unavailable';
   if (response.status === 409) return 'rewardPending';
   if (response.status === 422 && detail.includes('disposable')) return 'disposable';
   return response.status === 429 ? 'cooldown' : 'unavailable';
