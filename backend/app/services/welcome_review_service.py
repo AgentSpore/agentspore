@@ -15,6 +15,7 @@ from app.services.welcome_reward_decision_service import WelcomeRewardDecisionSe
 
 SCAN_LIMIT = 200
 AUTHORITY_REF = "operator:clean-v1"
+YOUNG_ACCOUNT = "account_too_young"
 
 
 def mask_email(email: str) -> str:
@@ -29,54 +30,68 @@ class WelcomeReviewService:
         repo: WelcomeRewardRepository,
         review_repo: WelcomeReviewRepository,
         auto_repo: WelcomeAutoDecisionRepository,
+        min_account_age_days: int = 0,
     ):
         self.repo = repo
         self.review_repo = review_repo
         self.auto_repo = auto_repo
+        self.min_account_age_days = min_account_age_days
 
     async def total(self) -> int:
-        """All applications still waiting for a decision."""
-        return await self.auto_repo.undecided_count()
+        """All applications waiting for a decision, expired allows included."""
+        return await self.review_repo.count()
 
     async def rows(
-        self, limit: int = SCAN_LIMIT, only: UUID | None = None
+        self, limit: int = SCAN_LIMIT, only: UUID | None = None, now: datetime | None = None
     ) -> list[WelcomeReviewRow]:
-        """Oldest undecided applications with holds and duplicate matches; read-only."""
+        """Oldest waiting applications with holds and duplicate matches; read-only.
+
+        The account-age rule of the automatic path counts as a hold, so clean is never weaker.
+        """
         grants = await self.review_repo.pending(limit, only)
         users = await self.review_repo.users({g["owner_user_id"] for g in grants})
         keys = {uid: WelcomeBeneficiaryService.email_key(user.email) for uid, user in users.items()}
         taken = await self.review_repo.taken_keys(set(keys.values()))
         wallets = {u.solana_wallet for u in users.values() if u.solana_wallet}
-        paid = await self.review_repo.paid_wallets(wallets)
+        paid = await self.repo.welcome_intent_wallets(wallets)
         seen = Counter(keys[g["owner_user_id"]] for g in grants)
-        now = datetime.now(UTC)
+        now = now or datetime.now(UTC)
         found = []
         for grant in grants:
             user = users[grant["owner_user_id"]]
             key = keys[user.id]
+            holds = hold_reasons(user, now, user.solana_wallet in paid)
+            if not WelcomeBeneficiaryService.old_enough(
+                user, grant["created_at"], now, self.min_account_age_days
+            ):
+                holds.append(YOUNG_ACCOUNT)
             found.append(
                 WelcomeReviewRow(
                     grant_id=grant["grant_id"],
+                    owner_user_id=grant["owner_user_id"],
+                    revision=grant["revision"],
                     age_seconds=grant["age"],
-                    holds=tuple(hold_reasons(user, now, user.solana_wallet in paid)),
-                    email_match=key in taken or seen[key] > 1,
+                    holds=tuple(holds),
+                    email_match=bool(taken.get(key, set()) - {grant["grant_id"]}) or seen[key] > 1,
                     email_masked=mask_email(user.email),
+                    expired=grant["revision"] > 0,
                 )
             )
         return found
 
     async def approve(self, grant_id: UUID) -> Literal["approved", "left"]:
-        """Re-check one application under the auto-run lock and record an allow decision."""
+        """Re-check one application under the auto-run lock; allow, superseding an expired allow."""
         await self.repo.decision_clock()
         await self.repo.limit_lock_wait()
         await self.auto_repo.lock()
-        found = await self.review_repo.pending(1, grant_id)
-        if not found or not (await self.rows(1, grant_id))[0].clean:
+        now = await self.repo.decision_clock()
+        found = await self.rows(1, grant_id, now)
+        if not found or not found[0].clean:
             return "left"
-        user, program, grant = await self.repo.context(found[0]["owner_user_id"])
+        user, program, grant = await self.repo.context(found[0].owner_user_id)
         if user is None or grant is None:
             return "left"
-        now = await self.repo.decision_clock()
+        grant = grant | {"revision": found[0].revision}
         intent = WelcomeRewardDecisionService.allow_intent(user, program, grant, AUTHORITY_REF, now)
         result = await WelcomeRewardDecisionService(self.repo).record(intent)
         return "approved" if result.verdict in {"recorded", "replayed"} else "left"

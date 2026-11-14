@@ -40,18 +40,6 @@ class WelcomePayoutLinkRepository:
         )
         return [dict(row) for row in rows.mappings()]
 
-    async def wallet_rewarded_elsewhere(self, wallet: str, grant_id: UUID) -> bool:
-        """True when another welcome grant already has a payout intent for this wallet."""
-        return bool(
-            await self.db.scalar(
-                text("""
-            SELECT EXISTS(SELECT 1 FROM payout_delivery_intents
-                          WHERE producer_namespace=:namespace AND recipient=:wallet
-                            AND allocation_id<>CAST(:grant_id AS text))"""),
-                {"namespace": NAMESPACE, "wallet": wallet, "grant_id": str(grant_id)},
-            )
-        )
-
     async def payout_facts(self, owner: UUID) -> dict | None:
         """Wallet, grant amount and program token identity for one owner."""
         row = (

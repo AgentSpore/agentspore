@@ -1,6 +1,6 @@
 """Welcome reservations share the caller's transaction and stable program lock."""
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Collection
 from contextlib import asynccontextmanager
 from datetime import datetime
 from uuid import UUID
@@ -242,17 +242,16 @@ class WelcomeRewardRepository:
         )
         return dict(row) if row else None
 
-    async def wallet_paid_to_another(self, wallet: str | None, grant_id: UUID | None) -> bool:
-        """True when a different welcome grant already has a payout intent for this wallet."""
-        if not wallet:
-            return False
-        return bool(
-            await self.db.scalar(
-                text("""
-            SELECT EXISTS(SELECT 1 FROM payout_delivery_intents
-                          WHERE producer_namespace = 'welcome' AND recipient = :wallet
-                            AND allocation_id <> :grant)
+    async def welcome_intent_wallets(
+        self, wallets: Collection[str], exclude_grant: UUID | None = None
+    ) -> set[str]:
+        """Wallets that already have a welcome payout intent, ignoring `exclude_grant`'s own."""
+        rows = await self.db.execute(
+            text("""
+            SELECT DISTINCT recipient FROM payout_delivery_intents
+            WHERE producer_namespace = 'welcome' AND recipient = ANY(CAST(:wallets AS text[]))
+              AND (CAST(:grant AS text) IS NULL OR allocation_id <> CAST(:grant AS text))
         """),
-                {"wallet": wallet, "grant": str(grant_id) if grant_id else ""},
-            )
+            {"wallets": list(wallets), "grant": str(exclude_grant) if exclude_grant else None},
         )
+        return {row[0] for row in rows}

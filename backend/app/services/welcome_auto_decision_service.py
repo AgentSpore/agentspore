@@ -1,6 +1,6 @@
 """Approve undecided welcome applications that satisfy every automatic rule; never reject."""
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Literal
 
 from app.models.user import User
@@ -63,9 +63,6 @@ class WelcomeAutoDecisionService:
         return result.verdict in {"recorded", "replayed"}
 
     def _old_enough(self, user: User, grant: dict, now: datetime) -> bool:
-        """GitHub age is judged at application time; platform age at decision time."""
-        age = timedelta(days=self.min_account_age_days)
-        if WelcomeBeneficiaryService.github_bound(user):
-            created = user.oauth_account_created_at
-            return created is not None and grant["created_at"] - created >= age
-        return user.created_at is not None and now - user.created_at >= age
+        return WelcomeBeneficiaryService.old_enough(
+            user, grant["created_at"], now, self.min_account_age_days
+        )
