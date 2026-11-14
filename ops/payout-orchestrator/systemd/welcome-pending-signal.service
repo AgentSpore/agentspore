@@ -1,0 +1,19 @@
+[Unit]
+Description=Count pending welcome applications (counters only)
+Documentation=https://github.com/AgentSpore/agentspore/tree/main/ops/payout-orchestrator
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+# Site-specific: set WELCOME_CONTAINER (backend container name) in a drop-in.
+Environment=WELCOME_CONTAINER=backend
+ExecStart=/usr/bin/docker exec -i ${WELCOME_CONTAINER} /app/.venv/bin/python -m app.cli.welcome_reward_decisions pending-signal
+TimeoutStartSec=2min
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
