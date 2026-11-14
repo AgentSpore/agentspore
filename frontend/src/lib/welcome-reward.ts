@@ -80,12 +80,12 @@ export function showsRewardReason(data: WelcomeRewardStatus): boolean {
     && !ACTION_STEPS.includes(progress.nextStep);
 }
 
-/** Which wallet notes to show, and whether the welcome card currently owns the wallet field. */
+/** Which wallet notes to show, and whether the stepper shows an unfinished wallet step and so owns the wallet field. */
 export function welcomeWalletFlags(state: { kind: string; data?: WelcomeRewardStatus }) {
   const data = state.kind === 'success' ? state.data : undefined;
   const active = !!data && data.state !== 'disabled';
   return {
-    ownsWallet: data?.progress?.nextStep === 'bind_wallet',
+    ownsWallet: !!data?.progress?.steps.some(step => step.id === 'wallet' && !step.done),
     walletNote: active ? 'walletNoteWelcomeActive' : 'connectYourSolanaWalletToReceiveMonthlyASPORE',
     earnNote: active ? 'earnNoteWelcomeActive' : '5MonthlyPayoutsDistributeASPOREProportionalToYour',
   } as const;

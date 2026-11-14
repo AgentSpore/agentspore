@@ -217,3 +217,29 @@ it('puts the current-step marker on the email step while the email must be chang
   const items = within(screen.getByRole('list', { name: m.en.stepsLabel })).getAllByRole('listitem');
   expect(items.map(step => step.getAttribute('aria-current'))).toEqual(['step', null, null, null, null]);
 });
+
+it.each(['confirm_email', 'change_email', 'bind_wallet', 'apply', 'relink_github'])('shows a visible focus ring on every %s control', next => {
+  mount(wire({ next_step: next, actions: [{ id: 'github_relink', method: 'GET', path: '/api/v1/oauth/github' }] }));
+  const controls = [...screen.queryAllByRole('button'), ...screen.queryAllByRole('textbox'), ...screen.queryAllByRole('link'), ...document.querySelectorAll('input')];
+  expect(controls.length).toBeGreaterThan(0);
+  for (const control of controls) expect(control.className).toContain('focus-visible:ring-2');
+});
+
+it('uses neutral Russian step statuses that agree with every step name', () => {
+  expect([m.ru.stepDone, m.ru.stepLater, m.ru.stepCurrent]).toEqual(['выполнено', 'ещё не начато', 'текущий шаг']);
+});
+
+it.each(['en', 'ru'] as const)('tells to change the email before adding the wallet in %s', locale => {
+  mount(wire({ hold_reasons: ['disposable_email', 'wallet_missing'], next_step: 'change_email' }), locale);
+  expect(screen.getByText(m[locale].hold_wallet_after_email)).toBeTruthy();
+  expect(screen.queryByText(m[locale].hold_wallet_missing)).toBeNull();
+});
+
+it('keeps the plain wallet hold when the email is fine', () => {
+  mount(wire({ hold_reasons: ['wallet_missing'], next_step: 'bind_wallet' }));
+  expect(screen.getByText(m.en.hold_wallet_missing)).toBeTruthy();
+});
+
+it('says "Sending payout" for the sending badge', () => {
+  expect(m.en.badge_sending).toBe('Sending payout');
+});
