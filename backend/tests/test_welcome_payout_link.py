@@ -700,9 +700,7 @@ async def test_same_wallet_cannot_be_paid_to_two_accounts(linker):
 
 async def test_concurrent_links_of_one_wallet_make_one_intent(linker):
     ledger = linker.ledger
-    async with ledger.maker.begin() as db:
-        await db.execute(text("DROP INDEX IF EXISTS idx_users_solana_wallet"))
-        await db.execute(text("DROP INDEX IF EXISTS users_solana_wallet_key"))
+    # The per-test schema has no wallet unique index, so only the app-level check is exercised.
     assert (await allow_other(linker, OTHER_BENEFICIARY)).verdict == "recorded"
     async with ledger.maker.begin() as db:
         await db.execute(
