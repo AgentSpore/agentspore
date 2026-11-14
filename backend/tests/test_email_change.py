@@ -206,15 +206,18 @@ async def test_oauth_only_account_needs_a_current_email_proof(api):
     assert (await ask(api, password=None)).status_code == 202
 
 
-async def test_change_is_refused_while_the_reward_is_unpaid(api_granted):
-    api = api_granted
-    key = WelcomeBeneficiaryService.email_key("synthetic@example.com")
+async def drop_decisions(api):
     async with api.maker.begin() as db:
         await db.execute(text("SET LOCAL session_replication_role = replica"))
         await db.execute(
             text("DELETE FROM reward_eligibility_decisions WHERE owner_user_id=:o"),
             {"o": api.owner},
         )
+
+
+async def allow_and_advance(api) -> tuple[str, str]:
+    """Issue an allow decision for the current address and advance the grant."""
+    key = WelcomeBeneficiaryService.email_key("synthetic@example.com")
     async with api.maker.begin() as db:
         await db.execute(
             text(
@@ -245,7 +248,15 @@ async def test_change_is_refused_while_the_reward_is_unpaid(api_granted):
                 {"o": api.owner},
             )
         ).one()
-    assert (grant.state, grant.beneficiary_key) in (("frozen", key), ("available", key))
+    return grant.state, grant.beneficiary_key
+
+
+async def test_change_is_refused_while_the_reward_is_unpaid(api_granted):
+    api = api_granted
+    key = WelcomeBeneficiaryService.email_key("synthetic@example.com")
+    await drop_decisions(api)
+    state, beneficiary = await allow_and_advance(api)
+    assert (state, beneficiary) in (("frozen", key), ("available", key))
     refused = await ask(api)
     assert refused.status_code == 409
     assert "reward" in refused.json()["detail"].lower()
@@ -335,3 +346,48 @@ async def test_mail_failure_is_logged_not_reported(api, failure):
     taken = await ask(api, "OTHER@example.com")
     assert (fresh.status_code, fresh.json()) == (taken.status_code, taken.json())
     assert fresh.status_code == 202
+
+
+async def test_pending_change_cannot_be_confirmed_after_the_grant_froze(api_granted):
+    api = api_granted
+    await drop_decisions(api)
+    assert (await ask(api)).status_code == 202
+    token = token_of(api)
+    state, _ = await allow_and_advance(api)
+    assert state in ("frozen", "available")
+    refused = await api.client.post(CONFIRM, json={"token": token})
+    assert refused.status_code == 409
+    assert "reward" in refused.json()["detail"].lower()
+    assert (await row(api)).email == "synthetic@example.com"
+
+
+async def test_oauth_only_replies_are_identical_for_taken_and_free_targets(api):
+    await oauth_only(api)
+    taken = await ask(api, "OTHER@example.com", password=None)
+    assert api.mail.send_email_change_old_link.await_count == 1
+    fresh = await ask(api, password=None)
+    assert api.mail.send_email_change_old_link.await_count == 2
+    assert (taken.status_code, taken.json()) == (fresh.status_code, fresh.json())
+    assert "current address" in fresh.json()["message"]
+    api.mail.send_email_change_link.assert_not_called()
+
+
+async def test_oauth_only_taken_target_is_approved_without_a_new_address_link(api):
+    await oauth_only(api)
+    await ask(api, "OTHER@example.com", password=None)
+    approved = await api.client.post(CONFIRM, json={"token": old_token_of(api)})
+    assert approved.status_code == 200
+    api.mail.send_email_change_link.assert_not_called()
+    await ask(api, password=None)
+    free = await api.client.post(CONFIRM, json={"token": old_token_of(api)})
+    assert (approved.status_code, approved.json()) == (free.status_code, free.json())
+
+
+async def test_final_step_rechecks_that_the_address_is_still_free(api):
+    await oauth_only(api)
+    await ask(api, password=None)
+    await api.client.post(CONFIRM, json={"token": old_token_of(api)})
+    async with api.maker.begin() as db:
+        await db.execute(text("UPDATE users SET email=:e WHERE id=:o"), {"e": NEW, "o": api.other})
+    assert (await api.client.post(CONFIRM, json={"token": token_of(api)})).status_code == 400
+    assert (await row(api)).email == "synthetic@example.com"
