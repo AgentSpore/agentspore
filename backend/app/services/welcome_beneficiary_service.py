@@ -65,6 +65,15 @@ class WelcomeBeneficiaryService:
         )
 
     @classmethod
+    def old_enough(cls, user: User, applied_at: datetime, now: datetime, days: int) -> bool:
+        """GitHub age is judged at application time; platform age at decision time."""
+        age = timedelta(days=days)
+        if cls.github_bound(user):
+            created = user.oauth_account_created_at
+            return created is not None and applied_at - created >= age
+        return user.created_at is not None and now - user.created_at >= age
+
+    @classmethod
     def normalize_email(cls, email: str) -> str:
         """Collapse mailbox aliases: case, IDNA domain, `+tag` and provider domain/dot rules."""
         local, _, domain = email.strip().lower().rpartition("@")
