@@ -10,16 +10,18 @@ import { WelcomeApplication } from './WelcomeApplication';
 import { WelcomeEmailProof } from './WelcomeEmailProof';
 
 const BUTTON_LINK = 'inline-flex min-h-11 items-center rounded-lg border border-neutral-600 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800';
-interface Props { progress: WelcomeProgress; token: string; onApplied: (value: WelcomeRewardStatus) => void; onChanged: () => void }
+interface Props { progress: WelcomeProgress; token: string; hasPassword?: boolean; onApplied: (value: WelcomeRewardStatus) => void; onChanged: (kind: 'confirmed' | 'walletSaved') => void }
 
 function Steps({ progress }: { progress: WelcomeProgress }) {
   const tr = useTranslations(welcomeRewardMessages);
-  const current = progress.steps.find(step => !step.done)?.id;
+  // With no next step the card text above states the outcome; marking a step current would promise an action that does not exist.
+  const current = progress.nextStep === 'none' ? undefined : progress.steps.find(step => !step.done)?.id;
   return <ol aria-label={tr('stepsLabel')} className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-5">
     {progress.steps.map(step => <li key={step.id} aria-current={step.id === current ? 'step' : undefined}
       className={`min-w-0 rounded-lg border px-3 py-2 text-sm ${step.id === current ? 'border-violet-400 text-white' : 'border-neutral-700 text-neutral-200'}`}>
       <span className="block break-words">{tr(`step_${step.id}`)}</span>
-      <span className="block text-xs text-neutral-300">{tr(step.done ? 'stepDone' : step.id === current ? 'stepCurrent' : 'stepLater')}</span>
+      {(step.done || progress.nextStep !== 'none') &&
+        <span className="block text-xs text-neutral-300">{tr(step.done ? 'stepDone' : step.id === current ? 'stepCurrent' : 'stepLater')}</span>}
     </li>)}
   </ol>;
 }
@@ -47,12 +49,12 @@ function Holds({ progress }: { progress: WelcomeProgress }) {
   </div>;
 }
 
-function NextAction({ progress, token, onApplied, onChanged }: Props) {
+function NextAction({ progress, token, hasPassword, onApplied, onChanged }: Props) {
   const tr = useTranslations(welcomeRewardMessages);
   switch (progress.nextStep) {
-    case 'confirm_email': return <WelcomeEmailProof token={token} onConfirmed={onChanged} />;
-    case 'change_email': return <div className="space-y-2"><h3 className="text-sm font-medium text-white">{tr('changeEmailTitle')}</h3><EmailChangeForm token={token} /></div>;
-    case 'bind_wallet': return <WalletBind token={token} onBound={onChanged} />;
+    case 'confirm_email': return <WelcomeEmailProof token={token} onConfirmed={() => onChanged('confirmed')} />;
+    case 'change_email': return <div className="space-y-2"><h3 className="text-sm font-medium text-white">{tr('changeEmailTitle')}</h3><EmailChangeForm token={token} hasPassword={hasPassword} /></div>;
+    case 'bind_wallet': return <WalletBind token={token} onBound={() => onChanged('walletSaved')} />;
     case 'apply': return <WelcomeApplication token={token} onApplied={onApplied} />;
     case 'relink_github': return progress.githubRelinkPath
       ? <a href={`${API_URL}${progress.githubRelinkPath}`} className={BUTTON_LINK}>{tr('relink')}</a> : null;

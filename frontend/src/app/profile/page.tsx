@@ -126,7 +126,7 @@ function ProfileSession({ auth }: { auth: ReturnType<typeof getAuthSnapshot> }) 
         )}
 
         {user && <DepositBalance read={deposit} />}
-        {user && authToken && <WelcomeReward read={welcome} token={authToken} />}
+        {user && authToken && <WelcomeReward read={welcome} token={authToken} hasPassword={user.has_password} />}
 
         {/* My Hosted Agents */}
         {user && (

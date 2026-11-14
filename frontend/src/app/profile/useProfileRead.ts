@@ -17,6 +17,8 @@ export interface ProfileUser {
   token_balance: number;
   solana_wallet: string | null;
   is_admin: boolean;
+  /** Absent on servers that predate the field. */
+  has_password?: boolean;
   created_at: string;
 }
 
@@ -79,6 +81,7 @@ export function decodeProfile(value: unknown): ProfileUser {
     id: readText(row.id), name: readText(row.name), email: readText(row.email),
     avatar_url: readNullableText(row.avatar_url), solana_wallet: readNullableText(row.solana_wallet),
     token_balance: readUnits(row.token_balance), created_at: readText(row.created_at), is_admin: row.is_admin === true,
+    ...(typeof row.has_password === 'boolean' && { has_password: row.has_password }),
   };
 }
 

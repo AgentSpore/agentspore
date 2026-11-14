@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { FetchError } from '@/components/FetchError';
 import { SkeletonText } from '@/components/Skeleton';
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
@@ -28,21 +28,27 @@ function RewardDetails({ data }: { data: WelcomeRewardStatus }) {
 }
 
 /** Reward entitlements stay visibly separate from deposits and completed transfers. */
-export function WelcomeReward({ read, token }: { read: ProfileRead<WelcomeRewardStatus>; token: string }) {
+type Notice = 'confirmed' | 'walletSaved' | 'applied';
+
+export function WelcomeReward({ read, token, hasPassword }: { read: ProfileRead<WelcomeRewardStatus>; token: string; hasPassword?: boolean }) {
   const tr = useTranslations(welcomeRewardMessages);
-  const [confirmed, setConfirmed] = useState(false);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
   const data = read.state.kind === 'success' ? read.state.data : null;
+  /** The refetch replaces the action that held focus, so focus moves to the stable heading and the result is announced. */
+  const done = (kind: Notice) => { setNotice(kind); heading.current?.focus(); };
   return <section aria-labelledby="welcome-reward-title" className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 p-5 sm:p-6">
-    <h2 id="welcome-reward-title" className="text-lg font-semibold text-white">{tr('title')}</h2>
-    {confirmed && <p role="status" className="mt-3 text-sm text-neutral-200">{tr('confirmed')}</p>}
+    <h2 id="welcome-reward-title" ref={heading} tabIndex={-1} className="text-lg font-semibold text-white">{tr('title')}</h2>
+    <p aria-live="polite" aria-atomic="true" className={notice ? 'mt-3 text-sm text-neutral-200' : undefined}>{notice && tr(notice)}</p>
     {read.state.kind === 'loading' && <div role="status" aria-busy="true" className="mt-4 space-y-3 text-sm text-neutral-300"><p>{tr('loading')}</p><SkeletonText lines={2} /></div>}
     {read.state.kind === 'error' && <FetchError onRetry={read.retry} />}
     {read.state.kind === 'auth' && <Link href="/login" className="mt-3 inline-flex min-h-11 items-center text-sm text-violet-300 underline">{tr('signIn')}</Link>}
     {data && <div className="mt-4 space-y-3">
       <RewardDetails data={data} />
-      {data.progress && <WelcomeStepper progress={data.progress} token={token} onApplied={read.replace} onChanged={read.retry} />}
-      {!data.progress && data.reason === 'not_applied' && <WelcomeApplication token={token} onApplied={read.replace} />}
-      {!data.progress && data.reason === 'email_required' && !confirmed && <WelcomeEmailProof token={token} onConfirmed={() => { setConfirmed(true); read.retry(); }} />}
+      {data.progress && <WelcomeStepper progress={data.progress} token={token} hasPassword={hasPassword}
+        onApplied={value => { read.replace(value); done('applied'); }} onChanged={kind => { done(kind); read.retry(); }} />}
+      {!data.progress && data.reason === 'not_applied' && <WelcomeApplication token={token} onApplied={value => { read.replace(value); done('applied'); }} />}
+      {!data.progress && data.reason === 'email_required' && notice !== 'confirmed' && <WelcomeEmailProof token={token} onConfirmed={() => { done('confirmed'); read.retry(); }} />}
     </div>}
   </section>;
 }

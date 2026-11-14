@@ -19,11 +19,11 @@ const wire = (over: Record<string, unknown> = {}, done = 0) => ({
   steps: STEP_IDS.map((id, index) => ({ id, done: index < done })), hold_reasons: [], payout: null, wait_until: null,
   next_step: 'wait_review', actions: [], ...over,
 });
-function mount(payload: Record<string, unknown>, locale: 'en' | 'ru' = 'en') {
+function mount(payload: Record<string, unknown>, locale: 'en' | 'ru' = 'en', hasPassword?: boolean) {
   const read: ProfileRead<ReturnType<typeof decodeWelcomeReward>> = {
     state: { kind: 'success', data: decodeWelcomeReward(payload) }, retry: vi.fn(), replace: vi.fn(),
   };
-  render(<LocaleProvider initialLocale={locale}><WelcomeReward read={read} token="synthetic-owner" /></LocaleProvider>);
+  render(<LocaleProvider initialLocale={locale}><WelcomeReward read={read} token="synthetic-owner" hasPassword={hasPassword} /></LocaleProvider>);
   return read;
 }
 
@@ -120,4 +120,56 @@ it('rejects a malformed wallet address without a request', () => {
 it('keeps the basic card for a server that sends no progress fields', () => {
   mount({ state: 'disabled', reason: 'program_disabled', amount_raw: null, decimals: 6, asset: 'ASPORE', next_action: 'await_program' });
   expect(screen.queryByRole('list')).toBeNull();
+});
+
+it.each([
+  ['denied', 'denied', 'state_denied'], ['disabled', 'program_disabled', 'disabled'], ['not_applied', 'not_eligible', 'state_not_applied'],
+] as const)('shows the final state, not a current step, when %s has nothing to do', (state, reason, label) => {
+  mount(wire({ state, reason, next_step: 'none', actions: [], hold_reasons: [], next_action: 'none' }, 1));
+  expect(screen.getByText(m.en[label])).toBeTruthy();
+  const steps = within(screen.getByRole('list', { name: m.en.stepsLabel })).getAllByRole('listitem');
+  expect(steps.every(step => step.getAttribute('aria-current') === null)).toBe(true);
+  expect(screen.queryByText(m.en.stepCurrent)).toBeNull();
+});
+
+const fillWallet = () => {
+  fireEvent.change(screen.getByLabelText(m.en.walletLabel), { target: { value: 'So11111111111111111111111111111111111111112' } });
+  fireEvent.click(screen.getByRole('button', { name: m.en.walletSave }));
+};
+
+it('announces the saved wallet and moves focus to the card heading', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({}, { status: 200 })));
+  const read = mount(wire({ next_step: 'bind_wallet' }));
+  fillWallet();
+  expect((await screen.findByText(m.en.walletSaved)).getAttribute('aria-live')).toBe('polite');
+  expect(document.activeElement).toBe(screen.getByRole('heading', { name: m.en.title }));
+  expect(read.retry).toHaveBeenCalledOnce();
+});
+
+it('announces a sent application and keeps focus on the card heading', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(wire({ next_step: 'wait_review' }), { status: 200 })));
+  mount(wire({ next_step: 'apply' }));
+  fireEvent.click(screen.getByRole('button', { name: m.en.apply }));
+  expect((await screen.findByText(m.en.applied)).getAttribute('aria-live')).toBe('polite');
+  expect(document.activeElement).toBe(screen.getByRole('heading', { name: m.en.title }));
+});
+
+it.each([[true, true], [false, null]] as const)('passes has_password=%s to the email form', (has, field) => {
+  mount(wire({ next_step: 'change_email' }), 'en', has);
+  const input = screen.queryByLabelText(emailChangeMessages.en.password) as HTMLInputElement | null;
+  expect(field === true ? input?.required : input).toBe(field);
+});
+
+it('reads has_password from the account only when the server sends it', async () => {
+  const { decodeProfile } = await import('./useProfileRead');
+  const row = { id: 'u', name: 'N', email: 'e@example.invalid', avatar_url: null, solana_wallet: null, token_balance: 0, created_at: '2026-01-01' };
+  expect(decodeProfile({ ...row, has_password: false }).has_password).toBe(false);
+  expect('has_password' in decodeProfile(row)).toBe(false);
+});
+
+it('links the expired-session wallet notice to sign-in', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({}, { status: 401 })));
+  mount(wire({ next_step: 'bind_wallet' }));
+  fillWallet();
+  expect((await screen.findByRole('link', { name: m.en.signIn })).getAttribute('href')).toBe('/login?next=/profile');
 });

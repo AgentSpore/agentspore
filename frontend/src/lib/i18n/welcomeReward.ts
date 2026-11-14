@@ -39,6 +39,7 @@ export const welcomeRewardMessages = {
     relink: 'Sign in with GitHub again', changeEmailTitle: 'Use a different email address',
     walletLabel: 'Solana wallet address', walletHint: 'Use an address you control. One wallet receives one reward.',
     walletSave: 'Save wallet', walletSaving: 'Saving…', walletTaken: 'This wallet is linked to another account. Use a different address.',
+    walletSaved: 'Wallet saved. Reward checks continue.', applied: 'Application sent. We will review it.',
     walletInvalid: 'This is not a valid Solana address.', walletFailed: 'Could not save the wallet. Please try again.',
   },
   ru: {
@@ -81,6 +82,7 @@ export const welcomeRewardMessages = {
     relink: 'Войти через GitHub ещё раз', changeEmailTitle: 'Использовать другой адрес почты',
     walletLabel: 'Адрес кошелька Solana', walletHint: 'Укажите адрес, которым вы владеете. На один кошелёк выплачивается одна награда.',
     walletSave: 'Сохранить кошелёк', walletSaving: 'Сохраняем…', walletTaken: 'Этот кошелёк привязан к другому аккаунту. Укажите другой адрес.',
+    walletSaved: 'Кошелёк сохранён. Проверки награды продолжаются.', applied: 'Заявка отправлена. Мы её рассмотрим.',
     walletInvalid: 'Это не похоже на адрес Solana.', walletFailed: 'Не удалось сохранить кошелёк. Попробуйте ещё раз.',
   },
 } as const;

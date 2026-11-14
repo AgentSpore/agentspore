@@ -1,5 +1,7 @@
+import Link from 'next/link';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { API_URL } from '@/lib/api';
+import { fetchWithAuth } from '@/lib/auth';
 import { useTranslations } from '@/lib/i18n/LocaleProvider';
 import { welcomeRewardMessages } from '@/lib/i18n/welcomeReward';
 
@@ -29,7 +31,7 @@ export function WalletBind({ token, onBound }: { token: string; onBound: () => v
     const controller = new AbortController();
     pending.current = controller; setBusy(true); setFailure(null);
     try {
-      const response = await fetch(`${API_URL}/api/v1/users/solana-wallet`, {
+      const response = await fetchWithAuth(`${API_URL}/api/v1/users/solana-wallet`, {
         method: 'PATCH', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ solana_wallet: value }),
@@ -53,6 +55,8 @@ export function WalletBind({ token, onBound }: { token: string; onBound: () => v
     <button type="submit" disabled={busy} className="min-h-11 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800 disabled:opacity-50">
       {tr(busy ? 'walletSaving' : 'walletSave')}
     </button>
-    {failure && <p id="welcome-wallet-notice" role="alert" className="text-sm text-red-300">{tr(failure)}</p>}
+    {failure && <p id="welcome-wallet-notice" role="alert" className="text-sm text-red-300">
+      {failure === 'signIn' ? <Link href="/login?next=/profile" className="underline">{tr('signIn')}</Link> : tr(failure)}
+    </p>}
   </form>;
 }
