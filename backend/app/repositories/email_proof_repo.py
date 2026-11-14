@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
@@ -23,3 +23,12 @@ class EmailProofRepository:
 
     async def flush(self) -> None:
         await self.db.flush()
+
+    async def email_taken(self, email: str, except_user_id: UUID) -> bool:
+        """Case-insensitive uniqueness probe; uses idx_users_email_lower."""
+        found = await self.db.scalar(
+            select(User.id)
+            .where(func.lower(User.email) == email.lower(), User.id != except_user_id)
+            .limit(1)
+        )
+        return found is not None
