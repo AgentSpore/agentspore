@@ -31,7 +31,7 @@ The trusted operator writer records reviewed attestations through a controlled C
 
 ### Automatic decisions
 
-`python -m app.cli.welcome_reward_decisions auto-decide [--apply]` approves undecided applications that satisfy every rule and leaves all others untouched for manual review; it never rejects, funds, enables the program, signs or sends. Rules: the current-email proof is valid, the beneficiary assessment has no holds, the account is at least the configured number of days old at application time (the GitHub account when one is bound, otherwise the platform account), the beneficiary is not already approved on another grant, and the rolling 24-hour count of automatic approvals is below the configured cap. Applications that already carry any decision (including manual hold or deny) are never considered.
+`python -m app.cli.welcome_reward_decisions auto-decide [--apply]` approves undecided applications that satisfy every rule and leaves all others untouched for manual review; it never rejects, funds, enables the program, signs or sends. Rules: the current-email proof is valid, the beneficiary assessment has no holds, the account is at least the configured number of days old at application time (the GitHub account when one is bound, judged at application time; otherwise the platform account, judged at decision time), the beneficiary is not already approved on another grant, and the rolling 24-hour count of automatic approvals is below the configured cap. Applications that already carry any decision (including manual hold or deny) are never considered.
 
 Settings `WELCOME_AUTO_MIN_ACCOUNT_AGE_DAYS` and `WELCOME_AUTO_DAILY_LIMIT` have no effective default: unset or zero (negative values fail settings validation) makes the command do nothing and print `{"verdict": "disabled"}` with exit code 13 (fail closed). Values live only in server configuration.
 
@@ -71,7 +71,7 @@ addresses, credentials, raw risk reports or personal details in these fields.
 An `allow` requires the canonical beneficiary `email:<sha256 hex>` of the owner, checked by
 the writer against the stored verified email, and no hold reason. The key hashes the
 normalized address: lower-cased, IDNA domain, any `+tag` dropped from the local part, and for
-`gmail.com` / `googlemail.com` the dots dropped and `googlemail.com` mapped to `gmail.com`.
+`gmail.com` / `googlemail.com` the dots dropped and `googlemail.com` mapped to `gmail.com`. Known provider domain aliases collapse to one mailbox: Yandex domains and `ya.ru` / `narod.ru` to `yandex.ru` (a dot in the login equals a hyphen), `me.com` / `mac.com` to `icloud.com`, and `protonmail.com` / `protonmail.ch` / `pm.me` to `proton.me`.
 The raw address is never part of the key. Reasons, in order: `github_account_age_unknown`,
 `github_account_too_new` (only when a GitHub identity is bound; under 30 days at decision
 time), `no_current_email_proof`, `disposable_email_domain` (pinned `disposable-email-domains`

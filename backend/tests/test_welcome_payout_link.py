@@ -674,7 +674,7 @@ async def test_same_normalized_email_cannot_be_paid_twice(linker):
             {"o": ledger.other},
         )
     assert (await linker.service.link(10, apply=True))["linked"] == 1
-    await allow_other(linker, OWNER_KEY)
+    assert (await allow_other(linker, OWNER_KEY)).verdict == "recorded"
     outcome, _ = await linker.service.link_one(ledger.other, apply=True)
     assert outcome == "not_available"
     assert await intents(ledger.maker) == 1
@@ -696,3 +696,21 @@ async def test_same_wallet_cannot_be_paid_to_two_accounts(linker):
     assert outcome == "wallet_already_rewarded"
     assert await intents(ledger.maker) == 1
     assert (await linker.service.link(10, apply=True))["linked"] == 0
+
+
+async def test_concurrent_links_of_one_wallet_make_one_intent(linker):
+    ledger = linker.ledger
+    async with ledger.maker.begin() as db:
+        await db.execute(text("DROP INDEX IF EXISTS idx_users_solana_wallet"))
+        await db.execute(text("DROP INDEX IF EXISTS users_solana_wallet_key"))
+    assert (await allow_other(linker, OTHER_BENEFICIARY)).verdict == "recorded"
+    async with ledger.maker.begin() as db:
+        await db.execute(
+            text("UPDATE users SET solana_wallet=:w WHERE id=:o"), {"w": WALLET, "o": ledger.other}
+        )
+    results = await asyncio.gather(
+        linker.service.link_one(ledger.owner, apply=True),
+        linker.service.link_one(ledger.other, apply=True),
+    )
+    assert sorted(outcome for outcome, _ in results) == ["linked", "wallet_already_rewarded"]
+    assert await intents(ledger.maker) == 1
