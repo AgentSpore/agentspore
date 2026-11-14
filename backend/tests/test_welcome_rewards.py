@@ -40,10 +40,9 @@ async def ledger(marketplace_pg):
             name text DEFAULT 'Owner', is_verified boolean DEFAULT true,
             hashed_password text, avatar_url text, is_admin boolean DEFAULT false,
             verification_token text, verification_expires_at timestamptz,
-            verification_email text, verification_purpose text, oauth_provider text, oauth_id text,
+            oauth_provider text, oauth_id text,
             solana_wallet text, updated_at timestamptz DEFAULT now(),
             created_at timestamptz DEFAULT clock_timestamp(),
-            email_proof_email text, email_proof_at timestamptz, email_proof_source text,
             aspore_balance bigint DEFAULT 0, token_balance integer DEFAULT 0);
             CREATE UNIQUE INDEX idx_users_oauth ON users(oauth_provider, oauth_id)
                 WHERE oauth_provider IS NOT NULL;
@@ -53,6 +52,8 @@ async def ledger(marketplace_pg):
                 text("INSERT INTO users(id,email) VALUES(:id,:email)"), {"id": uid, "email": email}
             )
         for name in (
+            "V114__email_ownership_proof.sql",
+            "V118__email_change_purposes.sql",
             "V115__welcome_reward_ledger.sql",
             "V116__welcome_beneficiary_identity.sql",
             "R__welcome_reward_integrity.sql",
@@ -69,6 +70,8 @@ async def ledger(marketplace_pg):
             await driver.execute(
                 (Path(__file__).resolve().parents[2] / "db/migrations" / name).read_text()
             )
+        # Dependent welcome tests plant inconsistent proof rows to exercise holds.
+        await driver.execute("ALTER TABLE users DROP CONSTRAINT users_email_proof_complete")
     try:
         yield SimpleNamespace(maker=maker, owner=owner, other=other)
     finally:
