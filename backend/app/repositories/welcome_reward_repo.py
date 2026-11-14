@@ -219,3 +219,40 @@ class WelcomeRewardRepository:
             .one()
         )
         return dict(row)
+
+    async def payout_progress(self, grant_id: UUID | None) -> dict | None:
+        """Delivery stage of one grant's payout intent; None before an intent exists."""
+        if grant_id is None:
+            return None
+        row = (
+            (
+                await self.db.execute(
+                    text("""
+            SELECT a.first_signature AS signature, c.intent_id IS NOT NULL AS confirmed
+            FROM payout_delivery_intents i
+            LEFT JOIN payout_delivery_attempts a ON a.intent_id = i.intent_id
+            LEFT JOIN payout_delivery_confirmations c ON c.intent_id = i.intent_id
+            WHERE i.producer_namespace = 'welcome' AND i.allocation_id = :grant
+        """),
+                    {"grant": str(grant_id)},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        return dict(row) if row else None
+
+    async def wallet_paid_to_another(self, wallet: str | None, grant_id: UUID | None) -> bool:
+        """True when a different welcome grant already has a payout intent for this wallet."""
+        if not wallet:
+            return False
+        return bool(
+            await self.db.scalar(
+                text("""
+            SELECT EXISTS(SELECT 1 FROM payout_delivery_intents
+                          WHERE producer_namespace = 'welcome' AND recipient = :wallet
+                            AND allocation_id <> :grant)
+        """),
+                {"wallet": wallet, "grant": str(grant_id) if grant_id else ""},
+            )
+        )

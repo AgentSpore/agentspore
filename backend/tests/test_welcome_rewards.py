@@ -57,6 +57,14 @@ async def ledger(marketplace_pg):
             "V116__welcome_beneficiary_identity.sql",
             "R__welcome_reward_integrity.sql",
             "R__email_ownership_proof.sql",
+            "V111__payout_delivery.sql",
+            "R__payout_delivery_identity.sql",
+            "V112__payout_delivery_claims.sql",
+            "R__payout_delivery_claim_identity.sql",
+            "V113__payout_delivery_attempts.sql",
+            "R__payout_delivery_attempt_identity.sql",
+            "V117__payout_delivery_confirmations.sql",
+            "R__payout_delivery_confirmation_identity.sql",
         ):
             await driver.execute(
                 (Path(__file__).resolve().parents[2] / "db/migrations" / name).read_text()
@@ -362,7 +370,11 @@ async def test_read_endpoint_auth_scope_and_no_writes(admitted):
                 "/api/v1/users/me/rewards/welcome?owner_user_id=" + str(admitted.owner)
             )
             assert response.status_code == 200
-            assert response.json() == {
+            body = response.json()
+            assert {
+                k: body[k]
+                for k in ("state", "reason", "amount_raw", "decimals", "asset", "next_action")
+            } == {
                 "state": "application",
                 "reason": "funding_unavailable",
                 "amount_raw": None,
@@ -370,6 +382,7 @@ async def test_read_endpoint_auth_scope_and_no_writes(admitted):
                 "asset": "ASPORE",
                 "next_action": "await_funding",
             }
+            assert body["next_step"] == "confirm_email"
             async with admitted.maker.begin() as db:
                 assert await db.scalar(text("SELECT count(*) FROM welcome_reward_grants")) == 2
                 assert (

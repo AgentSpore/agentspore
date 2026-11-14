@@ -1,5 +1,6 @@
 """Fail-closed welcome admission; never credits deposits or creates payments."""
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import Depends
@@ -12,6 +13,7 @@ from app.models.user import User
 from app.repositories.welcome_reward_repo import WelcomeRewardRepository
 from app.schemas.welcome_rewards import WelcomeRewardView
 from app.services.email_proof_service import EmailProofService
+from app.services.welcome_progress import WelcomeFacts, progress
 
 
 class WelcomeRewardService:
@@ -42,6 +44,23 @@ class WelcomeRewardService:
         )
 
     async def read(self, owner: UUID) -> WelcomeRewardView:
+        """State plus the card's steps, holds, payout and next action; never writes."""
+        view = await self._state(owner)
+        user, _, grant = await self.repo.context(owner)
+        if user is None:
+            return view
+        grant_id = grant["id"] if grant else None
+        decision = await self.repo.decision(grant_id) if grant_id else None
+        facts = WelcomeFacts(
+            user=user,
+            grant=grant,
+            decided=bool(decision and decision["outcome"] == "allow"),
+            payout_row=await self.repo.payout_progress(grant_id),
+            wallet_taken=await self.repo.wallet_paid_to_another(user.solana_wallet, grant_id),
+        )
+        return progress(view, facts, datetime.now(UTC))
+
+    async def _state(self, owner: UUID) -> WelcomeRewardView:
         """Report current eligibility without writing or exposing internal evidence."""
         user, program, grant = await self.repo.context(owner)
         amount = grant["amount_raw"] if grant else None
@@ -105,7 +124,7 @@ class WelcomeRewardService:
         if not program["enabled"] or grant:
             return await self.read(owner)
         if not self._eligible(user, program):
-            return WelcomeRewardView(state="not_applied", reason="not_eligible")
+            return await self.read(owner)
         await self.repo.apply(owner)
         return await self.read(owner)
 
@@ -113,17 +132,17 @@ class WelcomeRewardService:
         """Reserve or unlock only with durable risk admission and sufficient backing."""
         user, program, grant = await self.repo.context(owner, lock=True)
         if not user or not program["enabled"] or not grant or grant["state"] == "denied":
-            return await self.read(owner)
+            return await self._state(owner)
         decision = await self.repo.decision(grant["id"])
         if decision is None or not self._admitted(decision, program, grant):
-            return await self.read(owner)
+            return await self._state(owner)
         if grant["state"] == "application":
             if (
                 not self._eligible(user, program)
                 or await self.repo.beneficiary_used(decision["beneficiary_key"], grant["id"])
                 or await self.repo.free_funding() < program["amount_raw"]
             ):
-                return await self.read(owner)
+                return await self._state(owner)
             await self.repo.freeze(grant, program, decision)
         elif (
             grant["state"] == "frozen"
@@ -131,7 +150,7 @@ class WelcomeRewardService:
             and decision["email_proof_at"] == user.email_proof_at
         ):
             await self.repo.available(grant["id"])
-        return await self.read(owner)
+        return await self._state(owner)
 
 
 def get_welcome_reward_service(db: AsyncSession = Depends(get_db)) -> WelcomeRewardService:
