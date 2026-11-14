@@ -1,0 +1,123 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
+import { emailChangeMessages } from '@/lib/i18n/emailChange';
+import { welcomeRewardMessages as m } from '@/lib/i18n/welcomeReward';
+import { HOLD_REASONS } from '@/lib/welcome-progress';
+import { decodeWelcomeReward } from '@/lib/welcome-reward';
+import { WelcomeReward } from './WelcomeReward';
+import type { ProfileRead } from './useProfileRead';
+
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+const SIGNATURE = '5'.repeat(88);
+const STEP_IDS = ['email', 'wallet', 'application', 'review', 'payout'];
+const wire = (over: Record<string, unknown> = {}, done = 0) => ({
+  state: 'application', reason: 'risk_review', amount_raw: null, decimals: 6, asset: 'ASPORE', next_action: 'await_review',
+  steps: STEP_IDS.map((id, index) => ({ id, done: index < done })), hold_reasons: [], payout: null, wait_until: null,
+  next_step: 'wait_review', actions: [], ...over,
+});
+function mount(payload: Record<string, unknown>, locale: 'en' | 'ru' = 'en') {
+  const read: ProfileRead<ReturnType<typeof decodeWelcomeReward>> = {
+    state: { kind: 'success', data: decodeWelcomeReward(payload) }, retry: vi.fn(), replace: vi.fn(),
+  };
+  render(<LocaleProvider initialLocale={locale}><WelcomeReward read={read} token="synthetic-owner" /></LocaleProvider>);
+  return read;
+}
+
+it('marks the first unfinished step as current and lists all five', () => {
+  mount(wire({}, 2));
+  const steps = within(screen.getByRole('list', { name: m.en.stepsLabel })).getAllByRole('listitem');
+  expect(steps).toHaveLength(5);
+  expect(steps.map(step => step.getAttribute('aria-current'))).toEqual([null, null, 'step', null, null]);
+});
+
+it.each([
+  ['confirm_email', () => screen.getByRole('button', { name: m.en.send })],
+  ['change_email', () => screen.getByLabelText(emailChangeMessages.en.newEmail)],
+  ['bind_wallet', () => screen.getByLabelText(m.en.walletLabel)],
+  ['apply', () => screen.getByRole('button', { name: m.en.apply })],
+  ['wait_review', () => screen.getByText(m.en.next_wait_review)],
+  ['wait_payout', () => screen.getByText(m.en.next_wait_payout)],
+] as const)('offers the %s action inline', (next, find) => {
+  mount(wire({ next_step: next }));
+  expect(find()).toBeTruthy();
+});
+
+it('relinks GitHub by navigation, not fetch', () => {
+  const fetchMock = vi.fn();
+  vi.stubGlobal('fetch', fetchMock);
+  mount(wire({ next_step: 'relink_github', actions: [{ id: 'github_relink', method: 'GET', path: '/api/v1/oauth/github' }] }));
+  expect(screen.getByRole('link', { name: m.en.relink }).getAttribute('href')).toMatch(/\/api\/v1\/oauth\/github$/);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it.each(['en', 'ru'] as const)('words every hold reason for people in %s', locale => {
+  for (const hold of HOLD_REASONS) {
+    cleanup();
+    mount(wire({ hold_reasons: [hold] }), locale);
+    const text = m[locale][`hold_${hold}`];
+    expect(screen.getByText(text)).toBeTruthy();
+    expect(text).not.toMatch(/hold|_/i);
+  }
+});
+
+it('turns an unknown hold code into a manual check', () => {
+  mount(wire({ hold_reasons: ['future_code'] }));
+  expect(screen.getByText(m.en.hold_other_hold)).toBeTruthy();
+});
+
+it('shows wait_until as a UTC date next to the GitHub age hold', () => {
+  mount(wire({ hold_reasons: ['github_too_new'], wait_until: '2026-12-01T23:30:00Z' }));
+  expect(screen.getByText(/December 1, 2026/)).toBeTruthy();
+});
+
+it.each([
+  ['pending', null, m.en.payoutPending, false], ['sent', SIGNATURE, m.en.payoutSent, false], ['confirmed', SIGNATURE, m.en.payoutConfirmed, true],
+] as const)('payout %s: transaction link only when confirmed', (state, signature, text, linked) => {
+  mount(wire({ state: 'available', reason: 'available', amount_raw: 5000000, next_step: state === 'confirmed' ? 'none' : 'wait_payout', payout: { state, signature } }, 4));
+  expect(screen.getByText(text)).toBeTruthy();
+  expect(screen.queryByText(m.en.available)).toBeNull();
+  expect(screen.queryByRole('link', { name: m.en.viewTx }) !== null).toBe(linked);
+  if (linked) expect(screen.getByRole('link', { name: m.en.viewTx }).getAttribute('href')).toBe(`https://solscan.io/tx/${SIGNATURE}`);
+});
+
+it('ignores a malformed signature instead of linking it', () => {
+  mount(wire({ state: 'available', reason: 'available', amount_raw: 5000000, payout: { state: 'confirmed', signature: '"><script>' } }));
+  expect(screen.queryByRole('link', { name: m.en.viewTx })).toBeNull();
+});
+
+it('binds the wallet inline and refreshes the card', async () => {
+  const fetchMock = vi.fn(async () => Response.json({ status: 'connected' }));
+  vi.stubGlobal('fetch', fetchMock);
+  const read = mount(wire({ next_step: 'bind_wallet', hold_reasons: ['wallet_missing'] }));
+  fireEvent.change(screen.getByLabelText(m.en.walletLabel), { target: { value: 'So11111111111111111111111111111111111111112' } });
+  fireEvent.click(screen.getByRole('button', { name: m.en.walletSave }));
+  await vi.waitFor(() => expect(read.retry).toHaveBeenCalledOnce());
+  expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/users/solana-wallet'), expect.objectContaining({ method: 'PATCH' }));
+});
+
+it.each([[409, 'walletTaken'], [503, 'walletFailed']] as const)('shows a plain wallet error for %s', async (status, key) => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ detail: 'internal' }, { status })));
+  mount(wire({ next_step: 'bind_wallet' }));
+  fireEvent.change(screen.getByLabelText(m.en.walletLabel), { target: { value: 'So11111111111111111111111111111111111111112' } });
+  fireEvent.click(screen.getByRole('button', { name: m.en.walletSave }));
+  expect((await screen.findByRole('alert')).textContent).toBe(m.en[key]);
+});
+
+it('rejects a malformed wallet address without a request', () => {
+  const fetchMock = vi.fn();
+  vi.stubGlobal('fetch', fetchMock);
+  mount(wire({ next_step: 'bind_wallet' }));
+  fireEvent.change(screen.getByLabelText(m.en.walletLabel), { target: { value: 'not-an-address' } });
+  fireEvent.click(screen.getByRole('button', { name: m.en.walletSave }));
+  expect(screen.getByRole('alert').textContent).toBe(m.en.walletInvalid);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it('keeps the basic card for a server that sends no progress fields', () => {
+  mount({ state: 'disabled', reason: 'program_disabled', amount_raw: null, decimals: 6, asset: 'ASPORE', next_action: 'await_program' });
+  expect(screen.queryByRole('list')).toBeNull();
+});

@@ -1,4 +1,5 @@
 import { localeTag, type Locale } from './i18n/locale';
+import { decodeWelcomeProgress, type WelcomeProgress } from './welcome-progress';
 
 const REASONS = {
   disabled: ['program_disabled'], not_applied: ['not_applied', 'not_eligible'],
@@ -12,6 +13,7 @@ export interface WelcomeRewardStatus {
   state: RewardState;
   reason: (typeof REASONS)[RewardState][number];
   amount_raw: number | null;
+  progress?: WelcomeProgress;
 }
 function isState(value: unknown): value is RewardState {
   return typeof value === 'string' && Object.hasOwn(REASONS, value);
@@ -42,7 +44,8 @@ export function decodeWelcomeReward(value: unknown): WelcomeRewardStatus {
     throw new Error('Invalid welcome reward response');
   }
   validateAsset(data);
-  return { state, reason, amount_raw: readAmount(data.amount_raw, state === 'frozen' || state === 'available') };
+  const progress = decodeWelcomeProgress(data);
+  return { state, reason, amount_raw: readAmount(data.amount_raw, state === 'frozen' || state === 'available'), ...(progress && { progress }) };
 }
 /** Preserve all six raw-unit decimals, including values near the safe integer limit. */
 export function formatRewardAmount(raw: number, locale: Locale): string {
