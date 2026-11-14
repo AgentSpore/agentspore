@@ -15,6 +15,19 @@ The welcome program is disabled. While disabled, onboarding creates no applicati
 
 `reason` distinguishes program availability, review, funding and email requirements. Missing current email proof requires email confirmation; a valid current proof that differs from the trusted decision requires risk review, not another confirmation; `next_action` supplies a safe UI action. Disabled programs, stale decisions and changed email never release a funded grant's backing. No cancellation policy for funded grants exists, so changing them to denied is forbidden. The stored available state alone is insufficient: reads recheck current proof and risk evidence and report frozen when either is invalid.
 
+## Progress fields for the profile card
+
+`GET /api/v1/users/me/rewards/welcome` keeps `state`, `reason`, `amount_raw`, `decimals`, `asset` and `next_action` unchanged and adds:
+
+- `steps`: `email`, `wallet`, `application`, `review`, `payout`, each with `done`. `wallet` is not done while the bound wallet already has a welcome payout for another grant.
+- `hold_reasons`: what stops the reward for this owner (`email_not_confirmed`, `disposable_email`, `wallet_missing`, `wallet_already_used`, `github_too_new`). Empty once a payout exists.
+- `payout`: `null` until a payout intent exists, then `{state: pending|sent|confirmed, signature}`. `signature` is null while `pending`; it is the public transaction signature after.
+- `wait_until`: set only with `github_too_new`; the date the owner's GitHub account becomes old enough.
+- `next_step`: exactly one of `confirm_email`, `change_email`, `bind_wallet`, `apply`, `wait_review`, `wait_payout`, `none`. Order: payout state, then a disposable email, unconfirmed email, wallet, application, then waiting.
+- `actions`: the existing endpoints that finish `next_step` inline: `confirm_email` lists `POST /api/v1/auth/email-proof/request` and `.../confirm`; `bind_wallet` lists `PATCH /api/v1/users/solana-wallet` (a 409 means the address belongs to another account); `apply` lists `POST /api/v1/users/me/rewards/welcome/application`. Waits and `change_email` have none: no email-change endpoint exists yet.
+
+The response never includes the beneficiary key, another user's wallet or email, or internal limits.
+
 ## Internal contract
 
 The service/repository participate in a caller-owned **READ COMMITTED** transaction. Grant mutations and decision insertion reject other isolation levels. A stable program row serializes reserve calculations; repeatable snapshots could otherwise reuse an old aggregate after waiting for a row lock. Lock order is user, program, grant; any future ownership integration must acquire the agent lock first. The automatic decision command takes a transaction-scoped advisory lock before this order, and no other writer takes it, so it cannot form a cycle with the ledger locks.
