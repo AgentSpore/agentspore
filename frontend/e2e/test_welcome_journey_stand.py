@@ -20,6 +20,7 @@ import shlex
 import subprocess
 import time
 import unittest
+from urllib.parse import urlparse
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
@@ -32,21 +33,24 @@ PASSWORD = "Journey-pass-182x"
 EXPECTED_4XX = {("PATCH", "/api/v1/users/solana-wallet", 422)}
 
 
-# Contrast of an element's text against what is actually painted under its centre: walk up from
-# elementFromPoint, collecting backgrounds, then composite them over white from the outermost in.
+# Contrast of an element's text against what is actually painted under its centre. Any CSS colour
+# syntax (rgb, oklab, oklch, ...) is resolved by painting it on a 1x1 sRGB canvas: the layers found
+# walking up from elementFromPoint are painted outermost first over white, so alpha composites exactly.
 CONTRAST_JS = """el => {
-  const parse = c => { const m = c.match(/[\\d.]+/g).map(Number); return { r: m[0], g: m[1], b: m[2], a: m[3] ?? 1 }; };
+  const ctx = Object.assign(document.createElement('canvas'), { width: 1, height: 1 }).getContext('2d', { colorSpace: 'srgb' });
+  const paint = layers => {
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 1, 1);
+    for (const css of layers) { ctx.fillStyle = css; ctx.fillRect(0, 0, 1, 1); }
+    return [...ctx.getImageData(0, 0, 1, 1).data.slice(0, 3)];
+  };
   const box = el.getBoundingClientRect();
-  let node = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
   const layers = [];
-  for (; node; node = node.parentElement) layers.push(parse(getComputedStyle(node).backgroundColor));
-  let ground = { r: 255, g: 255, b: 255 };
-  for (const layer of layers.reverse()) {
-    ground = { r: layer.r * layer.a + ground.r * (1 - layer.a), g: layer.g * layer.a + ground.g * (1 - layer.a), b: layer.b * layer.a + ground.b * (1 - layer.a) };
+  for (let node = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2); node; node = node.parentElement) {
+    layers.unshift(getComputedStyle(node).backgroundColor);
   }
-  const lum = c => [c.r, c.g, c.b].map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; })
+  const lum = rgb => rgb.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; })
     .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
-  const [hi, lo] = [lum(parse(getComputedStyle(el).color)), lum(ground)].sort((a, b) => b - a);
+  const [hi, lo] = [lum(paint([getComputedStyle(el).color])), lum(paint(layers))].sort((a, b) => b - a);
   return (hi + 0.05) / (lo + 0.05);
 }"""
 
@@ -121,7 +125,7 @@ class WelcomeJourney(unittest.TestCase):
 
         def watch(response):
             req = response.request
-            path = response.url.split("?")[0].replace(ENV["FE"], "").replace("http://localhost:18000", "")
+            path = urlparse(response.url).path
             if response.status >= 400 and (req.method, path, response.status) not in EXPECTED_4XX:
                 self.problems.append(f"http {response.status} {req.method} {path}")
 

@@ -3,6 +3,7 @@ import { API_URL } from '@/lib/api';
 import { useTranslations } from '@/lib/i18n/LocaleProvider';
 import { welcomeRewardMessages } from '@/lib/i18n/welcomeReward';
 import { decodeWelcomeReward, type WelcomeRewardStatus } from '@/lib/welcome-reward';
+import { WELCOME_FOCUS } from '@/components/welcome/focus';
 
 /** Explicit recovery never turns a profile read into a reward mutation. */
 export function WelcomeApplication({ token, onApplied }: { token: string; onApplied: (value: WelcomeRewardStatus) => void }) {
@@ -30,7 +31,7 @@ export function WelcomeApplication({ token, onApplied }: { token: string; onAppl
     }
   }
   return <div className="space-y-3">
-    <button type="button" disabled={busy} onClick={() => void apply()} className="min-h-11 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800 disabled:opacity-50">{tr(busy ? 'applying' : 'apply')}</button>
+    <button type="button" disabled={busy} onClick={() => void apply()} className={`min-h-11 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800 disabled:opacity-50 ${WELCOME_FOCUS}`}>{tr(busy ? 'applying' : 'apply')}</button>
     {failed && <p role="alert" className="text-sm text-red-300">{tr('applyFailed')}</p>}
   </div>;
 }

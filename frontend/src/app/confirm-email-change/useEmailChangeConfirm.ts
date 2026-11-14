@@ -6,6 +6,7 @@ import { readEmailChangeStep } from '@/lib/welcome-email-change';
 export type EmailChangeOutcome =
   'reading' | 'missing' | 'needSignIn' | 'working' | 'done' | 'approved' | 'invalid' | 'pending' | 'down' | 'network';
 
+/** localStorage, not sessionStorage: the link may be opened signed out in one tab and signed in from another. */
 const STASH_KEY = 'email_change_link';
 const LINK_TTL_MS = 600000;
 const FINAL: Partial<Record<number, EmailChangeOutcome>> = { 400: 'invalid', 422: 'invalid', 409: 'pending' };
@@ -23,11 +24,11 @@ function takeLinkToken(): string | null {
 
 function readStash(): string | null {
   try {
-    const raw = sessionStorage.getItem(STASH_KEY);
+    const raw = localStorage.getItem(STASH_KEY);
     const stored: unknown = raw && JSON.parse(raw);
     if (typeof stored === 'object' && stored !== null && 'token' in stored && 'until' in stored
       && typeof stored.token === 'string' && typeof stored.until === 'number' && stored.until > Date.now()) return stored.token;
-    if (raw) sessionStorage.removeItem(STASH_KEY);
+    if (raw) localStorage.removeItem(STASH_KEY);
   } catch {
     // Unreadable or denied storage counts as no stashed link.
   }
@@ -36,8 +37,8 @@ function readStash(): string | null {
 
 function stash(token: string | null) {
   try {
-    if (token) sessionStorage.setItem(STASH_KEY, JSON.stringify({ token, until: Date.now() + LINK_TTL_MS }));
-    else sessionStorage.removeItem(STASH_KEY);
+    if (token) localStorage.setItem(STASH_KEY, JSON.stringify({ token, until: Date.now() + LINK_TTL_MS }));
+    else localStorage.removeItem(STASH_KEY);
   } catch {
     // Storage denied: the link still works while this tab stays on the page.
   }
