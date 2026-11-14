@@ -3,6 +3,7 @@
 import asyncio
 import functools
 import json
+from datetime import timedelta
 from io import StringIO
 from uuid import uuid4
 
@@ -96,15 +97,35 @@ async def test_failed_rule_leaves_application_untouched(review, mutation):
     assert await decisions(ledger.maker) == 0
 
 
-async def test_user_without_github_uses_platform_account_age(review):
+@pytest.fixture
+def clock_ahead(monkeypatch):
+    """Move the decision clock forward; the registration-time grant itself stays untouched."""
+    original = WelcomeRewardRepository.decision_clock
+    shift = {"by": timedelta()}
+
+    async def shifted(self):
+        return await original(self) + shift["by"]
+
+    monkeypatch.setattr(WelcomeRewardRepository, "decision_clock", shifted)
+    return shift
+
+
+async def test_user_without_github_is_aged_by_platform_account_at_decision_time(
+    review, clock_ahead
+):
     ledger, _ = review
     async with ledger.maker.begin() as db:
         await db.execute(
             text(
                 "UPDATE users SET oauth_provider='google', oauth_account_created_at=NULL, "
-                "created_at=clock_timestamp() - interval '30 days'"
+                "created_at=(SELECT created_at FROM welcome_reward_grants "
+                "WHERE owner_user_id=users.id)"
             )
         )
+    clock_ahead["by"] = timedelta(days=AGE_DAYS) - timedelta(hours=1)
+    code, out = await invoke(ledger.maker)
+    assert (code, out["approved"], out["left"]) == (0, 0, 2)
+    clock_ahead["by"] = timedelta(days=AGE_DAYS) + timedelta(hours=1)
     code, out = await invoke(ledger.maker)
     assert (code, out["approved"], out["left"]) == (0, 2, 0)
 

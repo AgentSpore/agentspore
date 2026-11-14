@@ -1,6 +1,6 @@
 """Approve undecided welcome applications that satisfy every automatic rule; never reject."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Literal
 
 from app.models.user import User
@@ -36,7 +36,8 @@ class WelcomeAutoDecisionService:
     async def candidates(self) -> tuple[list[dict], int, int]:
         """Read-only (no program lock): prefiltered applications, undecided total, cap left."""
         used = await self.auto_repo.approvals_since_day(AUTHORITY_PREFIX)
-        found = await self.auto_repo.eligible_applications(self.min_account_age_days)
+        now = await self.repo.decision_clock()
+        found = await self.auto_repo.eligible_applications(self.min_account_age_days, now)
         return found, await self.auto_repo.undecided_count(), max(self.daily_limit - used, 0)
 
     async def approve(self, application: dict) -> Outcome:
@@ -55,7 +56,7 @@ class WelcomeAutoDecisionService:
         now = await self.repo.decision_clock()
         assessment = WelcomeBeneficiaryService.evaluate(user, now)
         key = assessment.beneficiary_key
-        if assessment.holds or not self._old_enough(user, grant):
+        if assessment.holds or not self._old_enough(user, grant, now):
             return False
         if await self.auto_repo.beneficiary_approved_elsewhere(key, grant["id"]):
             return False
@@ -76,8 +77,10 @@ class WelcomeAutoDecisionService:
         result = await WelcomeRewardDecisionService(self.repo).record(intent)
         return result.verdict in {"recorded", "replayed"}
 
-    def _old_enough(self, user: User, grant: dict) -> bool:
-        github = user.oauth_provider == "github"
-        created = user.oauth_account_created_at if github else user.created_at
+    def _old_enough(self, user: User, grant: dict, now: datetime) -> bool:
+        """GitHub age is judged at application time; platform age at decision time."""
         age = timedelta(days=self.min_account_age_days)
-        return created is not None and grant["created_at"] - created >= age
+        if WelcomeBeneficiaryService.github_bound(user):
+            created = user.oauth_account_created_at
+            return created is not None and grant["created_at"] - created >= age
+        return user.created_at is not None and now - user.created_at >= age
