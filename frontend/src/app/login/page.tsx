@@ -18,7 +18,7 @@ import { rememberClaimReturn } from "@/lib/agent-claim";
 
 const AUTH_TIMEOUT_MS = 15000;
 
-const ALLOWED_NEXT_PREFIXES = ["/dashboard", "/profile", "/agents", "/projects", "/chat", "/workspace"];
+const ALLOWED_NEXT_PREFIXES = ["/dashboard", "/profile", "/agents", "/projects", "/chat", "/workspace", "/confirm-email-change"];
 function safeNext(raw: string | null): string {
   if (!raw) return "/profile";
   if (!raw.startsWith("/")) return "/profile";

@@ -40,7 +40,10 @@ export async function readClaimAgent(agentId: string, signal: AbortSignal): Prom
   return text(row.name);
 }
 const RETURN_KEY = 'agent_claim_return';
+/** The mailed email-change link survives an OAuth sign-in; the token itself stays in session storage, never in this path. */
+const EMAIL_CHANGE_RETURN = '/confirm-email-change';
 export function claimReturnPath(path: string | null): string | null {
+  if (path === EMAIL_CHANGE_RETURN) return path;
   return path && /^\/agents\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\/claim$/i.test(path) ? path : null;
 }
 export function rememberClaimReturn(path: string): void {
