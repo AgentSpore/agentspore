@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { StrictMode } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { emailChangeMessages as m } from '@/lib/i18n/emailChange';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
@@ -9,10 +10,11 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 const LINK = 'a'.repeat(43);
 const reply = (status: number, message = '', extra: object = {}) => new Response(JSON.stringify({ message, ...extra }), { status });
 
-function open(hash: string, signedIn = true) {
+function open(hash: string, signedIn = true, strict = false) {
   window.history.replaceState(null, '', `/confirm-email-change${hash}`);
   if (signedIn) { localStorage.setItem('access_token', 'synthetic-access'); localStorage.setItem('refresh_token', 'synthetic-refresh'); }
-  render(<LocaleProvider initialLocale="en"><ConfirmEmailChange /></LocaleProvider>);
+  const page = <LocaleProvider initialLocale="en"><ConfirmEmailChange /></LocaleProvider>;
+  render(strict ? <StrictMode>{page}</StrictMode> : page);
 }
 function fakeStorage() {
   const values = new Map<string, string>();
@@ -103,7 +105,7 @@ it('refreshes an expired access token silently instead of asking to sign in', as
 });
 
 it.each([
-  ['approve_old', 'Anything reworded', 'approved'], ['done', 'Approved. reworded', 'done'], ['confirm_new', 'x', 'done'],
+  ['approve_old', 'Anything reworded', 'approved'], ['done', 'Approved. reworded', 'done'], ['confirm_new', 'Approved. If the new address can be used, a confirmation link was sent to it.', 'approved'],
 ] as const)('reads the machine step %s over the wording', async (step, message, key) => {
   vi.stubGlobal('fetch', vi.fn(async () => reply(200, message, { step })));
   open(`#token=${LINK}`);
@@ -126,4 +128,22 @@ it('stashes the link with a ten minute expiry', () => {
   expect(stored.token).toBe(LINK);
   expect(stored.until - Date.now()).toBeGreaterThan(590000);
   expect(stored.until - Date.now()).toBeLessThanOrEqual(600000);
+});
+
+it('sends the single-use link exactly once even when the silent refresh swaps the token', async () => {
+  let freshCalls = 0;
+  const fetchMock = vi.fn<typeof fetch>(async (url, init) => {
+    if (String(url).includes('/auth/refresh')) return new Response(JSON.stringify({ access_token: 'fresh-access', refresh_token: 'fresh-refresh' }), { status: 200 });
+    if (new Headers(init?.headers).get('Authorization') !== 'Bearer fresh-access') return reply(401);
+    freshCalls += 1;
+    if (freshCalls > 1) return reply(400, 'Invalid link');
+    await new Promise(resolve => setTimeout(resolve, 30));
+    return reply(200, 'Email changed.', { step: 'done' });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  open(`#token=${LINK}`, true, true);
+  expect(await screen.findByText(m.en.done)).toBeTruthy();
+  await new Promise(resolve => setTimeout(resolve, 60));
+  expect(freshCalls).toBe(1);
+  expect(screen.queryByText(m.en.invalid)).toBeNull();
 });
