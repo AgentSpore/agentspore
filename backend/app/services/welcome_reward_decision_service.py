@@ -21,7 +21,11 @@ class WelcomeRewardDecisionService:
     def allow_intent(
         user: User, program: dict, grant: dict, authority_ref: str, now: datetime
     ) -> WelcomeRewardDecision:
-        """Allow decision for one application, keyed by authority so a re-run replays."""
+        """Allow decision for one application, keyed by authority and revision so a re-run replays.
+
+        `grant["revision"]` (absent before the first decision) is the revision being superseded.
+        """
+        revision = grant.get("revision", 0)
         return WelcomeRewardDecision(
             grant_id=grant["id"],
             owner_user_id=grant["owner_user_id"],
@@ -30,8 +34,8 @@ class WelcomeRewardDecisionService:
             outcome="allow",
             beneficiary_key=WelcomeBeneficiaryService.email_key(user.email),
             authority_ref=authority_ref,
-            evidence_ref=f"{authority_ref}:{grant['id']}:r0",
-            expected_revision=0,
+            evidence_ref=f"{authority_ref}:{grant['id']}:r{revision}",
+            expected_revision=revision,
             email_proof_at=user.email_proof_at,
             issued_at=now,
             expires_at=now + DECISION_TTL,

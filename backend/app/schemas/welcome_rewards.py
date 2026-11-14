@@ -20,8 +20,14 @@ class WelcomePayout(BaseModel):
 class WelcomeAction(BaseModel):
     """An existing endpoint the card calls inline to finish the current step."""
 
-    id: Literal["email_proof_request", "email_proof_confirm", "wallet_bind", "welcome_application"]
-    method: Literal["POST", "PATCH"]
+    id: Literal[
+        "email_proof_request",
+        "email_proof_confirm",
+        "wallet_bind",
+        "welcome_application",
+        "github_relink",
+    ]
+    method: Literal["GET", "POST", "PATCH"]
     path: str
 
 
@@ -49,6 +55,8 @@ class WelcomeRewardView(BaseModel):
             "wallet_missing",
             "wallet_already_used",
             "github_too_new",
+            "github_age_unknown",
+            "other_hold",
         ]
     ] = []
     payout: WelcomePayout | None = None
@@ -56,6 +64,7 @@ class WelcomeRewardView(BaseModel):
     next_step: Literal[
         "confirm_email",
         "change_email",
+        "relink_github",
         "bind_wallet",
         "apply",
         "wait_review",
@@ -83,6 +92,9 @@ class WelcomeReviewRow(BaseModel):
     holds: tuple[str, ...]
     email_match: bool
     email_masked: str
+    owner_user_id: UUID
+    revision: int = 0
+    expired: bool = False
 
     @property
     def wallet_match(self) -> bool:
