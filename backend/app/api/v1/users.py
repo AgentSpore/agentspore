@@ -100,9 +100,7 @@ async def request_email_change(
     data: EmailChangeRequest, user: CurrentUser, service: ChangeService
 ) -> EmailChangeResponse:
     """Send a confirmation link; the current email stays active until it is confirmed."""
-    return EmailChangeResponse(
-        message=await service.request(user.id, data.new_email, data.current_password)
-    )
+    return await service.request(user.id, data.new_email, data.current_password)
 
 
 @router.post("/me/email/change/confirm", response_model=EmailChangeResponse)
@@ -113,4 +111,4 @@ async def confirm_email_change(
 
     Called once for the current-address link of a password-less account, then for the new one.
     """
-    return EmailChangeResponse(message=await service.confirm(user.id, data.token))
+    return await service.confirm(user.id, data.token)
