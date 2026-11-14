@@ -51,12 +51,13 @@ class WelcomeRewardService:
             return view
         grant_id = grant["id"] if grant else None
         decision = await self.repo.decision(grant_id) if grant_id else None
+        wallets = [user.solana_wallet] if user.solana_wallet else []
         facts = WelcomeFacts(
             user=user,
             grant=grant,
             decided=bool(decision and decision["outcome"] == "allow"),
             payout_row=await self.repo.payout_progress(grant_id),
-            wallet_taken=await self.repo.wallet_paid_to_another(user.solana_wallet, grant_id),
+            wallet_taken=bool(await self.repo.welcome_intent_wallets(wallets, grant_id)),
         )
         return progress(view, facts, datetime.now(UTC))
 

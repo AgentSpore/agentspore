@@ -1,5 +1,7 @@
 """Welcome card progress: steps, user-facing holds, payout state and the next action."""
 
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -8,7 +10,9 @@ from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 from sqlalchemy import text
 
+from app.models.user import User
 from app.services.welcome_beneficiary_service import WelcomeBeneficiaryService
+from app.services.welcome_progress import hold_reasons
 
 ledger = base.ledger
 marketplace_pg = base.marketplace_pg
@@ -142,6 +146,42 @@ async def test_disposable_email_and_young_github_account_are_reported(card):
     assert body["wait_until"] is not None
 
 
+async def test_unknown_github_account_age_is_a_hold_with_a_relink_action(card):
+    await apply(card)
+    await confirm_email(card)
+    await bind_wallet(card)
+    await sql(
+        card,
+        "UPDATE users SET oauth_provider='github', oauth_id='1001', "
+        "oauth_account_created_at=NULL WHERE id=:o",
+        o=card.ledger.owner,
+    )
+    body = await view(card)
+    assert body["hold_reasons"] == ["github_age_unknown"]
+    assert body["next_step"] == "relink_github"
+    assert [(a["method"], a["path"]) for a in body["actions"]] == [("GET", "/api/v1/oauth/github")]
+
+
+@pytest.mark.parametrize("outcome", ["allow", "hold"])
+async def test_decided_application_waits_for_payout_not_review(card, outcome):
+    await apply(card)
+    await confirm_email(card)
+    await bind_wallet(card)
+    key = WelcomeBeneficiaryService.email_key("synthetic@example.com")
+    await sql(
+        card,
+        "INSERT INTO reward_eligibility_decisions(grant_id,owner_user_id,source_event,"
+        "policy_version,outcome,beneficiary_key,authority_ref,evidence_ref,expires_at) "
+        "SELECT id,owner_user_id,source_event,'welcome-v1',:outcome,:key,'operator','ref',"
+        "clock_timestamp()+interval '1 hour' FROM welcome_reward_grants",
+        outcome=outcome,
+        key=key,
+    )
+    body = await view(card)
+    assert "review" in done(body) or outcome == "hold"
+    assert body["next_step"] == ("wait_payout" if outcome == "allow" else "wait_review")
+
+
 async def test_wallet_already_rewarded_is_a_hold_with_a_way_out(card):
     await apply(card)
     await confirm_email(card)
@@ -237,3 +277,10 @@ async def test_response_never_carries_keys_or_other_users_data(card):
         "state", "reason", "amount_raw", "decimals", "asset", "next_action", "steps",
         "hold_reasons", "payout", "wait_until", "next_step", "actions",
     }  # fmt: skip
+
+
+def test_a_hold_without_a_user_code_still_blocks(monkeypatch):
+    found = SimpleNamespace(holds=("future_hold", "future_hold"))
+    monkeypatch.setattr(WelcomeBeneficiaryService, "evaluate", lambda user, now: found)
+    user = User(solana_wallet=WALLET)
+    assert hold_reasons(user, datetime.now(UTC), False) == ["other_hold"]
