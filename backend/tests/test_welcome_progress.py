@@ -182,6 +182,24 @@ async def test_decided_application_waits_for_payout_not_review(card, outcome):
     assert body["next_step"] == ("wait_payout" if outcome == "allow" else "wait_review")
 
 
+async def test_expired_allow_is_not_a_finished_review(card):
+    await apply(card)
+    await confirm_email(card)
+    await bind_wallet(card)
+    key = WelcomeBeneficiaryService.email_key("synthetic@example.com")
+    await sql(
+        card,
+        "INSERT INTO reward_eligibility_decisions(grant_id,owner_user_id,source_event,"
+        "policy_version,outcome,beneficiary_key,authority_ref,evidence_ref,issued_at,expires_at) "
+        "SELECT id,owner_user_id,source_event,'welcome-v1','allow',:key,'operator','ref',"
+        "clock_timestamp()-interval '3 days',clock_timestamp()-interval '2 days' "
+        "FROM welcome_reward_grants",
+        key=key,
+    )
+    body = await view(card)
+    assert "review" not in done(body) and body["next_step"] == "wait_review"
+
+
 async def test_wallet_already_rewarded_is_a_hold_with_a_way_out(card):
     await apply(card)
     await confirm_email(card)
