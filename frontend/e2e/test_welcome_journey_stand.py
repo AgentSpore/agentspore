@@ -32,6 +32,25 @@ PASSWORD = "Journey-pass-182x"
 EXPECTED_4XX = {("PATCH", "/api/v1/users/solana-wallet", 422)}
 
 
+# Contrast of an element's text against what is actually painted under its centre: walk up from
+# elementFromPoint, collecting backgrounds, then composite them over white from the outermost in.
+CONTRAST_JS = """el => {
+  const parse = c => { const m = c.match(/[\\d.]+/g).map(Number); return { r: m[0], g: m[1], b: m[2], a: m[3] ?? 1 }; };
+  const box = el.getBoundingClientRect();
+  let node = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+  const layers = [];
+  for (; node; node = node.parentElement) layers.push(parse(getComputedStyle(node).backgroundColor));
+  let ground = { r: 255, g: 255, b: 255 };
+  for (const layer of layers.reverse()) {
+    ground = { r: layer.r * layer.a + ground.r * (1 - layer.a), g: layer.g * layer.a + ground.g * (1 - layer.a), b: layer.b * layer.a + ground.b * (1 - layer.a) };
+  }
+  const lum = c => [c.r, c.g, c.b].map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; })
+    .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+  const [hi, lo] = [lum(parse(getComputedStyle(el).color)), lum(ground)].sort((a, b) => b - a);
+  return (hi + 0.05) / (lo + 0.05);
+}"""
+
+
 def base58(raw: bytes) -> str:
     """Synthetic Solana-shaped address from random bytes; never a real wallet."""
     number, out = int.from_bytes(raw, "big"), ""
@@ -269,20 +288,15 @@ class WelcomeJourney(unittest.TestCase):
         ctx.close()
         self.assertEqual(self.problems, [])
 
-    @unittest.expectedFailure
     def test_confirm_page_is_readable(self):
-        """KNOWN DEFECT (#182 acceptance): /confirm-email-change paints light text on a white page.
-
-        Remove expectedFailure when the page gets the site's dark ground; it then guards the contrast.
-        """
+        """The painted ground under the heading (translucent layers composited) keeps WCAG AA contrast."""
         ctx, page = self.context()
         page.goto(f"{ENV['FE']}/confirm-email-change")
-        expect(page.get_by_role("heading", name="Confirm your new email")).to_be_visible(timeout=15000)
-        ground = page.evaluate("getComputedStyle(document.body).backgroundColor")
-        channels = [int(v) for v in re.findall(r"\d+", ground)[:3]]
+        heading = page.get_by_role("heading", name="Confirm your new email")
+        expect(heading).to_be_visible(timeout=15000)
+        ratio = heading.evaluate(CONTRAST_JS)
         ctx.close()
-        self.assertLess(sum(channels) / 3, 60, f"page ground {ground} is not dark")
-
+        self.assertGreaterEqual(ratio, 4.5, f"heading contrast {ratio:.2f} on the painted ground")
 
 if __name__ == "__main__":
     unittest.main()
