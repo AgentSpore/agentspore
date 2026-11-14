@@ -1,10 +1,14 @@
 """Append trusted operator reviews without changing reward entitlements."""
 
+from datetime import datetime, timedelta
+
 from app.models.user import User
 from app.repositories.welcome_reward_repo import WelcomeRewardRepository
 from app.schemas.welcome_reward_decisions import WelcomeRewardDecision, WelcomeRewardDecisionResult
 from app.services.email_proof_service import EmailProofService
 from app.services.welcome_beneficiary_service import WelcomeBeneficiaryService
+
+DECISION_TTL = timedelta(days=1)
 
 
 class WelcomeRewardDecisionService:
@@ -12,6 +16,30 @@ class WelcomeRewardDecisionService:
 
     def __init__(self, repo: WelcomeRewardRepository):
         self.repo = repo
+
+    @staticmethod
+    def allow_intent(
+        user: User, program: dict, grant: dict, authority_ref: str, now: datetime
+    ) -> WelcomeRewardDecision:
+        """Allow decision for one application, keyed by authority and revision so a re-run replays.
+
+        `grant["revision"]` (absent before the first decision) is the revision being superseded.
+        """
+        revision = grant.get("revision", 0)
+        return WelcomeRewardDecision(
+            grant_id=grant["id"],
+            owner_user_id=grant["owner_user_id"],
+            source_event=grant["source_event"],
+            policy_version=grant["tariff_version"] or program["tariff_version"],
+            outcome="allow",
+            beneficiary_key=WelcomeBeneficiaryService.email_key(user.email),
+            authority_ref=authority_ref,
+            evidence_ref=f"{authority_ref}:{grant['id']}:r{revision}",
+            expected_revision=revision,
+            email_proof_at=user.email_proof_at,
+            issued_at=now,
+            expires_at=now + DECISION_TTL,
+        )
 
     async def record(self, intent: WelcomeRewardDecision) -> WelcomeRewardDecisionResult:
         """Append one reviewed decision or return its exact historical receipt."""

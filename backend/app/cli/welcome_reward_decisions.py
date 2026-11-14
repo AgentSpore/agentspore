@@ -25,6 +25,7 @@ STORAGE_ERRORS = (
     OverflowError,
 )
 LOCK_TIMEOUT_SQLSTATE = "55P03"
+DEFAULT_MAX = 20
 # Model imports initialize database settings, and a settings ValidationError echoes env input.
 # Only configuration failures (settings, default secret, malformed or unknown database URL)
 # are masked; ImportError/TypeError from a code defect propagate as an ordinary traceback
@@ -32,10 +33,12 @@ LOCK_TIMEOUT_SQLSTATE = "55P03"
 try:
     from app.core.config import Settings, get_settings
     from app.repositories.welcome_auto_decision_repo import WelcomeAutoDecisionRepository
+    from app.repositories.welcome_review_repo import WelcomeReviewRepository
     from app.repositories.welcome_reward_repo import WelcomeRewardRepository
     from app.schemas.welcome_reward_decisions import WelcomeRewardDecision
     from app.services.welcome_auto_decision_service import WelcomeAutoDecisionService
     from app.services.welcome_beneficiary_service import WelcomeBeneficiaryService
+    from app.services.welcome_review_service import WelcomeReviewService
     from app.services.welcome_reward_decision_service import WelcomeRewardDecisionService
 except (ValueError, OSError, RuntimeError, ArgumentError):
     IMPORT_READY = False
@@ -57,6 +60,7 @@ EXIT_CODES = {
     "assessed": 0,
     "auto_decided": 0,
     "disabled": 13,
+    "approved_clean": 0,
 }
 
 
@@ -180,21 +184,23 @@ async def approve_in_transaction(
     return {"outcome": outcome}
 
 
-async def auto_decide(
-    session_factory: async_sessionmaker[AsyncSession] | None, rules: tuple[int, int], apply: bool
+async def shared_engine(
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    work: Callable[[async_sessionmaker[AsyncSession]], Awaitable[dict]],
+    failed: dict,
 ) -> dict:
-    """Share one engine across steps and dispose it once; report approvals made before a failure."""
+    """Run `work` on one engine (ours unless injected), disposed once; else `failed`."""
     engine = None
-    output: dict = {"verdict": "storage_error", "approved": 0, "applied": apply}
+    output = failed
     try:
         if session_factory is None:
             engine = create_async_engine(
                 get_settings().database_url, echo=False, isolation_level="READ COMMITTED"
             )
             session_factory = async_sessionmaker(engine, expire_on_commit=False)
-        output = await approve_all(session_factory, rules, apply)
+        output = await work(session_factory)
     except STORAGE_ERRORS:
-        output = {"verdict": "storage_error", "approved": 0, "applied": apply}
+        output = failed
     finally:
         if engine is not None:
             try:
@@ -202,6 +208,16 @@ async def auto_decide(
             except STORAGE_ERRORS:
                 output = output | {"verdict": "storage_error"}
     return output
+
+
+async def auto_decide(
+    session_factory: async_sessionmaker[AsyncSession] | None, rules: tuple[int, int], apply: bool
+) -> dict:
+    """Share one engine across steps; report approvals made before a failure."""
+    failed = {"verdict": "storage_error", "approved": 0, "applied": apply}
+    return await shared_engine(
+        session_factory, lambda factory: approve_all(factory, rules, apply), failed
+    )
 
 
 async def approve_all(
@@ -259,6 +275,127 @@ async def run_auto_decide(
     return EXIT_CODES[output["verdict"]]
 
 
+def review_service(db: AsyncSession) -> WelcomeReviewService:
+    """Bind the review reads and the manual decision writer to one session."""
+    return WelcomeReviewService(
+        WelcomeRewardRepository(db),
+        WelcomeReviewRepository(db),
+        WelcomeAutoDecisionRepository(db),
+        get_settings().welcome_auto_min_account_age_days,
+    )
+
+
+def age_text(seconds: int) -> str:
+    """Compact age: minutes under two hours, hours under two days, else days."""
+    if seconds < 7200:
+        return f"{seconds // 60}m"
+    return f"{seconds // 3600}h" if seconds < 172800 else f"{seconds // 86400}d"
+
+
+def render_review(rows: list, total: int) -> str:
+    """Fixed-column table plus a counter line; the address is masked, nothing else identifies."""
+    lines = ["GRANT     AGE   EMAIL_DUP  WALLET_DUP  EMAIL                 HOLDS"]
+    for row in rows:
+        lines.append(
+            f"{str(row.grant_id)[:8]}  {age_text(row.age_seconds):<5} "
+            f"{'yes' if row.email_match else '-':<10} {'yes' if row.wallet_match else '-':<11} "
+            f"{row.email_masked:<21} {','.join(row.holds) or ('expired' if row.expired else '-')}"
+        )
+    clean = sum(row.clean for row in rows)
+    return "\n".join([*lines, f"pending={total} shown={len(rows)} clean={clean}"]) + "\n"
+
+
+async def read_pending(session_factory: async_sessionmaker[AsyncSession] | None) -> dict:
+    """Read-only snapshot: the oldest applications with their holds, and the full count."""
+
+    async def listing(db: AsyncSession) -> dict:
+        service = review_service(db)
+        found = {"rows": await service.rows(), "total": await service.total()}
+        await db.rollback()
+        return found
+
+    return await in_session(session_factory, listing)
+
+
+def finish(output: dict, destination: TextIO) -> int:
+    """Write a fixed-verdict JSON line and map it to its exit code."""
+    destination.write(json.dumps(output) + "\n")
+    return EXIT_CODES[output["verdict"]]
+
+
+async def run_review(
+    destination: TextIO, session_factory: async_sessionmaker[AsyncSession] | None = None
+) -> int:
+    """Print the pending-application table; writes nothing."""
+    if not IMPORT_READY:
+        return finish({"verdict": "configuration_error"}, destination)
+    found = await read_pending(session_factory)
+    if "rows" not in found:
+        return finish(found, destination)
+    destination.write(render_review(found["rows"], found["total"]))
+    return 0
+
+
+async def run_pending_signal(
+    destination: TextIO, session_factory: async_sessionmaker[AsyncSession] | None = None
+) -> int:
+    """Print the counters-only alert line when applications wait; silent otherwise."""
+    if not IMPORT_READY:
+        return finish({"verdict": "configuration_error"}, destination)
+    found = await read_pending(session_factory)
+    if "rows" not in found:
+        return finish(found, destination)
+    if found["total"] > 0:
+        clean = sum(row.clean for row in found["rows"])
+        alert = {"alert": "welcome_pending", "pending": found["total"], "clean": clean}
+        destination.write(json.dumps(alert) + "\n")
+    return 0
+
+
+async def approve_clean_one(db: AsyncSession, grant_id: UUID, apply: bool) -> dict:
+    """One approval per short transaction; a dry run rolls each back."""
+    outcome = await review_service(db).approve(grant_id)
+    if apply and outcome == "approved":
+        await db.commit()
+    else:
+        await db.rollback()
+    return {"outcome": outcome}
+
+
+async def approve_clean_all(
+    session_factory: async_sessionmaker[AsyncSession], apply: bool, limit: int | None
+) -> dict:
+    """List clean rows, then approve each in its own session; errors report approvals so far."""
+    found = await read_pending(session_factory)
+    if "rows" not in found:
+        return found | {"approved": 0, "applied": apply}
+    approved = 0
+    for row in [row for row in found["rows"] if row.clean][:limit]:
+        step = functools.partial(approve_clean_one, grant_id=row.grant_id, apply=apply)
+        result = await in_session(session_factory, step)
+        if "outcome" not in result:
+            return result | {"approved": approved, "applied": apply}
+        approved += result["outcome"] == "approved"
+    output = {"verdict": "approved_clean", "approved": approved, "applied": apply}
+    return output | {"left": found["total"] - approved}
+
+
+async def run_approve_clean(
+    destination: TextIO,
+    apply: bool = False,
+    limit: int | None = None,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> int:
+    """Approve applications without holds or duplicate matches; dry run unless `apply`."""
+    if not IMPORT_READY:
+        return finish({"verdict": "configuration_error"}, destination)
+    failed = {"verdict": "storage_error", "approved": 0, "applied": apply}
+    output = await shared_engine(
+        session_factory, lambda factory: approve_clean_all(factory, apply, limit), failed
+    )
+    return finish(output, destination)
+
+
 async def run(
     source: TextIO,
     destination: TextIO,
@@ -283,21 +420,54 @@ async def run(
     return EXIT_CODES[output["verdict"]]
 
 
-def main(arguments: list[str], source: TextIO, destination: TextIO) -> int:
-    """Accept `--apply`, `assess --user-id` or `auto-decide [--apply]`; never echo others."""
-    if arguments[:1] == ["assess"]:
-        if len(arguments) != 3 or arguments[1] != "--user-id":
-            destination.write('{"verdict": "invalid_input"}\n')
-            return 5
-        return asyncio.run(run_assess(arguments[2], destination))
-    if arguments[:1] == ["auto-decide"]:
-        if arguments[1:] not in ([], ["--apply"]):
-            destination.write('{"verdict": "invalid_input"}\n')
-            return 5
-        return asyncio.run(run_auto_decide(destination, apply=len(arguments) > 1))
+def main_approve_clean(arguments: list[str], destination: TextIO) -> int:
+    """Parse `[--max N] [--apply]`; N must be a positive integer, default DEFAULT_MAX."""
+    apply = "--apply" in arguments
+    rest = [a for a in arguments if a != "--apply"]
+    limit = DEFAULT_MAX
+    if rest[:1] == ["--max"] and len(rest) == 2 and rest[1].isdecimal() and int(rest[1]) > 0:
+        limit, rest = int(rest[1]), []
+    if rest or arguments.count("--apply") > 1:
+        return finish({"verdict": "invalid_input"}, destination)
+    return asyncio.run(run_approve_clean(destination, apply, limit))
+
+
+def main_assess(arguments: list[str], destination: TextIO) -> int:
+    """Parse `--user-id <uuid>` for `assess`."""
+    if len(arguments) != 2 or arguments[0] != "--user-id":
+        return finish({"verdict": "invalid_input"}, destination)
+    return asyncio.run(run_assess(arguments[1], destination))
+
+
+def main_auto_decide(arguments: list[str], destination: TextIO) -> int:
+    """Parse `[--apply]` for `auto-decide`."""
     if arguments not in ([], ["--apply"]):
-        destination.write('{"verdict": "invalid_input"}\n')
-        return 5
+        return finish({"verdict": "invalid_input"}, destination)
+    return asyncio.run(run_auto_decide(destination, apply=bool(arguments)))
+
+
+def main_readonly(arguments: list[str], destination: TextIO, runner) -> int:
+    """`review` and `pending-signal` take no arguments."""
+    if arguments:
+        return finish({"verdict": "invalid_input"}, destination)
+    return asyncio.run(runner(destination))
+
+
+def main(arguments: list[str], source: TextIO, destination: TextIO) -> int:
+    """Accept `--apply`, `assess --user-id`, `auto-decide [--apply]`, `review`, `pending-signal`
+    or `approve-clean [--max N] [--apply]`; never echo others."""
+    command, rest = arguments[:1], arguments[1:]
+    routes = {
+        "assess": lambda: main_assess(rest, destination),
+        "auto-decide": lambda: main_auto_decide(rest, destination),
+        "approve-clean": lambda: main_approve_clean(rest, destination),
+        "review": lambda: main_readonly(rest, destination, run_review),
+        "pending-signal": lambda: main_readonly(rest, destination, run_pending_signal),
+    }
+    if command and command[0] in routes:
+        return routes[command[0]]()
+    if arguments not in ([], ["--apply"]):
+        return finish({"verdict": "invalid_input"}, destination)
     return asyncio.run(run(source, destination, apply=bool(arguments)))
 
 

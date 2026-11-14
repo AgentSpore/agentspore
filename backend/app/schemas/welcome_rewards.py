@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, computed_field
 
@@ -19,8 +20,14 @@ class WelcomePayout(BaseModel):
 class WelcomeAction(BaseModel):
     """An existing endpoint the card calls inline to finish the current step."""
 
-    id: Literal["email_proof_request", "email_proof_confirm", "wallet_bind", "welcome_application"]
-    method: Literal["POST", "PATCH"]
+    id: Literal[
+        "email_proof_request",
+        "email_proof_confirm",
+        "wallet_bind",
+        "welcome_application",
+        "github_relink",
+    ]
+    method: Literal["GET", "POST", "PATCH"]
     path: str
 
 
@@ -48,6 +55,8 @@ class WelcomeRewardView(BaseModel):
             "wallet_missing",
             "wallet_already_used",
             "github_too_new",
+            "github_age_unknown",
+            "other_hold",
         ]
     ] = []
     payout: WelcomePayout | None = None
@@ -55,6 +64,7 @@ class WelcomeRewardView(BaseModel):
     next_step: Literal[
         "confirm_email",
         "change_email",
+        "relink_github",
         "bind_wallet",
         "apply",
         "wait_review",
@@ -72,3 +82,24 @@ class WelcomeRewardView(BaseModel):
             "funding_unavailable": "await_funding",
             "program_disabled": "await_program",
         }.get(self.reason, "none")
+
+
+class WelcomeReviewRow(BaseModel):
+    """One pending application as the operator sees it: masked email, no keys or wallets."""
+
+    grant_id: UUID
+    age_seconds: int
+    holds: tuple[str, ...]
+    email_match: bool
+    email_masked: str
+    owner_user_id: UUID
+    revision: int = 0
+    expired: bool = False
+
+    @property
+    def wallet_match(self) -> bool:
+        return "wallet_already_used" in self.holds
+
+    @property
+    def clean(self) -> bool:
+        return not self.holds and not self.email_match
