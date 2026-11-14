@@ -360,8 +360,10 @@ async def refresh_token(
 
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: CurrentUser):
-    """Получить текущего пользователя."""
-    return current_user
+    """Получить текущего пользователя; хеш пароля наружу не отдаётся, только факт его наличия."""
+    return UserResponse.model_validate(current_user).model_copy(
+        update={"has_password": bool(current_user.hashed_password)}
+    )
 
 
 # === Password Reset ===

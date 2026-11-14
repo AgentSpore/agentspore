@@ -1,7 +1,10 @@
 """Email change over HTTP on real PostgreSQL, including its welcome-reward consequences."""
 
 import hashlib
+import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -13,9 +16,11 @@ from test_welcome_rewards import ledger as _ledger
 
 from app.api import deps
 from app.api.deps import get_current_user
+from app.api.v1.auth import get_me
 from app.core.redis_client import get_redis
 from app.core.security import get_password_hash
 from app.main import app
+from app.models.user import User
 from app.repositories.welcome_reward_repo import WelcomeRewardRepository
 from app.services.email_service import get_email_service
 from app.services.welcome_beneficiary_service import WelcomeBeneficiaryService
@@ -391,3 +396,54 @@ async def test_final_step_rechecks_that_the_address_is_still_free(api):
         await db.execute(text("UPDATE users SET email=:e WHERE id=:o"), {"e": NEW, "o": api.other})
     assert (await api.client.post(CONFIRM, json={"token": token_of(api)})).status_code == 400
     assert (await row(api)).email == "synthetic@example.com"
+
+
+async def test_step_is_pinned_per_path_for_password_accounts(api):
+    taken = await ask(api, "OTHER@example.com")
+    fresh = await ask(api)
+    assert taken.json()["step"] == fresh.json()["step"] == "confirm_new"
+    assert taken.content == fresh.content
+    done = await api.client.post(CONFIRM, json={"token": token_of(api)})
+    assert done.json()["step"] == "done"
+
+
+async def test_step_is_pinned_per_path_for_oauth_only_accounts(api):
+    await oauth_only(api)
+    taken = await ask(api, "OTHER@example.com", password=None)
+    fresh = await ask(api, password=None)
+    assert taken.json()["step"] == fresh.json()["step"] == "approve_old"
+    assert taken.content == fresh.content
+    approved = await api.client.post(CONFIRM, json={"token": old_token_of(api)})
+    assert approved.json()["step"] == "confirm_new"
+    done = await api.client.post(CONFIRM, json={"token": token_of(api)})
+    assert done.json()["step"] == "done"
+
+
+async def test_oauth_only_taken_approval_reply_is_byte_identical_to_free(api):
+    await oauth_only(api)
+    await ask(api, "OTHER@example.com", password=None)
+    taken = await api.client.post(CONFIRM, json={"token": old_token_of(api)})
+    await ask(api, password=None)
+    free = await api.client.post(CONFIRM, json={"token": old_token_of(api)})
+    assert taken.content == free.content
+    assert free.json()["step"] == "confirm_new"
+
+
+@pytest.mark.parametrize(
+    ("hashed", "expected"), [("$2b$12$hash", True), (None, False), ("", False)]
+)
+async def test_current_user_exposes_has_password_but_never_the_hash(hashed, expected):
+    user = SimpleNamespace(
+        id=uuid.uuid4(),
+        email="a@example.com",
+        name="A",
+        avatar_url=None,
+        token_balance=0,
+        is_verified=True,
+        solana_wallet=None,
+        created_at=datetime.now(timezone.utc),
+        hashed_password=hashed,
+    )
+    body = (await get_me(cast(User, user))).model_dump()
+    assert body["has_password"] is expected
+    assert "hashed_password" not in body
