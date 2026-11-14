@@ -87,6 +87,7 @@ class UserResponse(BaseModel):
     token_balance: int
     is_verified: bool = False
     solana_wallet: str | None = None
+    has_password: bool = False
     created_at: datetime
 
     class Config:

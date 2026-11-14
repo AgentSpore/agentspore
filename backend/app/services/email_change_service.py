@@ -17,6 +17,7 @@ from app.core.config import get_settings
 from app.core.security import verify_password
 from app.models.user import User
 from app.repositories.email_proof_repo import EmailProofRepository
+from app.schemas.email_change import EmailChangeResponse
 from app.services.email_proof_service import EmailProofService
 from app.services.email_service import EmailService
 from app.services.welcome_beneficiary_service import WelcomeBeneficiaryService
@@ -50,7 +51,9 @@ class EmailChangeService:
     ):
         self.repo, self.redis, self.mail, self.background = repo, redis, mail, background
 
-    async def request(self, user_id: UUID, new_email: str, password: str | None) -> str:
+    async def request(
+        self, user_id: UUID, new_email: str, password: str | None
+    ) -> EmailChangeResponse:
         """Start a change; the reply never depends on whether the target address is registered."""
         user = await self.repo.lock_user(user_id)
         if user is None or not user.is_verified:
@@ -65,13 +68,13 @@ class EmailChangeService:
             # The reply and the mail depend on the account type only; taken or unchanged
             # targets are decided after the current address approved.
             await self._issue(user, new_email, OLD_PURPOSE)
-            return APPROVE_FIRST
+            return EmailChangeResponse(message=APPROVE_FIRST, step="approve_old")
         if new_email == user.email.lower() or await self.repo.email_taken(new_email, user_id):
-            return GENERIC
+            return EmailChangeResponse(message=GENERIC, step="confirm_new")
         await self._issue(user, new_email, PURPOSE)
-        return GENERIC
+        return EmailChangeResponse(message=GENERIC, step="confirm_new")
 
-    async def confirm(self, user_id: UUID, token: str) -> str:
+    async def confirm(self, user_id: UUID, token: str) -> EmailChangeResponse:
         """Approve from the old address (step one) or switch to the new one (final step)."""
         user = await self.repo.lock_user(user_id)
         digest = hashlib.sha256(token.encode()).hexdigest()
@@ -91,7 +94,7 @@ class EmailChangeService:
                 self._clear_pending(user)
             else:
                 await self._issue(user, new_email, PURPOSE)
-            return APPROVED
+            return EmailChangeResponse(message=APPROVED, step="confirm_new")
         if unusable:
             raise HTTPException(400, INVALID_LINK)
         old_email = user.email
@@ -102,7 +105,7 @@ class EmailChangeService:
         EmailProofService.record(user, new_email, "email_link")
         await self.repo.flush()
         self.background.add_task(self._deliver, self.mail.send_email_changed_notice, old_email)
-        return "Email changed."
+        return EmailChangeResponse(message="Email changed.", step="done")
 
     @staticmethod
     def _pending_matches(user: User, digest: str) -> tuple[str, str] | None:
