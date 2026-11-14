@@ -23,8 +23,11 @@ from app.services.welcome_beneficiary_service import WelcomeBeneficiaryService
 
 PURPOSE = "email_change"
 OLD_PURPOSE = "email_change_old"
+INVALID_LINK = "Invalid or expired email change link"
 UNAVAILABLE = "Email change is temporarily unavailable"
 GENERIC = "If the address can be used, a confirmation link was sent to it."
+APPROVE_FIRST = "Approve the change from your current address first, then confirm the new one."
+APPROVED = "Approved. If the new address can be used, a confirmation link was sent to it."
 REWARD_PENDING = (
     "Your welcome reward is being processed; you can change your email after it is paid"
 )
@@ -48,7 +51,7 @@ class EmailChangeService:
         self.repo, self.redis, self.mail, self.background = repo, redis, mail, background
 
     async def request(self, user_id: UUID, new_email: str, password: str | None) -> str:
-        """Start a change; usable, taken and unchanged addresses get the same reply."""
+        """Start a change; the reply never depends on whether the target address is registered."""
         user = await self.repo.lock_user(user_id)
         if user is None or not user.is_verified:
             raise HTTPException(403, "A verified account is required")
@@ -58,33 +61,39 @@ class EmailChangeService:
             raise HTTPException(409, REWARD_PENDING)
         if WelcomeBeneficiaryService.is_disposable_domain(new_email.rpartition("@")[2]):
             raise HTTPException(422, "Disposable email addresses are not accepted")
+        if not user.hashed_password:
+            # The reply and the mail depend on the account type only; taken or unchanged
+            # targets are decided after the current address approved.
+            await self._issue(user, new_email, OLD_PURPOSE)
+            return APPROVE_FIRST
         if new_email == user.email.lower() or await self.repo.email_taken(new_email, user_id):
             return GENERIC
-        await self._issue(user, new_email, PURPOSE if user.hashed_password else OLD_PURPOSE)
+        await self._issue(user, new_email, PURPOSE)
         return GENERIC
 
     async def confirm(self, user_id: UUID, token: str) -> str:
         """Approve from the old address (step one) or switch to the new one (final step)."""
         user = await self.repo.lock_user(user_id)
         digest = hashlib.sha256(token.encode()).hexdigest()
-        new_email = user.verification_email if user else None
-        purpose = user.verification_purpose if user else None
-        if (
-            user is None
-            or not user.is_verified
-            or purpose not in (PURPOSE, OLD_PURPOSE)
-            or not new_email
-            or not user.verification_token
-            or not secrets.compare_digest(user.verification_token, digest)
-            or user.verification_expires_at is None
-            or user.verification_expires_at <= datetime.now(timezone.utc)
-            or not await self._consume(user_id, purpose, digest)
-            or await self.repo.email_taken(new_email, user_id)
-        ):
-            raise HTTPException(400, "Invalid or expired email change link")
+        pending = self._pending_matches(user, digest) if user else None
+        if user is None or pending is None:
+            raise HTTPException(400, INVALID_LINK)
+        if await self.repo.welcome_reward_unpaid(user_id):
+            raise HTTPException(409, REWARD_PENDING)
+        purpose, new_email = pending
+        if not await self._consume(user_id, purpose, digest):
+            raise HTTPException(400, INVALID_LINK)
+        unusable = new_email == user.email.lower() or await self.repo.email_taken(
+            new_email, user_id
+        )
         if purpose == OLD_PURPOSE:
-            await self._issue(user, new_email, PURPOSE)
-            return "Approved. Now confirm the link sent to the new address."
+            if unusable:
+                self._clear_pending(user)
+            else:
+                await self._issue(user, new_email, PURPOSE)
+            return APPROVED
+        if unusable:
+            raise HTTPException(400, INVALID_LINK)
         old_email = user.email
         user.email = new_email
         self._clear_pending(user)
@@ -94,6 +103,22 @@ class EmailChangeService:
         await self.repo.flush()
         self.background.add_task(self._deliver, self.mail.send_email_changed_notice, old_email)
         return "Email changed."
+
+    @staticmethod
+    def _pending_matches(user: User, digest: str) -> tuple[str, str] | None:
+        """(purpose, new email) when the stored pending change matches the token digest."""
+        purpose, new_email = user.verification_purpose, user.verification_email
+        if (
+            user.is_verified
+            and purpose in (PURPOSE, OLD_PURPOSE)
+            and new_email
+            and user.verification_token
+            and secrets.compare_digest(user.verification_token, digest)
+            and user.verification_expires_at
+            and user.verification_expires_at > datetime.now(timezone.utc)
+        ):
+            return purpose, new_email
+        return None
 
     async def _admit(self, user_id: UUID) -> None:
         try:
