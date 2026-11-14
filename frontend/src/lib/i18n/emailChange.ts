@@ -23,6 +23,7 @@ export const emailChangeMessages = {
     invalid: 'This link is invalid or has expired. Start the change again from your profile.',
     pending: 'Your welcome reward is being processed. You can change your email after it is paid.',
     network: 'Could not reach the server. Your link is still valid, please try again.',
+    down: 'The service is temporarily unavailable. Please try again later.',
     retry: 'Try again', toProfile: 'Go to profile',
   },
   ru: {
@@ -49,6 +50,7 @@ export const emailChangeMessages = {
     invalid: 'Ссылка недействительна или устарела. Начните смену заново в профиле.',
     pending: 'Приветственная награда обрабатывается. Сменить почту можно после её выплаты.',
     network: 'Не удалось связаться с сервером. Ссылка ещё действует, попробуйте снова.',
+    down: 'Сервис временно недоступен. Повторите попытку позже.',
     retry: 'Повторить', toProfile: 'Перейти в профиль',
   },
 } as const;

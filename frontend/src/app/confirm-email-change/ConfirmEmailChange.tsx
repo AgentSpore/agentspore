@@ -6,7 +6,7 @@ import { emailChangeMessages } from '@/lib/i18n/emailChange';
 import { useEmailChangeConfirm, type EmailChangeOutcome } from './useEmailChangeConfirm';
 
 const LINK = 'inline-flex min-h-11 items-center justify-center rounded-lg border border-neutral-600 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800';
-const FAILED: EmailChangeOutcome[] = ['missing', 'invalid', 'pending', 'network'];
+const FAILED: EmailChangeOutcome[] = ['missing', 'invalid', 'pending', 'down', 'network'];
 
 export function ConfirmEmailChange() {
   const tr = useTranslations(emailChangeMessages);
@@ -19,7 +19,7 @@ export function ConfirmEmailChange() {
         {tr(outcome)}
       </p>
       {outcome === 'needSignIn' && <Link href="/login?next=/confirm-email-change" className={LINK}>{tr('signInLink')}</Link>}
-      {outcome === 'network' && <button type="button" onClick={retry} className={LINK}>{tr('retry')}</button>}
+      {(outcome === 'network' || outcome === 'down') && <button type="button" onClick={retry} className={LINK}>{tr('retry')}</button>}
       {(outcome === 'done' || outcome === 'approved' || outcome === 'invalid' || outcome === 'pending') &&
         <Link href="/profile" className={LINK}>{tr('toProfile')}</Link>}
     </section>
