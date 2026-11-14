@@ -210,3 +210,10 @@ it('gives the wallet field a format hint without internal limits', () => {
   expect(screen.getByText(m.en.walletHint).textContent).toMatch(/32.44/);
   expect(screen.getByLabelText(m.en.walletLabel).getAttribute('placeholder')).toBe(m.en.walletPlaceholder);
 });
+
+it('puts the current-step marker on the email step while the email must be changed', () => {
+  const steps = STEP_IDS.map(id => ({ id, done: id === 'wallet' || id === 'application' }));
+  mount(wire({ steps, hold_reasons: ['disposable_email'], next_step: 'change_email' }));
+  const items = within(screen.getByRole('list', { name: m.en.stepsLabel })).getAllByRole('listitem');
+  expect(items.map(step => step.getAttribute('aria-current'))).toEqual(['step', null, null, null, null]);
+});
