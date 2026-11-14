@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { API_URL } from '@/lib/api';
-import { getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from '@/lib/auth';
+import { fetchWithAuth, getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from '@/lib/auth';
+import { readEmailChangeStep } from '@/lib/welcome-email-change';
 
 export type EmailChangeOutcome =
-  'reading' | 'missing' | 'needSignIn' | 'working' | 'done' | 'approved' | 'invalid' | 'pending' | 'network';
+  'reading' | 'missing' | 'needSignIn' | 'working' | 'done' | 'approved' | 'invalid' | 'pending' | 'down' | 'network';
 
 const STASH_KEY = 'email_change_link';
-const FINAL: Partial<Record<number, EmailChangeOutcome>> = { 400: 'invalid', 409: 'pending' };
+const LINK_TTL_MS = 600000;
+const FINAL: Partial<Record<number, EmailChangeOutcome>> = { 400: 'invalid', 422: 'invalid', 409: 'pending' };
 
 /** The link token lives only in the fragment, so it never reaches a server or a log; the fragment is dropped once read. */
 function takeLinkToken(): string | null {
@@ -16,35 +18,40 @@ function takeLinkToken(): string | null {
     window.history.replaceState(null, '', window.location.pathname + window.location.search);
     return fromFragment;
   }
+  return readStash();
+}
+
+function readStash(): string | null {
   try {
-    return sessionStorage.getItem(STASH_KEY);
+    const raw = sessionStorage.getItem(STASH_KEY);
+    const stored: unknown = raw && JSON.parse(raw);
+    if (typeof stored === 'object' && stored !== null && 'token' in stored && 'until' in stored
+      && typeof stored.token === 'string' && typeof stored.until === 'number' && stored.until > Date.now()) return stored.token;
+    if (raw) sessionStorage.removeItem(STASH_KEY);
   } catch {
-    return null;
+    // Unreadable or denied storage counts as no stashed link.
   }
+  return null;
 }
 
 function stash(token: string | null) {
   try {
-    if (token) sessionStorage.setItem(STASH_KEY, token);
+    if (token) sessionStorage.setItem(STASH_KEY, JSON.stringify({ token, until: Date.now() + LINK_TTL_MS }));
     else sessionStorage.removeItem(STASH_KEY);
   } catch {
     // Storage denied: the link still works while this tab stays on the page.
   }
 }
 
-async function postConfirm(accessToken: string, linkToken: string): Promise<EmailChangeOutcome> {
-  const response = await fetch(`${API_URL}/api/v1/users/me/email/change/confirm`, {
+async function postConfirm(linkToken: string): Promise<EmailChangeOutcome> {
+  const response = await fetchWithAuth(`${API_URL}/api/v1/users/me/email/change/confirm`, {
     method: 'POST', signal: AbortSignal.timeout(20000),
-    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token: linkToken }),
   });
   if (response.status === 401) return 'needSignIn';
-  if (response.ok) {
-    const body: unknown = await response.json().catch(() => null);
-    const message = typeof body === 'object' && body !== null && 'message' in body ? body.message : '';
-    return typeof message === 'string' && /^approved/i.test(message) ? 'approved' : 'done';
-  }
-  return FINAL[response.status] ?? 'network';
+  if (response.ok) return (await readEmailChangeStep(response, 'done')) === 'approve_old' ? 'approved' : 'done';
+  return FINAL[response.status] ?? 'down';
 }
 
 /** Confirms one email-change link once the visitor is signed in; the link survives a sign-in round trip. */
@@ -68,10 +75,10 @@ export function useEmailChangeConfirm() {
     started.current = key;
     const finish = (outcome: EmailChangeOutcome) => {
       if (!mounted.current) return;
-      if (outcome !== 'network' && outcome !== 'needSignIn') stash(null);
+      if (outcome !== 'network' && outcome !== 'needSignIn' && outcome !== 'down') stash(null);
       setResult(outcome);
     };
-    postConfirm(auth.accessToken, link).then(finish, () => finish('network'));
+    postConfirm(link).then(finish, () => finish('network'));
   }, [link, auth.accessToken, attempt]);
 
   let outcome: EmailChangeOutcome = result ?? 'working';
