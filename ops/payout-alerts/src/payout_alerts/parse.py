@@ -4,15 +4,28 @@ import json
 import re
 
 UNIT_FAILED_ID = "d9b373ed55a64feb8242e02dbe79a49c"
-WATCHED_UNIT = re.compile(r"payout-orchestrator\.service|payout-signer@[A-Za-z0-9_.:-]+\.service")
+WATCHED_UNIT = re.compile(
+    r"payout-orchestrator\.service|welcome-pending-signal\.service"
+    r"|payout-signer@[A-Za-z0-9_.:-]+\.service"
+)
 SAFE_VALUE = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
 ALERT_KEYS = ("alert", "intent_id", "error", "verdict")
+COUNT_ALERT = "welcome_pending"
+COUNT_KEYS = ("pending", "clean")
+MAX_COUNT = 1_000_000
 
 
 def safe(value: object) -> str:
     """The value itself when it is a short string of safe characters, else `?`."""
     if isinstance(value, str) and SAFE_VALUE.fullmatch(value):
         return value
+    return "?"
+
+
+def count(value: object) -> str:
+    """A plain non-negative integer up to MAX_COUNT as digits, else `?` (never a string)."""
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= MAX_COUNT:
+        return str(value)
     return "?"
 
 
@@ -47,4 +60,7 @@ def _json_alert(entry: dict) -> str | None:
         return None
     if not isinstance(body, dict) or not isinstance(body.get("alert"), str):
         return None
-    return " ".join(f"{key}={safe(body[key])}" for key in ALERT_KEYS if body.get(key) is not None)
+    parts = [f"{key}={safe(body[key])}" for key in ALERT_KEYS if body.get(key) is not None]
+    if body["alert"] == COUNT_ALERT:
+        parts += [f"{key}={count(body[key])}" for key in COUNT_KEYS if key in body]
+    return " ".join(parts)

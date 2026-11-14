@@ -69,3 +69,24 @@ def test_unit_failed_from_another_process_is_ignored():
     for pid, uid in (("4242", "1000"), ("4242", "0"), ("1", "1000"), (None, None)):
         forged = {**failed(), "_PID": pid, "_UID": uid}
         assert alert_text(forged) is None
+
+
+def test_welcome_pending_passes_only_numeric_counters():
+    msg = json.dumps({"alert": "welcome_pending", "pending": 3, "clean": 0})
+    assert alert_text(entry(msg, unit="welcome-pending-signal.service")) == (
+        "alert=welcome_pending pending=3 clean=0"
+    )
+
+
+@pytest.mark.parametrize("bad", ["3", "3; rm", True, -1, 10**7, 1.5, None, [3]])
+def test_welcome_pending_non_numbers_become_question_mark(bad):
+    msg = json.dumps({"alert": "welcome_pending", "pending": bad, "clean": 1})
+    out = alert_text(entry(msg, unit="welcome-pending-signal.service"))
+    assert out == "alert=welcome_pending pending=? clean=1"
+
+
+def test_counters_are_dropped_for_every_other_alert_and_extra_keys_never_pass():
+    msg = json.dumps({"alert": "other", "pending": 3, "email": "a@b.c"})
+    assert alert_text(entry(msg)) == "alert=other"
+    msg = json.dumps({"alert": "welcome_pending", "pending": 1, "clean": 1, "email": "a@b.c"})
+    assert alert_text(entry(msg)) == "alert=welcome_pending pending=1 clean=1"

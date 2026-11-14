@@ -6,14 +6,12 @@ from typing import Literal
 from app.models.user import User
 from app.repositories.welcome_auto_decision_repo import WelcomeAutoDecisionRepository
 from app.repositories.welcome_reward_repo import WelcomeRewardRepository
-from app.schemas.welcome_reward_decisions import WelcomeRewardDecision
 from app.services.welcome_beneficiary_service import WelcomeBeneficiaryService
 from app.services.welcome_reward_decision_service import WelcomeRewardDecisionService
 
 AUTHORITY_PREFIX = "auto:"
 RULE_VERSION = "v1"
 AUTHORITY_REF = f"{AUTHORITY_PREFIX}{RULE_VERSION}"
-DECISION_TTL = timedelta(days=1)
 
 Outcome = Literal["approved", "left", "capped"]
 
@@ -60,20 +58,7 @@ class WelcomeAutoDecisionService:
             return False
         if await self.auto_repo.beneficiary_approved_elsewhere(key, grant["id"]):
             return False
-        intent = WelcomeRewardDecision(
-            grant_id=grant["id"],
-            owner_user_id=grant["owner_user_id"],
-            source_event=grant["source_event"],
-            policy_version=grant["tariff_version"] or program["tariff_version"],
-            outcome="allow",
-            beneficiary_key=key,
-            authority_ref=AUTHORITY_REF,
-            evidence_ref=f"{AUTHORITY_REF}:{grant['id']}:r0",
-            expected_revision=0,
-            email_proof_at=user.email_proof_at,
-            issued_at=now,
-            expires_at=now + DECISION_TTL,
-        )
+        intent = WelcomeRewardDecisionService.allow_intent(user, program, grant, AUTHORITY_REF, now)
         result = await WelcomeRewardDecisionService(self.repo).record(intent)
         return result.verdict in {"recorded", "replayed"}
 

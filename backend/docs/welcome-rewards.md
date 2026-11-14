@@ -54,6 +54,14 @@ Funding entries accept a whole allocation once, with globally unique allocation 
 
 The single welcome program fixes mint, token program and decimals. Integer raw amounts are snapshotted when funded; asset, amount, owner, source, beneficiary and tariff cannot be reassigned. Financial foreign keys restrict deletion. Existing deposits, contribution points, payout intents and on-chain accounts are untouched.
 
+## Review and approve clean applications
+
+Run inside the backend container with the same entry point as the other decision commands:
+
+- `welcome_reward_decisions review`: table of the oldest undecided applications (age, e-mail duplicate, wallet duplicate, masked address, hold codes) and a final `pending=N shown=K clean=M` line. Read-only.
+- `welcome_reward_decisions approve-clean [--max N] [--apply]`: records an allow decision (authority `operator:clean-v1`, valid one day) for each application with no holds and no e-mail duplicate, through the manual decision writer, one transaction each. Without `--apply` it only reports `{"verdict": "approved_clean", "approved": N, "applied": false, ...}` and writes nothing. A re-run skips what is already decided. A missing wallet is a hold, so approval is not wasted before the owner can be paid.
+- `welcome_reward_decisions pending-signal`: prints `{"alert": "welcome_pending", "pending": N, "clean": M}` when `N > 0`, nothing otherwise. Counters only. Scheduling: `ops/payout-orchestrator/README.md`.
+
 ## Deployment and verification
 
 Apply V115 and its repeatable integrity migration before the backend. Application rollback retains the additive tables and triggers; never delete financial history. Only a disabled program is seeded.
