@@ -25,6 +25,7 @@ STORAGE_ERRORS = (
     OverflowError,
 )
 LOCK_TIMEOUT_SQLSTATE = "55P03"
+DEFAULT_MAX = 20
 # Model imports initialize database settings, and a settings ValidationError echoes env input.
 # Only configuration failures (settings, default secret, malformed or unknown database URL)
 # are masked; ImportError/TypeError from a code defect propagate as an ordinary traceback
@@ -183,21 +184,23 @@ async def approve_in_transaction(
     return {"outcome": outcome}
 
 
-async def auto_decide(
-    session_factory: async_sessionmaker[AsyncSession] | None, rules: tuple[int, int], apply: bool
+async def shared_engine(
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    work: Callable[[async_sessionmaker[AsyncSession]], Awaitable[dict]],
+    failed: dict,
 ) -> dict:
-    """Share one engine across steps and dispose it once; report approvals made before a failure."""
+    """Run `work` on one engine (ours unless injected), disposed once; else `failed`."""
     engine = None
-    output: dict = {"verdict": "storage_error", "approved": 0, "applied": apply}
+    output = failed
     try:
         if session_factory is None:
             engine = create_async_engine(
                 get_settings().database_url, echo=False, isolation_level="READ COMMITTED"
             )
             session_factory = async_sessionmaker(engine, expire_on_commit=False)
-        output = await approve_all(session_factory, rules, apply)
+        output = await work(session_factory)
     except STORAGE_ERRORS:
-        output = {"verdict": "storage_error", "approved": 0, "applied": apply}
+        output = failed
     finally:
         if engine is not None:
             try:
@@ -205,6 +208,16 @@ async def auto_decide(
             except STORAGE_ERRORS:
                 output = output | {"verdict": "storage_error"}
     return output
+
+
+async def auto_decide(
+    session_factory: async_sessionmaker[AsyncSession] | None, rules: tuple[int, int], apply: bool
+) -> dict:
+    """Share one engine across steps; report approvals made before a failure."""
+    failed = {"verdict": "storage_error", "approved": 0, "applied": apply}
+    return await shared_engine(
+        session_factory, lambda factory: approve_all(factory, rules, apply), failed
+    )
 
 
 async def approve_all(
@@ -268,6 +281,7 @@ def review_service(db: AsyncSession) -> WelcomeReviewService:
         WelcomeRewardRepository(db),
         WelcomeReviewRepository(db),
         WelcomeAutoDecisionRepository(db),
+        get_settings().welcome_auto_min_account_age_days,
     )
 
 
@@ -285,7 +299,7 @@ def render_review(rows: list, total: int) -> str:
         lines.append(
             f"{str(row.grant_id)[:8]}  {age_text(row.age_seconds):<5} "
             f"{'yes' if row.email_match else '-':<10} {'yes' if row.wallet_match else '-':<11} "
-            f"{row.email_masked:<21} {','.join(row.holds) or '-'}"
+            f"{row.email_masked:<21} {','.join(row.holds) or ('expired' if row.expired else '-')}"
         )
     clean = sum(row.clean for row in rows)
     return "\n".join([*lines, f"pending={total} shown={len(rows)} clean={clean}"]) + "\n"
@@ -348,6 +362,24 @@ async def approve_clean_one(db: AsyncSession, grant_id: UUID, apply: bool) -> di
     return {"outcome": outcome}
 
 
+async def approve_clean_all(
+    session_factory: async_sessionmaker[AsyncSession], apply: bool, limit: int | None
+) -> dict:
+    """List clean rows, then approve each in its own session; errors report approvals so far."""
+    found = await read_pending(session_factory)
+    if "rows" not in found:
+        return found | {"approved": 0, "applied": apply}
+    approved = 0
+    for row in [row for row in found["rows"] if row.clean][:limit]:
+        step = functools.partial(approve_clean_one, grant_id=row.grant_id, apply=apply)
+        result = await in_session(session_factory, step)
+        if "outcome" not in result:
+            return result | {"approved": approved, "applied": apply}
+        approved += result["outcome"] == "approved"
+    output = {"verdict": "approved_clean", "approved": approved, "applied": apply}
+    return output | {"left": found["total"] - approved}
+
+
 async def run_approve_clean(
     destination: TextIO,
     apply: bool = False,
@@ -357,19 +389,11 @@ async def run_approve_clean(
     """Approve applications without holds or duplicate matches; dry run unless `apply`."""
     if not IMPORT_READY:
         return finish({"verdict": "configuration_error"}, destination)
-    found = await read_pending(session_factory)
-    if "rows" not in found:
-        return finish(found, destination)
-    clean = [row for row in found["rows"] if row.clean][:limit]
-    approved = 0
-    for row in clean:
-        step = functools.partial(approve_clean_one, grant_id=row.grant_id, apply=apply)
-        result = await in_session(session_factory, step)
-        if "outcome" not in result:
-            return finish(result, destination)
-        approved += result["outcome"] == "approved"
-    output = {"verdict": "approved_clean", "approved": approved, "applied": apply}
-    return finish(output | {"left": found["total"] - approved}, destination)
+    failed = {"verdict": "storage_error", "approved": 0, "applied": apply}
+    output = await shared_engine(
+        session_factory, lambda factory: approve_clean_all(factory, apply, limit), failed
+    )
+    return finish(output, destination)
 
 
 async def run(
@@ -397,10 +421,10 @@ async def run(
 
 
 def main_approve_clean(arguments: list[str], destination: TextIO) -> int:
-    """Parse `[--max N] [--apply]`; N must be a positive integer."""
+    """Parse `[--max N] [--apply]`; N must be a positive integer, default DEFAULT_MAX."""
     apply = "--apply" in arguments
     rest = [a for a in arguments if a != "--apply"]
-    limit = None
+    limit = DEFAULT_MAX
     if rest[:1] == ["--max"] and len(rest) == 2 and rest[1].isdecimal() and int(rest[1]) > 0:
         limit, rest = int(rest[1]), []
     if rest or arguments.count("--apply") > 1:

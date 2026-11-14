@@ -19,7 +19,9 @@ HOLD_CODES = {
     "no_current_email_proof": "email_not_confirmed",
     "disposable_email_domain": "disposable_email",
     "github_account_too_new": "github_too_new",
+    "github_account_age_unknown": "github_age_unknown",
 }
+UNMAPPED_HOLD = "other_hold"
 ACTIONS = {
     "confirm_email": [
         WelcomeAction(
@@ -29,6 +31,7 @@ ACTIONS = {
             id="email_proof_confirm", method="POST", path="/api/v1/auth/email-proof/confirm"
         ),
     ],
+    "relink_github": [WelcomeAction(id="github_relink", method="GET", path="/api/v1/oauth/github")],
     "bind_wallet": [
         WelcomeAction(id="wallet_bind", method="PATCH", path="/api/v1/users/solana-wallet")
     ],
@@ -55,28 +58,34 @@ def payout_view(row: dict | None) -> WelcomePayout | None:
 def hold_reasons(user: User, now: datetime, wallet_taken: bool) -> list[str]:
     """User-facing hold codes in the order the owner can resolve them."""
     found = WelcomeBeneficiaryService.evaluate(user, now).holds
-    codes = [HOLD_CODES[hold] for hold in found if hold in HOLD_CODES]
+    codes = list(dict.fromkeys(HOLD_CODES.get(hold, UNMAPPED_HOLD) for hold in found))
     if not user.solana_wallet:
         codes.append("wallet_missing")
     elif wallet_taken:
         codes.append("wallet_already_used")
-    order = list(HOLD_CODES.values()) + ["wallet_missing", "wallet_already_used"]
+    order = [*HOLD_CODES.values(), UNMAPPED_HOLD, "wallet_missing", "wallet_already_used"]
     return sorted(codes, key=order.index)
 
 
-def next_step(view: WelcomeRewardView, holds: list[str], payout: WelcomePayout | None) -> str:
+def next_step(
+    view: WelcomeRewardView, holds: list[str], payout: WelcomePayout | None, decided: bool
+) -> str:
     """One action or one plain wait for every combination; terminal states have none."""
     if payout:
         return "none" if payout.state == "confirmed" else "wait_payout"
     for hold, step in (
         ("disposable_email", "change_email"),
+        ("github_age_unknown", "relink_github"),
         ("email_not_confirmed", "confirm_email"),
         ("wallet_missing", "bind_wallet"),
         ("wallet_already_used", "bind_wallet"),
     ):
         if hold in holds:
             return step
-    return "apply" if view.reason == "not_applied" else "wait_review"
+    if view.reason == "not_applied":
+        return "apply"
+    waiting = decided or view.reason in ("reserved", "available", "funding_unavailable")
+    return "wait_payout" if waiting else "wait_review"
 
 
 @dataclass(frozen=True)
@@ -97,7 +106,7 @@ def progress(view: WelcomeRewardView, facts: WelcomeFacts, now: datetime) -> Wel
         return view.model_copy(update={"steps": steps(facts, None)})
     payout = payout_view(facts.payout_row)
     holds = [] if payout else hold_reasons(user, now, facts.wallet_taken)
-    step = next_step(view, holds, payout)
+    step = next_step(view, holds, payout, facts.decided)
     wait = None
     if "github_too_new" in holds and user.oauth_account_created_at:
         wait = user.oauth_account_created_at + WelcomeBeneficiaryService.MIN_ACCOUNT_AGE
