@@ -4,6 +4,7 @@ import { API_URL } from '@/lib/api';
 import { fetchWithAuth } from '@/lib/auth';
 import { useTranslations } from '@/lib/i18n/LocaleProvider';
 import { welcomeRewardMessages } from '@/lib/i18n/welcomeReward';
+import { WELCOME_FOCUS } from './focus';
 
 type Failure = 'walletTaken' | 'walletInvalid' | 'walletFailed' | 'signIn';
 const ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -48,11 +49,11 @@ export function WalletBind({ token, onBound }: { token: string; onBound: () => v
   return <form onSubmit={event => void submit(event)} className="space-y-3">
     <label htmlFor="welcome-wallet" className="block text-sm text-neutral-100">{tr('walletLabel')}</label>
     <input id="welcome-wallet" value={address} onChange={event => setAddress(event.target.value)} disabled={busy}
-      autoComplete="off" autoCapitalize="none" spellCheck={false} required aria-invalid={failure === 'walletInvalid' || failure === 'walletTaken'}
+      placeholder={tr('walletPlaceholder')} autoComplete="off" autoCapitalize="none" spellCheck={false} required aria-invalid={failure === 'walletInvalid' || failure === 'walletTaken'}
       aria-describedby={`welcome-wallet-hint${failure ? ' welcome-wallet-notice' : ''}`}
-      className="min-h-11 w-full min-w-0 rounded-lg border border-neutral-600 bg-neutral-950 px-3 py-2 font-mono text-sm text-white" />
+      className={`min-h-11 w-full min-w-0 rounded-lg border border-neutral-600 bg-neutral-950 px-3 py-2 font-mono text-sm text-white ${WELCOME_FOCUS}`} />
     <p id="welcome-wallet-hint" className="text-xs text-neutral-300">{tr('walletHint')}</p>
-    <button type="submit" disabled={busy} className="min-h-11 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800 disabled:opacity-50">
+    <button type="submit" disabled={busy} className={`min-h-11 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800 disabled:opacity-50 ${WELCOME_FOCUS}`}>
       {tr(busy ? 'walletSaving' : 'walletSave')}
     </button>
     {failure && <p id="welcome-wallet-notice" role="alert" className="text-sm text-red-300">

@@ -348,3 +348,64 @@ it.each(['en', 'ru'] as const)('describes payout availability without a schedule
   expect(text).toContain(locale === 'en' ? 'Payouts are not enabled.' : 'Выплаты пока не включены.');
   expect(text).toContain(locale === 'en' ? 'Saving an address does not send a payment.' : 'Сохранение адреса не отправляет выплату.');
 });
+
+it('leaves the wallet step to the welcome card while it asks for the wallet', async () => {
+  const welcome = { state: 'application', reason: 'risk_review', amount_raw: null, decimals: 6, asset: 'ASPORE', next_action: 'await_review',
+    steps: ['email', 'wallet', 'application', 'review', 'payout'].map(id => ({ id, done: id !== 'wallet' && id !== 'review' && id !== 'payout' })),
+    hold_reasons: ['wallet_missing'], payout: null, wait_until: null, next_step: 'bind_wallet', actions: [] };
+  vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) => {
+    if (String(url).endsWith('/rewards/welcome')) return Response.json(welcome);
+    if (String(url).endsWith('/auth/me')) return Response.json(user('Synthetic owner'));
+    if (String(url).endsWith('/users/me/aspore')) return Response.json({ aspore_balance: 0 });
+    return Response.json([]);
+  }));
+  localStorage.setItem('access_token', 'synthetic-wallet-session');
+  render(<LocaleProvider initialLocale="en"><ProfilePage /></LocaleProvider>);
+  expect(await screen.findByLabelText('Solana wallet address')).toBeTruthy();
+  expect(screen.getAllByLabelText(/Solana wallet address/i)).toHaveLength(1);
+  expect(screen.queryByPlaceholderText(accountMessages.en.solanaWalletAddress)).toBeNull();
+});
+
+it('drops the "not enabled" notes once the welcome program is active', async () => {
+  const welcome = { state: 'application', reason: 'risk_review', amount_raw: null, decimals: 6, asset: 'ASPORE', next_action: 'await_review',
+    steps: [], hold_reasons: [], payout: null, wait_until: null, next_step: 'wait_review', actions: [] };
+  vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) => {
+    if (String(url).endsWith('/rewards/welcome')) return Response.json(welcome);
+    if (String(url).endsWith('/auth/me')) return Response.json(user('Synthetic owner'));
+    return Response.json([]);
+  }));
+  localStorage.setItem('access_token', 'synthetic-wallet-session');
+  render(<LocaleProvider initialLocale="en"><ProfilePage /></LocaleProvider>);
+  await screen.findByText(accountMessages.en.walletNoteWelcomeActive);
+  expect(screen.getByRole('main').textContent).not.toContain('not enabled');
+});
+
+it('hides the legacy wallet section while the stepper shows an unfinished wallet step, whatever the next step', async () => {
+  const welcome = { state: 'application', reason: 'risk_review', amount_raw: null, decimals: 6, asset: 'ASPORE', next_action: 'await_review',
+    steps: ['email', 'wallet', 'application', 'review', 'payout'].map(id => ({ id, done: id === 'application' })),
+    hold_reasons: ['disposable_email', 'wallet_missing'], payout: null, wait_until: null, next_step: 'change_email', actions: [] };
+  vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) => {
+    if (String(url).endsWith('/rewards/welcome')) return Response.json(welcome);
+    if (String(url).endsWith('/auth/me')) return Response.json(user('Synthetic owner'));
+    return Response.json([]);
+  }));
+  localStorage.setItem('access_token', 'synthetic-wallet-session');
+  render(<LocaleProvider initialLocale="en"><ProfilePage /></LocaleProvider>);
+  await screen.findByText('Use a different email address');
+  expect(screen.queryByPlaceholderText(accountMessages.en.solanaWalletAddress)).toBeNull();
+  expect(screen.queryByText(accountMessages.en.walletSolana)).toBeNull();
+});
+
+it('keeps the legacy wallet input when the welcome state is disabled and the stepper has nothing to offer', async () => {
+  const welcome = { state: 'disabled', reason: 'program_disabled', amount_raw: null, decimals: 6, asset: 'ASPORE', next_action: 'none',
+    steps: ['email', 'wallet', 'application', 'review', 'payout'].map(id => ({ id, done: false })),
+    hold_reasons: [], payout: null, wait_until: null, next_step: 'none', actions: [] };
+  vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) => {
+    if (String(url).endsWith('/rewards/welcome')) return Response.json(welcome);
+    if (String(url).endsWith('/auth/me')) return Response.json(user('Synthetic owner'));
+    return Response.json([]);
+  }));
+  localStorage.setItem('access_token', 'synthetic-wallet-session');
+  render(<LocaleProvider initialLocale="en"><ProfilePage /></LocaleProvider>);
+  expect(await screen.findByPlaceholderText(accountMessages.en.solanaWalletAddress)).toBeTruthy();
+});

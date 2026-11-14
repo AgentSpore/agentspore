@@ -1,4 +1,5 @@
 import { localeTag, type Locale } from './i18n/locale';
+import type { welcomeRewardMessages } from './i18n/welcomeReward';
 import { decodeWelcomeProgress, type WelcomeProgress } from './welcome-progress';
 
 const REASONS = {
@@ -54,4 +55,50 @@ export function formatRewardAmount(raw: number, locale: Locale): string {
   const fraction = (amount % scale).toString().padStart(6, '0').replace(/0+$/, '');
   const separator = format.formatToParts(1.1).find(part => part.type === 'decimal')?.value ?? '.';
   return format.format(amount / scale) + (fraction ? separator + fraction : '');
+}
+
+const ACTION_STEPS = ['confirm_email', 'change_email', 'relink_github', 'bind_wallet', 'apply'];
+const PAYOUT_BADGES = { pending: 'badge_approved', sent: 'badge_sending', confirmed: 'badge_sent' } as const;
+
+/** Message key for the status badge; follows payout and approval, not only the coarse state. */
+export function rewardBadgeKey(data: WelcomeRewardStatus): keyof (typeof welcomeRewardMessages)['en'] {
+  const progress = data.progress;
+  if (progress?.payout) return PAYOUT_BADGES[progress.payout.state];
+  if (progress?.nextStep === 'wait_payout' && progress.steps.some(step => step.id === 'review' && step.done)) return 'badge_approved';
+  return STATE_BADGES[data.state];
+}
+const STATE_BADGES = {
+  disabled: 'disabled', not_applied: 'state_not_applied', application: 'application',
+  frozen: 'frozen', available: 'state_available', denied: 'state_denied',
+} as const;
+
+/** The reason line says "no action needed", so it is hidden whenever an action or a payout is shown. */
+export function showsRewardReason(data: WelcomeRewardStatus): boolean {
+  const progress = data.progress;
+  if (!progress) return true;
+  return !progress.payout && !(data.reason === 'risk_review' && progress.nextStep !== 'wait_review')
+    && !ACTION_STEPS.includes(progress.nextStep);
+}
+
+const WALLET_OWNING_STEPS: readonly string[] = ['bind_wallet', 'confirm_email', 'change_email'];
+/** The stepper owns the wallet only while it renders a control that leads to the wallet step. */
+function stepperOffersWallet(progress: WelcomeProgress): boolean {
+  if (progress.payout || !progress.steps.some(step => step.id === 'wallet' && !step.done)) return false;
+  return WALLET_OWNING_STEPS.includes(progress.nextStep) || (progress.nextStep === 'relink_github' && !!progress.githubRelinkPath);
+}
+
+/** Which wallet notes to show, and whether the stepper owns the wallet field. */
+export function welcomeWalletFlags(state: { kind: string; data?: WelcomeRewardStatus }) {
+  const data = state.kind === 'success' ? state.data : undefined;
+  const active = !!data && data.state !== 'disabled';
+  return {
+    ownsWallet: !!data?.progress && stepperOffersWallet(data.progress),
+    walletNote: active ? 'walletNoteWelcomeActive' : 'connectYourSolanaWalletToReceiveMonthlyASPORE',
+    earnNote: active ? 'earnNoteWelcomeActive' : '5MonthlyPayoutsDistributeASPOREProportionalToYour',
+  } as const;
+}
+
+/** The legacy wallet section shows for a loaded user unless the welcome card owns the wallet field. */
+export function showsWalletSection<T>(user: T | null, ownsWallet: boolean): user is T {
+  return user !== null && !ownsWallet;
 }

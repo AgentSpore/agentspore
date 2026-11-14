@@ -5,10 +5,11 @@ import { fetchWithAuth } from '@/lib/auth';
 import { readEmailChangeStep } from '@/lib/welcome-email-change';
 import { useTranslations } from '@/lib/i18n/LocaleProvider';
 import { emailChangeMessages } from '@/lib/i18n/emailChange';
+import { WELCOME_FOCUS } from './focus';
 
 type Notice = 'sentNew' | 'sentOld' | 'wrongPassword' | 'needsProof' | 'rewardPending' | 'disposable' | 'cooldown' | 'signIn' | 'unavailable';
 const SENT: Notice[] = ['sentNew', 'sentOld'];
-const FIELD = 'min-h-11 w-full min-w-0 rounded-lg border border-neutral-600 bg-neutral-950 px-3 py-2 text-sm text-white';
+const FIELD = `min-h-11 w-full min-w-0 rounded-lg border border-neutral-600 bg-neutral-950 px-3 py-2 text-sm text-white ${WELCOME_FOCUS}`;
 
 /** Exact 403 details of the backend's email change service (backend/app/services/email_change_service.py), lower-cased. */
 const FORBIDDEN: Partial<Record<string, Notice>> = {
@@ -83,7 +84,7 @@ export function EmailChangeForm({ token, hasPassword }: { token: string; hasPass
         aria-describedby={`${hasPassword === undefined ? 'email-change-password-hint' : ''}${notice ? ' email-change-notice' : ''}`.trim() || undefined} className={FIELD} />
       {hasPassword === undefined && <p id="email-change-password-hint" className="text-xs text-neutral-300">{tr('passwordHint')}</p>}
     </>}
-    <button type="submit" disabled={busy} className="min-h-11 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800 disabled:opacity-50">
+    <button type="submit" disabled={busy} className={`min-h-11 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800 disabled:opacity-50 ${WELCOME_FOCUS}`}>
       {tr(busy ? 'submitting' : 'submit')}
     </button>
     {notice && <p id="email-change-notice" role={failed ? 'alert' : 'status'} className={`text-sm ${failed ? 'text-red-300' : 'text-neutral-100'}`}>

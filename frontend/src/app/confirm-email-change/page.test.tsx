@@ -68,16 +68,16 @@ it('keeps the token through sign-in when signed out', async () => {
   expect(signIn.getAttribute('href')).toBe('/login?next=/confirm-email-change');
   expect(signIn.getAttribute('href')).not.toContain(LINK);
   expect(window.location.hash).toBe('');
-  expect(JSON.parse(sessionStorage.getItem('email_change_link') ?? 'null').token).toBe(LINK);
+  expect(JSON.parse(localStorage.getItem('email_change_link') ?? 'null').token).toBe(LINK);
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
 it('resumes the stashed link after returning signed in, then forgets it', async () => {
-  sessionStorage.setItem('email_change_link', JSON.stringify({ token: LINK, until: Date.now() + 60000 }));
+  localStorage.setItem('email_change_link', JSON.stringify({ token: LINK, until: Date.now() + 60000 }));
   vi.stubGlobal('fetch', vi.fn(async () => reply(200, 'Email changed.')));
   open('');
   expect(await screen.findByText(m.en.done)).toBeTruthy();
-  expect(sessionStorage.getItem('email_change_link')).toBeNull();
+  expect(localStorage.getItem('email_change_link')).toBeNull();
 });
 
 it('explains a page opened without a link', async () => {
@@ -91,7 +91,7 @@ it.each([[422, 'invalid'], [503, 'down']] as const)('never calls the link still 
   const text = (await screen.findByRole('alert')).textContent;
   expect(text).toBe(m.en[key]);
   expect(text).not.toMatch(/still valid/i);
-  expect(sessionStorage.getItem('email_change_link') === null).toBe(key === 'invalid');
+  expect(localStorage.getItem('email_change_link') === null).toBe(key === 'invalid');
 });
 
 it('refreshes an expired access token silently instead of asking to sign in', async () => {
@@ -113,18 +113,18 @@ it.each([
 });
 
 it('drops a stashed link older than ten minutes', async () => {
-  sessionStorage.setItem('email_change_link', JSON.stringify({ token: LINK, until: Date.now() - 1 }));
+  localStorage.setItem('email_change_link', JSON.stringify({ token: LINK, until: Date.now() - 1 }));
   const fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
   open('');
   expect((await screen.findByRole('alert')).textContent).toBe(m.en.missing);
   expect(fetchMock).not.toHaveBeenCalled();
-  expect(sessionStorage.getItem('email_change_link')).toBeNull();
+  expect(localStorage.getItem('email_change_link')).toBeNull();
 });
 
 it('stashes the link with a ten minute expiry', () => {
   open(`#token=${LINK}`, false);
-  const stored = JSON.parse(sessionStorage.getItem('email_change_link') ?? 'null');
+  const stored = JSON.parse(localStorage.getItem('email_change_link') ?? 'null');
   expect(stored.token).toBe(LINK);
   expect(stored.until - Date.now()).toBeGreaterThan(590000);
   expect(stored.until - Date.now()).toBeLessThanOrEqual(600000);
@@ -146,4 +146,19 @@ it('sends the single-use link exactly once even when the silent refresh swaps th
   await new Promise(resolve => setTimeout(resolve, 60));
   expect(freshCalls).toBe(1);
   expect(screen.queryByText(m.en.invalid)).toBeNull();
+});
+
+it('sits on the site dark ground so the light text stays readable', () => {
+  window.history.replaceState(null, '', '/confirm-email-change');
+  const { container } = render(<LocaleProvider initialLocale="en"><ConfirmEmailChange /></LocaleProvider>);
+  expect(container.firstElementChild?.className).toContain('bg-[#0a0a0a]');
+  expect(container.firstElementChild?.className).toContain('min-h-screen');
+});
+
+it('keeps the link when storage reads are denied', async () => {
+  vi.stubGlobal('localStorage', { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('denied'); }, removeItem: () => { throw new Error('denied'); } });
+  vi.stubGlobal('fetch', vi.fn(async () => reply(200, 'Email changed.')));
+  window.history.replaceState(null, '', `/confirm-email-change#token=${LINK}`);
+  render(<LocaleProvider initialLocale="en"><ConfirmEmailChange /></LocaleProvider>);
+  expect(await screen.findByText(m.en.needSignIn)).toBeTruthy();
 });
