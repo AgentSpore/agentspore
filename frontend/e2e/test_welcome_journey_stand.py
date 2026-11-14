@@ -220,7 +220,7 @@ class WelcomeJourney(unittest.TestCase):
         """Insert/advance a welcome payout intent for the user's grant, as the real delivery tables hold it."""
         grant = sql(f"SELECT g.id FROM welcome_reward_grants g JOIN users u ON u.id=g.owner_user_id WHERE u.email='{email}'")
         self.assertTrue(grant)
-        key = lambda: throwaway_pubkey()  # noqa: E731
+        key = throwaway_pubkey
         if stage == "pending":
             sql(
                 "INSERT INTO payout_delivery_intents(producer_namespace,allocation_id,genesis_hash,mint,source,destination,"

@@ -79,3 +79,19 @@ export function showsRewardReason(data: WelcomeRewardStatus): boolean {
   return !progress.payout && !(data.reason === 'risk_review' && progress.nextStep !== 'wait_review')
     && !ACTION_STEPS.includes(progress.nextStep);
 }
+
+/** Which wallet notes to show, and whether the welcome card currently owns the wallet field. */
+export function welcomeWalletFlags(state: { kind: string; data?: WelcomeRewardStatus }) {
+  const data = state.kind === 'success' ? state.data : undefined;
+  const active = !!data && data.state !== 'disabled';
+  return {
+    ownsWallet: data?.progress?.nextStep === 'bind_wallet',
+    walletNote: active ? 'walletNoteWelcomeActive' : 'connectYourSolanaWalletToReceiveMonthlyASPORE',
+    earnNote: active ? 'earnNoteWelcomeActive' : '5MonthlyPayoutsDistributeASPOREProportionalToYour',
+  } as const;
+}
+
+/** The legacy wallet section shows for a loaded user unless the welcome card owns the wallet field. */
+export function showsWalletSection<T>(user: T | null, ownsWallet: boolean): user is T {
+  return user !== null && !ownsWallet;
+}
