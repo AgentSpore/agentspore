@@ -48,9 +48,9 @@ async def ledger(marketplace_pg):
             CREATE UNIQUE INDEX idx_users_oauth ON users(oauth_provider, oauth_id)
                 WHERE oauth_provider IS NOT NULL;
         """)
-        for uid in (owner, other):
+        for uid, email in ((owner, "synthetic@example.com"), (other, "other@example.com")):
             await conn.execute(
-                text("INSERT INTO users(id,email) VALUES(:id,'synthetic@example.com')"), {"id": uid}
+                text("INSERT INTO users(id,email) VALUES(:id,:email)"), {"id": uid, "email": email}
             )
         for name in (
             "V115__welcome_reward_ledger.sql",
