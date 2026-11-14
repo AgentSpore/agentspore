@@ -48,7 +48,7 @@ export function WalletBind({ token, onBound }: { token: string; onBound: () => v
   return <form onSubmit={event => void submit(event)} className="space-y-3">
     <label htmlFor="welcome-wallet" className="block text-sm text-neutral-100">{tr('walletLabel')}</label>
     <input id="welcome-wallet" value={address} onChange={event => setAddress(event.target.value)} disabled={busy}
-      autoComplete="off" autoCapitalize="none" spellCheck={false} required aria-invalid={failure === 'walletInvalid' || failure === 'walletTaken'}
+      placeholder={tr('walletPlaceholder')} autoComplete="off" autoCapitalize="none" spellCheck={false} required aria-invalid={failure === 'walletInvalid' || failure === 'walletTaken'}
       aria-describedby={`welcome-wallet-hint${failure ? ' welcome-wallet-notice' : ''}`}
       className="min-h-11 w-full min-w-0 rounded-lg border border-neutral-600 bg-neutral-950 px-3 py-2 font-mono text-sm text-white" />
     <p id="welcome-wallet-hint" className="text-xs text-neutral-300">{tr('walletHint')}</p>
