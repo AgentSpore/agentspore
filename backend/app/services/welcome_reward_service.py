@@ -51,11 +51,14 @@ class WelcomeRewardService:
             return view
         grant_id = grant["id"] if grant else None
         decision = await self.repo.decision(grant_id) if grant_id else None
+        # A lapsed allow is only history once the grant has frozen; before that it is stuck.
+        live = bool(decision and decision["outcome"] == "allow")
+        live = live and bool(decision["current"] or (grant and grant["state"] != "application"))
         wallets = [user.solana_wallet] if user.solana_wallet else []
         facts = WelcomeFacts(
             user=user,
             grant=grant,
-            decided=bool(decision and decision["outcome"] == "allow"),
+            decided=live,
             payout_row=await self.repo.payout_progress(grant_id),
             wallet_taken=bool(await self.repo.welcome_intent_wallets(wallets, grant_id)),
         )
