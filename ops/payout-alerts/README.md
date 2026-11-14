@@ -5,11 +5,13 @@ Stdlib-only Python 3.12.
 
 ## Forwarded
 
-From `payout-orchestrator.service` and `payout-signer@*.service` only:
+From `payout-orchestrator.service`, `welcome-pending-signal.service` and `payout-signer@*.service` only:
 
 - a `MESSAGE` that is a JSON object with a string `alert` key; only `alert`, `intent_id`,
   `error`, `verdict` are rendered as `key=value`, values must match `[A-Za-z0-9_.:-]{1,64}`
   else `?`;
+- for `alert` = `welcome_pending` only, the keys `pending` and `clean` too, and only as plain
+  integers 0..1000000 (anything else, including a string, is `?`); other alerts never pass them;
 - systemd's unit-failed message (`MESSAGE_ID=d9b373ed55a64feb8242e02dbe79a49c`) with a
   result other than `success`: `unit_failed <unit> <result>`.
 

@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, computed_field
 
@@ -72,3 +73,21 @@ class WelcomeRewardView(BaseModel):
             "funding_unavailable": "await_funding",
             "program_disabled": "await_program",
         }.get(self.reason, "none")
+
+
+class WelcomeReviewRow(BaseModel):
+    """One pending application as the operator sees it: masked email, no keys or wallets."""
+
+    grant_id: UUID
+    age_seconds: int
+    holds: tuple[str, ...]
+    email_match: bool
+    email_masked: str
+
+    @property
+    def wallet_match(self) -> bool:
+        return "wallet_already_used" in self.holds
+
+    @property
+    def clean(self) -> bool:
+        return not self.holds and not self.email_match

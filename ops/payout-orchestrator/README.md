@@ -50,6 +50,21 @@ One JSON line on stderr: `{"alert": "<reason>", "intent_id": "<uuid>|null"}`. Re
 are fixed identifiers; verdicts are accepted only as `[a-z_]{1,32}`. No amounts,
 wallets or endpoints are ever printed.
 
+## Pending welcome applications signal
+
+`welcome-pending-signal.timer` runs `welcome-pending-signal.service` every 6 hours (the timer period is the
+rate limit). It is separate from the orchestrator tick because that timer ships disabled. The service
+runs `app.cli.welcome_reward_decisions pending-signal` in the backend container; when applications wait it
+writes one journal line `{"alert": "welcome_pending", "pending": N, "clean": M}`, otherwise nothing.
+[payout-alerts](../payout-alerts/README.md) forwards it as `alert=welcome_pending pending=N clean=M`.
+
+Install like the other units in [payout-deploy](../payout-deploy/README.md): copy both files from `systemd/`
+to `/etc/systemd/system/`, set `WELCOME_CONTAINER` in a drop-in, `systemctl daemon-reload`,
+`systemctl enable --now welcome-pending-signal.timer`. The alerts daemon needs the version of
+`payout-alerts` with this unit in its watch list. Operator commands in the backend container:
+`welcome_reward_decisions review` (table, masked addresses), `approve-clean [--max N] [--apply]`
+(dry run without `--apply`).
+
 ## Config (TOML or JSON, unknown keys refused)
 
     container = "<backend-container-name>"
