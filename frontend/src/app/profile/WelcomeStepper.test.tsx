@@ -173,3 +173,40 @@ it('links the expired-session wallet notice to sign-in', async () => {
   fillWallet();
   expect((await screen.findByRole('link', { name: m.en.signIn })).getAttribute('href')).toBe('/login?next=/profile');
 });
+
+it.each(['confirm_email', 'change_email', 'relink_github', 'bind_wallet', 'apply'])('does not claim "no action needed" while %s is the next step', next => {
+  mount(wire({ next_step: next }));
+  expect(screen.queryByText(m.en.risk_review)).toBeNull();
+});
+
+it('keeps the checks-in-progress text while the only thing to do is wait', () => {
+  mount(wire({ next_step: 'wait_review' }));
+  expect(screen.getByText(m.en.risk_review)).toBeTruthy();
+});
+
+it.each([
+  ['approved', { next_step: 'wait_payout' }, 4, 'badge_approved'],
+  ['payout pending', { next_step: 'wait_payout', payout: { state: 'pending' } }, 4, 'badge_approved'],
+  ['payout sent', { next_step: 'wait_payout', payout: { state: 'sent', signature: SIGNATURE } }, 4, 'badge_sending'],
+  ['payout confirmed', { next_step: 'none', payout: { state: 'confirmed', signature: SIGNATURE } }, 5, 'badge_sent'],
+] as const)('badge follows the real state: %s', (_name, over, done, key) => {
+  mount(wire(over, done));
+  expect(screen.getByText(m.en[key])).toBeTruthy();
+  expect(screen.queryByText(m.en.application)).toBeNull();
+  expect(screen.queryByText(m.en.risk_review)).toBeNull();
+});
+
+it.each(['en', 'ru'] as const)('words every badge in %s', locale => {
+  for (const key of ['badge_approved', 'badge_sending', 'badge_sent'] as const) expect(m[locale][key]).toBeTruthy();
+});
+
+it('keeps the application badge while waiting for review', () => {
+  mount(wire({ next_step: 'bind_wallet' }, 1));
+  expect(screen.getByText(m.en.application)).toBeTruthy();
+});
+
+it('gives the wallet field a format hint without internal limits', () => {
+  mount(wire({ next_step: 'bind_wallet' }));
+  expect(screen.getByText(m.en.walletHint).textContent).toMatch(/32.44/);
+  expect(screen.getByLabelText(m.en.walletLabel).getAttribute('placeholder')).toBe(m.en.walletPlaceholder);
+});

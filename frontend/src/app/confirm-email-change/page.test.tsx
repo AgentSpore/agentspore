@@ -147,3 +147,10 @@ it('sends the single-use link exactly once even when the silent refresh swaps th
   expect(freshCalls).toBe(1);
   expect(screen.queryByText(m.en.invalid)).toBeNull();
 });
+
+it('sits on the site dark ground so the light text stays readable', () => {
+  window.history.replaceState(null, '', '/confirm-email-change');
+  const { container } = render(<LocaleProvider initialLocale="en"><ConfirmEmailChange /></LocaleProvider>);
+  expect(container.firstElementChild?.className).toContain('bg-[#0a0a0a]');
+  expect(container.firstElementChild?.className).toContain('min-h-screen');
+});

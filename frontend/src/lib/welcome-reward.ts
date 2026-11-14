@@ -1,4 +1,5 @@
 import { localeTag, type Locale } from './i18n/locale';
+import type { welcomeRewardMessages } from './i18n/welcomeReward';
 import { decodeWelcomeProgress, type WelcomeProgress } from './welcome-progress';
 
 const REASONS = {
@@ -54,4 +55,27 @@ export function formatRewardAmount(raw: number, locale: Locale): string {
   const fraction = (amount % scale).toString().padStart(6, '0').replace(/0+$/, '');
   const separator = format.formatToParts(1.1).find(part => part.type === 'decimal')?.value ?? '.';
   return format.format(amount / scale) + (fraction ? separator + fraction : '');
+}
+
+const ACTION_STEPS = ['confirm_email', 'change_email', 'relink_github', 'bind_wallet', 'apply'];
+const PAYOUT_BADGES = { pending: 'badge_approved', sent: 'badge_sending', confirmed: 'badge_sent' } as const;
+
+/** Message key for the status badge; follows payout and approval, not only the coarse state. */
+export function rewardBadgeKey(data: WelcomeRewardStatus): keyof (typeof welcomeRewardMessages)['en'] {
+  const progress = data.progress;
+  if (progress?.payout) return PAYOUT_BADGES[progress.payout.state];
+  if (progress?.nextStep === 'wait_payout' && progress.steps.some(step => step.id === 'review' && step.done)) return 'badge_approved';
+  return STATE_BADGES[data.state];
+}
+const STATE_BADGES = {
+  disabled: 'disabled', not_applied: 'state_not_applied', application: 'application',
+  frozen: 'frozen', available: 'state_available', denied: 'state_denied',
+} as const;
+
+/** The reason line says "no action needed", so it is hidden whenever an action or a payout is shown. */
+export function showsRewardReason(data: WelcomeRewardStatus): boolean {
+  const progress = data.progress;
+  if (!progress) return true;
+  return !progress.payout && !(data.reason === 'risk_review' && progress.nextStep !== 'wait_review')
+    && !ACTION_STEPS.includes(progress.nextStep);
 }
