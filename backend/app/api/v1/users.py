@@ -1,18 +1,25 @@
 """Users API — /users/me/* endpoints for the authenticated user."""
 
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from redis import asyncio as aioredis
 
-from app.api.deps import CurrentUser, WelcomeRewardSession
+from app.api.deps import CurrentUser, EmailProofSession, WelcomeRewardSession
+from app.core.redis_client import get_redis
+from app.repositories.email_proof_repo import EmailProofRepository
 from app.schemas.agent_workspace import (
     AgentWorkspaceResponse,
     WorkspaceTaskDetail,
     WorkspaceTaskPage,
 )
+from app.schemas.email_change import EmailChangeConfirm, EmailChangeRequest, EmailChangeResponse
 from app.schemas.welcome_rewards import WelcomeRewardView
 from app.services.agent_service import AgentService, get_agent_service
 from app.services.agent_workspace_service import AgentWorkspaceService, get_agent_workspace_service
+from app.services.email_change_service import EmailChangeService
+from app.services.email_service import EmailService, get_email_service
 from app.services.welcome_reward_service import WelcomeRewardService, get_welcome_reward_service
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -73,3 +80,37 @@ async def apply_welcome_reward(
 ) -> WelcomeRewardView:
     """Retry only the authenticated owner's conditional application, without funding it."""
     return await get_welcome_reward_service(db).apply(current_user.id)
+
+
+async def get_email_change_service(
+    db: EmailProofSession,
+    background: BackgroundTasks,
+    redis: aioredis.Redis = Depends(get_redis),
+    mail: EmailService = Depends(get_email_service),
+) -> EmailChangeService:
+    """Mail is queued on `background`, so it leaves only after the transaction commits."""
+    return EmailChangeService(EmailProofRepository(db), redis, mail, background)
+
+
+ChangeService = Annotated[EmailChangeService, Depends(get_email_change_service, scope="function")]
+
+
+@router.post("/me/email/change", response_model=EmailChangeResponse, status_code=202)
+async def request_email_change(
+    data: EmailChangeRequest, user: CurrentUser, service: ChangeService
+) -> EmailChangeResponse:
+    """Send a confirmation link; the current email stays active until it is confirmed."""
+    return EmailChangeResponse(
+        message=await service.request(user.id, data.new_email, data.current_password)
+    )
+
+
+@router.post("/me/email/change/confirm", response_model=EmailChangeResponse)
+async def confirm_email_change(
+    data: EmailChangeConfirm, user: CurrentUser, service: ChangeService
+) -> EmailChangeResponse:
+    """Single-use POST confirm (a mail preview GET cannot consume the link).
+
+    Called once for the current-address link of a password-less account, then for the new one.
+    """
+    return EmailChangeResponse(message=await service.confirm(user.id, data.token))

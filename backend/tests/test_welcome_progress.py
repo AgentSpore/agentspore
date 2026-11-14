@@ -132,7 +132,11 @@ async def test_disposable_email_and_young_github_account_are_reported(card):
     await confirm_email(card)
     body = await view(card)
     assert body["hold_reasons"] == ["disposable_email"]
-    assert body["next_step"] == "change_email" and body["actions"] == []
+    assert body["next_step"] == "change_email"
+    assert [(a["method"], a["path"]) for a in body["actions"]] == [
+        ("POST", "/api/v1/users/me/email/change"),
+        ("POST", "/api/v1/users/me/email/change/confirm"),
+    ]
     await sql(
         card,
         "UPDATE users SET email='synthetic@example.com', "
@@ -180,6 +184,28 @@ async def test_decided_application_waits_for_payout_not_review(card, outcome):
     body = await view(card)
     assert "review" in done(body) or outcome == "hold"
     assert body["next_step"] == ("wait_payout" if outcome == "allow" else "wait_review")
+
+
+async def test_email_change_is_not_offered_once_the_grant_is_decided(card):
+    await apply(card)
+    await confirm_email(card)
+    await bind_wallet(card)
+    await sql(
+        card, "UPDATE users SET email='someone@mailinator.com' WHERE id=:o", o=card.ledger.owner
+    )
+    await confirm_email(card)
+    await sql(
+        card,
+        "INSERT INTO reward_eligibility_decisions(grant_id,owner_user_id,source_event,"
+        "policy_version,outcome,beneficiary_key,authority_ref,evidence_ref,expires_at) "
+        "SELECT id,owner_user_id,source_event,'welcome-v1','allow',:key,'operator','ref',"
+        "clock_timestamp()+interval '1 hour' FROM welcome_reward_grants",
+        key=WelcomeBeneficiaryService.email_key("someone@mailinator.com"),
+    )
+    body = await view(card)
+    assert "disposable_email" in body["hold_reasons"]
+    assert body["next_step"] == "wait_payout"
+    assert body["actions"] == []
 
 
 async def test_expired_allow_is_not_a_finished_review(card):

@@ -32,6 +32,12 @@ ACTIONS = {
         ),
     ],
     "relink_github": [WelcomeAction(id="github_relink", method="GET", path="/api/v1/oauth/github")],
+    "change_email": [
+        WelcomeAction(id="email_change", method="POST", path="/api/v1/users/me/email/change"),
+        WelcomeAction(
+            id="email_change_confirm", method="POST", path="/api/v1/users/me/email/change/confirm"
+        ),
+    ],
     "bind_wallet": [
         WelcomeAction(id="wallet_bind", method="PATCH", path="/api/v1/users/solana-wallet")
     ],
@@ -73,6 +79,7 @@ def next_step(
     """One action or one plain wait for every combination; terminal states have none."""
     if payout:
         return "none" if payout.state == "confirmed" else "wait_payout"
+    waiting = decided or view.reason in ("reserved", "available", "funding_unavailable")
     for hold, step in (
         ("disposable_email", "change_email"),
         ("github_age_unknown", "relink_github"),
@@ -80,11 +87,10 @@ def next_step(
         ("wallet_missing", "bind_wallet"),
         ("wallet_already_used", "bind_wallet"),
     ):
-        if hold in holds:
+        if hold in holds and not (waiting and step == "change_email"):
             return step
     if view.reason == "not_applied":
         return "apply"
-    waiting = decided or view.reason in ("reserved", "available", "funding_unavailable")
     return "wait_payout" if waiting else "wait_review"
 
 
