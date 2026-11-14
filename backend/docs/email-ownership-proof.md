@@ -19,3 +19,9 @@ New email-bound registration challenges and trusted verified Google/GitHub callb
 Changing the email invalidates proof and any pending challenge in PostgreSQL, including changes made directly through SQL. Changing the address back does not restore proof. Reverification codes have a distinct purpose and cannot be redeemed as registration or password-reset tokens. Proof consumption uses the authenticated user, database row lock, current email, expiration and single-use Redis key.
 
 Deployment requires V114 and the `R__email_ownership_proof.sql` repeatable migration before the new backend. Existing `is_verified` semantics remain unchanged. Do not drop proof columns when rolling back application code; no financial program is activated by this migration.
+
+## Changing the account email
+
+`POST /api/v1/users/me/email/change` `{new_email, current_password}` sends a single-use link to the new address (`{frontend_url}/confirm-email-change#token=...`; the token sits in the fragment so mail previews and servers never see it). Password accounts must send the current password; OAuth-only accounts must hold a current email proof. Disposable domains get 422. A taken, unchanged or usable address all get the same 202 body, so the endpoint does not reveal which accounts exist. One request per cooldown window per user (429 after).
+
+`POST /api/v1/users/me/email/change/confirm` `{token}` (authenticated, single-use, same TTL as email verification) switches the email, records a fresh `email_link` proof for it and notifies the old address. The pending change reuses the `verification_*` columns with purpose `email_change`; the old address stays active until confirmation. The database trigger clears the previous proof, so an existing reward decision, bound to the old proof, no longer matches: the welcome grant returns to risk review and its beneficiary key never changes.

@@ -51,6 +51,26 @@ class EmailService:
             "Ignore this message if you did not request it.</p>",
         )
 
+    async def send_email_change_link(self, to: str, token: str) -> bool:
+        """Send the single-use link that confirms ownership of a new account email."""
+        url = f"{self.settings.frontend_url}/confirm-email-change#token={token}"
+        return await self.send_email(
+            to, "Confirm your new AgentSpore email",
+            f'<p>Confirm this address as your AgentSpore account email:</p>'
+            f'<p><a href="{url}">Confirm new email</a></p>'
+            "<p>The link works once and expires. It cannot sign you in or reset a password. "
+            "Ignore this message if you did not request it.</p>",
+        )
+
+    async def send_email_changed_notice(self, to: str) -> bool:
+        """Tell the previous address that the account email was changed."""
+        return await self.send_email(
+            to, "Your AgentSpore email was changed",
+            "<p>The email address of your AgentSpore account was changed. "
+            "This address no longer belongs to the account.</p>"
+            "<p>If this was not you, reset your password or contact support at once.</p>",
+        )
+
     async def send_verification_email(
         self, to: str, token: str, base_url: str | None = None
     ) -> bool:
