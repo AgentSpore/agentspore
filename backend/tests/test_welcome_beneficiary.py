@@ -1,4 +1,4 @@
-"""Canonical welcome beneficiary: GitHub identity, account age, email proof, writer gate."""
+"""Canonical welcome beneficiary: email key, GitHub age signal, email proof, writer gate."""
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from test_marketplace_tasks import marketplace_pg as marketplace_pg
+from test_welcome_reward_decisions import OTHER_KEY, OWNER_KEY
 from test_welcome_reward_decisions import review as _review
 from test_welcome_rewards import ledger as _ledger
 
@@ -78,24 +79,24 @@ def assess(review):
 
 async def test_review_owner_is_eligible(assess):
     result = await assess()
-    assert (result.beneficiary_key, result.holds) == ("github:1001", ())
+    assert (result.beneficiary_key, result.holds) == (OWNER_KEY, ())
 
 
 @pytest.mark.parametrize(
     "columns,key,holds",
     [
-        ({"oauth_provider": "google", "oauth_id": "1001"}, None, ("no_github_identity",)),
-        ({"oauth_provider": None, "oauth_id": None}, None, ("no_github_identity",)),
-        ({"oauth_id": "octocat"}, None, ("no_github_identity",)),
-        ({"oauth_id": "01001"}, None, ("no_github_identity",)),
-        ({"oauth_account_created_at": None}, "github:1001", ("github_account_age_unknown",)),
-        ({"email_proof_at": None}, "github:1001", ("no_current_email_proof",)),
-        ({"email_proof_email": "old@example.com"}, "github:1001", ("no_current_email_proof",)),
-        ({"is_verified": False}, "github:1001", ("no_current_email_proof",)),
+        ({"oauth_provider": "google", "oauth_id": "1001"}, OWNER_KEY, ()),
+        ({"oauth_provider": None, "oauth_id": None}, OWNER_KEY, ()),
+        ({"oauth_id": "octocat"}, OWNER_KEY, ()),
+        ({"oauth_id": "01001"}, OWNER_KEY, ()),
+        ({"oauth_account_created_at": None}, OWNER_KEY, ("github_account_age_unknown",)),
+        ({"email_proof_at": None}, OWNER_KEY, ("no_current_email_proof",)),
+        ({"email_proof_email": "old@example.com"}, OWNER_KEY, ("no_current_email_proof",)),
+        ({"is_verified": False}, OWNER_KEY, ("no_current_email_proof",)),
         (
             {"oauth_provider": "google", "email_proof_at": None, "email": "a@mailinator.com"},
-            None,
-            ("no_github_identity", "no_current_email_proof", "disposable_email_domain"),
+            WelcomeBeneficiaryService.email_key("a@mailinator.com"),
+            ("no_current_email_proof", "disposable_email_domain"),
         ),
     ],
 )
@@ -105,10 +106,56 @@ async def test_hold_reasons(edit_owner, assess, columns, key, holds):
     assert (result.beneficiary_key, result.holds) == (key, holds)
 
 
+@pytest.mark.parametrize(
+    "email,normalized",
+    [
+        ("Alice@Example.COM", "alice@example.com"),
+        ("  alice@example.com ", "alice@example.com"),
+        ("a.l.i.c.e@gmail.com", "alice@gmail.com"),
+        ("A.Lice+promo@GoogleMail.com", "alice@gmail.com"),
+        ("alice+x+y@example.com", "alice@example.com"),
+        ("a.lice@example.com", "a.lice@example.com"),
+        ("bob@bücher.example", "bob@xn--bcher-kva.example"),
+        ("bob@XN--BCHER-KVA.example", "bob@xn--bcher-kva.example"),
+        ("a.b+x@yandex.ru", "a-b@yandex.ru"),
+        ("a.b@ya.ru", "a-b@yandex.ru"),
+        ("a-b@narod.ru", "a-b@yandex.ru"),
+        ("ab@yandex.com", "ab@yandex.ru"),
+        ("ab@yandex.by", "ab@yandex.ru"),
+        ("ab@yandex.kz", "ab@yandex.ru"),
+        ("ab@yandex.ua", "ab@yandex.ru"),
+        ("ab@yandex.com.tr", "ab@yandex.ru"),
+        ("a.b+t@me.com", "a.b@icloud.com"),
+        ("a.b@mac.com", "a.b@icloud.com"),
+        ("a.b@iCloud.com", "a.b@icloud.com"),
+        ("ab+t@protonmail.com", "ab@proton.me"),
+        ("ab@protonmail.ch", "ab@proton.me"),
+        ("ab@pm.me", "ab@proton.me"),
+        ("ab@proton.me", "ab@proton.me"),
+    ],
+)
+def test_email_normalization(email, normalized):
+    assert WelcomeBeneficiaryService.normalize_email(email) == normalized
+    key = WelcomeBeneficiaryService.email_key(email)
+    assert key == WelcomeBeneficiaryService.email_key(normalized)
+    assert key.startswith("email:") and len(key) == 70 and "@" not in key
+
+
+def test_distinct_mailboxes_get_distinct_keys():
+    keys = {
+        WelcomeBeneficiaryService.email_key(e)
+        for e in ("alice@example.com", "alice@gmail.com", "alice@other.org", "b.ob@example.com")
+    }
+    assert len(keys) == 4
+
+
 async def test_disposable_domain_is_matched_case_insensitively(disposable_owner, assess):
     await disposable_owner()
     result = await assess()
-    assert (result.beneficiary_key, result.holds) == ("github:1001", ("disposable_email_domain",))
+    assert (result.beneficiary_key, result.holds) == (
+        WelcomeBeneficiaryService.email_key("Canary@MAILINATOR.com"),
+        ("disposable_email_domain",),
+    )
 
 
 @pytest.mark.parametrize(
@@ -157,7 +204,12 @@ async def test_only_allow_requires_eligibility(review, edit_owner, outcome):
 
 @pytest.mark.parametrize(
     "change",
-    [{"beneficiary_key": "github:9"}, {"beneficiary_key": "1001"}, {"beneficiary_key": "octocat"}],
+    [
+        {"beneficiary_key": "github:1001"},
+        {"beneficiary_key": "github:9"},
+        {"beneficiary_key": "1001"},
+        {"beneficiary_key": OTHER_KEY},
+    ],
 )
 async def test_allow_requires_canonical_beneficiary(review, change):
     ledger, intent = review
@@ -194,7 +246,7 @@ async def test_cli_assess_prints_key_and_reason_codes_only(review, disposable_ow
     assert await cli.run_assess(str(ledger.owner), destination, ledger.maker) == 0
     assert json.loads(destination.getvalue()) == {
         "verdict": "assessed",
-        "beneficiary_key": "github:1001",
+        "beneficiary_key": WelcomeBeneficiaryService.email_key("Canary@MAILINATOR.com"),
         "holds": ["disposable_email_domain"],
     }
     assert "canary" not in destination.getvalue()

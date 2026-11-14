@@ -12,12 +12,16 @@ from test_welcome_rewards import ledger as _ledger
 
 from app.repositories.welcome_reward_repo import WelcomeRewardRepository
 from app.schemas.welcome_reward_decisions import WelcomeRewardDecision
+from app.services.welcome_beneficiary_service import WelcomeBeneficiaryService
 from app.services.welcome_reward_decision_service import WelcomeRewardDecisionService
 from app.services.welcome_reward_service import WelcomeRewardService
 
 ledger = _ledger
 
 pytestmark = pytest.mark.integration
+
+OWNER_KEY = WelcomeBeneficiaryService.email_key("synthetic@example.com")
+OTHER_KEY = WelcomeBeneficiaryService.email_key("other@example.com")
 
 
 @pytest.fixture
@@ -51,7 +55,7 @@ async def review(ledger):
         source_event=ledger.owner,
         policy_version="welcome-v1",
         outcome="allow",
-        beneficiary_key="github:1001",
+        beneficiary_key=OWNER_KEY,
         authority_ref="synthetic-operator",
         evidence_ref="synthetic-review",
         expected_revision=0,
@@ -306,7 +310,7 @@ async def test_conditional_beneficiary_does_not_reserve(review):
                 "source_event": ledger.other,
                 "grant_id": other_id,
                 "evidence_ref": "other-review",
-                "beneficiary_key": "github:1002",
+                "beneficiary_key": OTHER_KEY,
             }
         )
         assert (await service.record(other)).verdict == "recorded"

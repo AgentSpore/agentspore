@@ -73,5 +73,5 @@ class BeneficiaryAssessment(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    beneficiary_key: str | None
+    beneficiary_key: str
     holds: tuple[str, ...]

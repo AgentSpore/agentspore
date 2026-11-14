@@ -1,5 +1,6 @@
 """Queries that bound automatic welcome approvals."""
 
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import text
@@ -32,18 +33,20 @@ class WelcomeAutoDecisionRepository:
             )
         )
 
-    async def eligible_applications(self, min_age_days: int) -> list[dict]:
-        """Undecided applications with a GitHub identity old enough at application time."""
+    async def eligible_applications(self, min_age_days: int, now: datetime) -> list[dict]:
+        """Undecided applications whose account (GitHub if bound, else platform) is old enough."""
         rows = (
             await self.db.execute(
                 text(f"""
             SELECT g.* FROM welcome_reward_grants g JOIN users u ON u.id=g.owner_user_id
-            WHERE {UNDECIDED} AND u.oauth_provider='github'
-              AND u.oauth_account_created_at IS NOT NULL
-              AND g.created_at - u.oauth_account_created_at >= make_interval(days => :days)
+            WHERE {UNDECIDED}
+              AND CASE WHEN u.oauth_provider='github' AND u.oauth_id ~ '^[1-9][0-9]*$'
+                  THEN g.created_at - u.oauth_account_created_at
+                  ELSE :now - u.created_at END
+                  >= make_interval(days => :days)
             ORDER BY g.created_at, g.id
         """),
-                {"days": min_age_days},
+                {"days": min_age_days, "now": now},
             )
         ).mappings()
         return [dict(row) for row in rows]
