@@ -34,7 +34,7 @@ it('sends no password for password-less accounts and shows the two-step text', a
 });
 
 it.each([
-  [403, 'Current password is incorrect', 'wrongPassword'], [403, 'A verified account is required', 'needsProof'],
+  [403, 'Current password is incorrect', 'wrongPassword'], [403, 'A verified account is required', 'needsProof'], [403, 'Confirm your current email first', 'needsProof'],
   [409, 'Your welcome reward is being processed', 'rewardPending'], [422, 'Disposable email addresses are not accepted', 'disposable'],
   [429, 'Please wait', 'cooldown'], [401, 'x', 'signIn'], [503, 'x', 'unavailable'],
 ] as const)('maps %s %s to plain text', async (status, detail, key) => {
