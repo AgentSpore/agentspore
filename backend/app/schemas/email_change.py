@@ -1,5 +1,7 @@
 """Request and response bodies for changing the account email."""
 
+from typing import Literal
+
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
@@ -18,4 +20,7 @@ class EmailChangeConfirm(BaseModel):
 
 
 class EmailChangeResponse(BaseModel):
+    """`step` is what the client shows next; it depends on the account type, never on the target."""
+
     message: str
+    step: Literal["approve_old", "confirm_new", "done"]
