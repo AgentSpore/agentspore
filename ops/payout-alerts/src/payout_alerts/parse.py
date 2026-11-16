@@ -13,6 +13,7 @@ ALERT_KEYS = ("alert", "intent_id", "error", "verdict")
 COUNT_ALERT = "welcome_pending"
 COUNT_KEYS = ("pending", "clean")
 MAX_COUNT = 1_000_000
+BACKUP_UNIT = "agentspore-pg-backup.service"
 BACKUP_FAIL_ALERT = "backup_fail"
 BACKUP_STAGES = frozenset({"mkdir", "lock", "diskspace", "dump", "verify", "rename", "weekly"})
 
@@ -58,11 +59,11 @@ def _json_alert(entry: dict) -> str | None:
         return None
     try:
         body = json.loads(message)
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
     if not isinstance(body, dict):
         return None
-    if body.get("backup") == "fail":
+    if source == BACKUP_UNIT and body.get("backup") == "fail":
         return _backup_fail(body)
     if not isinstance(body.get("alert"), str):
         return None
