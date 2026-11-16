@@ -21,7 +21,7 @@ Failures show up only in the journal until you add an alert.
 | Does NOT | Copy dumps off the host, send alerts, back up Redis, the runner, or Caddy data |
 
 Failure stages: `mkdir`, `lock`, `diskspace`, `dump`, `verify`, `rename`, `weekly`.
-A failed run is retried by systemd 3 times, 10 minutes apart (limit of 3 starts per 2 hours).
+A failed run is retried by systemd, 10 minutes apart, up to 2 more times (3 starts per 2 hours in total).
 
 Settings are environment variables of the script: `BACKUP_DIR` (default `/var/backups/agentspore-pg`),
 `DB_CONTAINER` (`agentspore-db`), `KEEP_DAILY`, `KEEP_WEEKLY`, `MIN_TOC`, `SPACE_FACTOR`.
@@ -59,7 +59,8 @@ one file `agentspore-<UTC>.dump`, mode `-rw-------`, no `.part` file left.
 
 Running the script by hand works too, as root: `/usr/local/sbin/agentspore-pg-backup`.
 Do not copy manual dumps into `BACKUP_DIR` under an `agentspore-<UTC>.dump` name: they count against the 7 and get rotated out.
-Keep them one level up, or under another name.
+Keep them one level up, or under another name. Write manual dumps with `umask 077` (as in the restore steps below): they hold all data.
+Dumps from the old `sporeai_*.sql.gz` job are never rotated by this script. Once a new dump verifies, move them off the host or delete them.
 
 Check health at any time:
 
@@ -75,30 +76,55 @@ Use the same PostgreSQL major as production (16).
 
 ```bash
 D=/var/backups/agentspore-pg/agentspore-<UTC>.dump
-docker run -d --name bk-drill --tmpfs /var/lib/postgresql/data \
+docker run -d --name bk-drill -v /var/lib/postgresql/data \
   -e POSTGRES_USER=drill -e POSTGRES_DB=drill -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16-alpine
-until docker exec bk-drill pg_isready -U drill -d drill -q; do sleep 1; done; sleep 2
+# the image restarts the server once after init: wait for the second "ready" line
+until [ "$(docker logs bk-drill 2>&1 | grep -c 'ready to accept connections')" -ge 2 ]; do sleep 1; done
 docker exec -i bk-drill pg_restore -U drill -d drill --no-owner --no-acl --exit-on-error < "$D"; echo rc=$?
 docker exec bk-drill psql -tA -U drill -d drill -c "select count(*) from information_schema.tables where table_schema='public'"
 docker exec agentspore-db sh -c "psql -tA -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"select count(*) from information_schema.tables where table_schema='public'\""
 docker rm -f -v bk-drill
 ```
 
-Expect: `rc=0` and the two table counts equal. No ports are published, so the drill is not reachable from outside.
+Expect: `rc=0` and the two table counts equal. No ports are published; `rm -v` also removes the anonymous data volume.
 If the restore fails on a missing extension, use the production image tag instead of `postgres:16-alpine`.
 
 ## Restore into production
 
-Destructive: every current row is replaced by the dump. Do the drill on the same file first.
+Destructive: the live database is dropped and recreated from the dump. Do the drill on the same file first.
+Set `D` to the dump to restore. Run as root.
 
-1. Pick the dump and take a safety copy of the current state first:
-   `docker exec agentspore-db sh -c 'exec pg_dump -Fc -U "$POSTGRES_USER" "$POSTGRES_DB"' > /var/backups/agentspore-pre-restore-$(date -u +%Y%m%dT%H%M%SZ).dump`
-2. Stop everything that writes (add `a4-worker` if the `a4` profile is on):
-   `docker compose -f deploy/docker-compose.prod.yml stop backend`
-3. Restore in place:
-   `docker exec -i agentspore-db sh -c 'exec pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --exit-on-error' < "$D"; echo rc=$?`
-4. Expect `rc=0`. On a non-zero rc stop, keep the backend down, and decide with the owner: the safety copy from step 1 is the way back.
-5. Start the backend and check it: `docker compose -f deploy/docker-compose.prod.yml start backend`, then `docker logs --tail 50 agentspore-backend` and the public health URL.
+1. Pause the backup timer and take a verified safety copy of the current state:
+   ```bash
+   systemctl stop agentspore-pg-backup.timer
+   SAFE=/var/backups/agentspore-pre-restore/pre-$(date -u +%Y%m%dT%H%M%SZ).dump
+   (umask 077; install -d -m 0700 "$(dirname "$SAFE")"; docker exec agentspore-db sh -c 'exec pg_dump -Fc -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$SAFE"); echo rc=$?
+   docker exec -i agentspore-db pg_restore -l < "$SAFE" | grep -vc '^;'
+   ```
+   Expect `rc=0` and a count above 100. Otherwise stop here.
+2. Stop every writer by container name (add `agentspore-a4-worker` if the `a4` profile is on), then check nobody else is connected:
+   ```bash
+   docker stop agentspore-backend
+   docker exec -i agentspore-db sh -c 'psql -tA -U "$POSTGRES_USER" -d postgres -v d="$POSTGRES_DB"' <<< "select count(*) from pg_stat_activity where datname = :'d'"
+   ```
+   Expect `0`. Another client holds a session: find and stop it, `dropdb --force` would cut it off mid-write.
+3. Recreate the database and restore into the empty one (no `--clean`, one transaction):
+   ```bash
+   docker exec agentspore-db sh -c 'dropdb --force -U "$POSTGRES_USER" "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" "$POSTGRES_DB"'
+   docker exec -i agentspore-db sh -c 'exec pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --single-transaction --exit-on-error' < "$D"; echo rc=$?
+   ```
+4. Expect `rc=0`. A non-zero rc rolls the restore back to an empty database: keep the backend down and restore `$SAFE` the same way (step 3), or ask the owner.
+5. Start the backend and check it:
+   ```bash
+   docker compose -f deploy/docker-compose.prod.yml start backend
+   docker logs --tail 50 agentspore-backend
+   systemctl start agentspore-pg-backup.timer
+   ```
+   Then call the public health URL.
+
+The Flyway history table is part of the dump, so it now matches the dump's schema version.
+The next `docker compose up` runs Flyway and applies every newer migration. Deploy the app version
+that matches the dump, or accept the migrations that run on top of it.
 
 ## Rollback and uninstall
 
