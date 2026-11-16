@@ -90,3 +90,59 @@ def test_counters_are_dropped_for_every_other_alert_and_extra_keys_never_pass():
     assert alert_text(entry(msg)) == "alert=other"
     msg = json.dumps({"alert": "welcome_pending", "pending": 1, "clean": 1, "email": "a@b.c"})
     assert alert_text(entry(msg)) == "alert=welcome_pending pending=1 clean=1"
+
+
+BACKUP_UNIT = "agentspore-pg-backup.service"
+
+
+@pytest.mark.parametrize(
+    "stage", ["mkdir", "lock", "diskspace", "dump", "verify", "rename", "weekly"]
+)
+def test_backup_fail_forwards_allowlisted_stage(stage):
+    msg = json.dumps({"backup": "fail", "stage": stage})
+    assert alert_text(entry(msg, unit=BACKUP_UNIT)) == f"alert=backup_fail stage={stage}"
+
+
+@pytest.mark.parametrize("stage", ["/var/x", "dump;rm", "DUMP", "", 5, None, ["dump"]])
+def test_backup_fail_unknown_stage_becomes_question_mark(stage):
+    msg = json.dumps({"backup": "fail", "stage": stage})
+    assert alert_text(entry(msg, unit=BACKUP_UNIT)) == "alert=backup_fail stage=?"
+
+
+def test_backup_fail_without_stage():
+    msg = json.dumps({"backup": "fail"})
+    assert alert_text(entry(msg, unit=BACKUP_UNIT)) == "alert=backup_fail stage=?"
+
+
+def test_backup_ok_and_other_values_are_not_forwarded():
+    ok = json.dumps({"backup": "ok", "size_bytes": 123, "toc": 4})
+    assert alert_text(entry(ok, unit=BACKUP_UNIT)) is None
+    assert alert_text(entry(json.dumps({"backup": "skipped"}), unit=BACKUP_UNIT)) is None
+
+
+def test_backup_fail_extra_keys_never_pass():
+    msg = json.dumps({"backup": "fail", "stage": "dump", "path": "/secret", "size_bytes": 9})
+    assert alert_text(entry(msg, unit=BACKUP_UNIT)) == "alert=backup_fail stage=dump"
+
+
+def test_backup_line_from_another_unit_ignored():
+    msg = json.dumps({"backup": "fail", "stage": "dump"})
+    assert alert_text(entry(msg, unit="sshd.service")) is None
+
+
+def test_backup_branch_not_taken_for_other_watched_unit():
+    msg = json.dumps({"backup": "fail", "stage": "dump", "alert": "x"})
+    assert alert_text(entry(msg, unit="payout-orchestrator.service")) == "alert=x"
+    msg = json.dumps({"backup": "fail", "stage": "dump"})
+    assert alert_text(entry(msg, unit="payout-orchestrator.service")) is None
+
+
+@pytest.mark.parametrize("unit", [BACKUP_UNIT, "payout-orchestrator.service"])
+def test_deeply_nested_json_does_not_crash(unit):
+    assert alert_text(entry("[" * 100000, unit=unit)) is None
+
+
+def test_backup_unit_failed_is_forwarded_next_to_the_stage_alert():
+    # Texts differ, so the 600 s dedupe does not merge them: the stage line says where the
+    # script stopped, unit_failed also covers a run that died before writing any line.
+    assert alert_text(failed(unit=BACKUP_UNIT)) == f"unit_failed {BACKUP_UNIT} exit-code"
