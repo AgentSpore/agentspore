@@ -5,15 +5,23 @@ Stdlib-only Python 3.12.
 
 ## Forwarded
 
-From `payout-orchestrator.service`, `welcome-pending-signal.service` and `payout-signer@*.service` only:
+From `payout-orchestrator.service`, `welcome-pending-signal.service`, `agentspore-pg-backup.service`
+and `payout-signer@*.service` only:
 
 - a `MESSAGE` that is a JSON object with a string `alert` key; only `alert`, `intent_id`,
   `error`, `verdict` are rendered as `key=value`, values must match `[A-Za-z0-9_.:-]{1,64}`
   else `?`;
 - for `alert` = `welcome_pending` only, the keys `pending` and `clean` too, and only as plain
   integers 0..1000000 (anything else, including a string, is `?`); other alerts never pass them;
+- from the backup unit only: a JSON `MESSAGE` with `backup` = `fail` becomes
+  `alert=backup_fail stage=<stage>`, where `stage` is one of `mkdir`, `lock`, `diskspace`, `dump`,
+  `verify`, `rename`, `weekly` (anything else is `?`). `backup` = `ok` lines and every other key
+  (sizes, paths) are never forwarded. The watched unit names are fixed in code
+  (`parse.WATCHED_UNIT`), not configurable by environment;
 - systemd's unit-failed message (`MESSAGE_ID=d9b373ed55a64feb8242e02dbe79a49c`) with a
-  result other than `success`: `unit_failed <unit> <result>`.
+  result other than `success`: `unit_failed <unit> <result>`. For the backup unit this is sent in addition to the stage alert
+  (the texts differ, so dedupe does not merge them); it also covers a run that died before
+  writing any line.
 
 No free-text log line is forwarded.
 
