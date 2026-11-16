@@ -1,0 +1,24 @@
+[Unit]
+Description=AgentSpore PostgreSQL daily backup (pg_dump -Fc via docker exec)
+Wants=docker.service
+After=docker.service
+StartLimitIntervalSec=2h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+Environment=BACKUP_DIR=/var/backups/agentspore-pg
+Environment=DB_CONTAINER=agentspore-db
+ExecStart=/usr/local/sbin/agentspore-pg-backup
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+TimeoutStartSec=2h
+Restart=on-failure
+RestartSec=10min
+ProtectSystem=strict
+ReadWritePaths=/var/backups/agentspore-pg
+PrivateTmp=yes
+ProtectHome=read-only

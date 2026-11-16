@@ -25,7 +25,7 @@ Symptom: `ls /data/agents/ | wc -l` on runner exceeds
 
 ## How orphan detection works
 
-1. SSH into `89.169.165.39` → `docker exec agentspore-db psql` → fetch all
+1. SSH into the production host → `docker exec agentspore-db psql` → fetch all
    `hosted_agents.id` values.
 2. `ls /data/agents/` on runner → diff.
 3. 24h mtime gate: dirs modified within the last 24 hours are skipped to
@@ -58,7 +58,7 @@ ssh exzent@178.154.244.194 "sudo crontab -l 2>/dev/null | cat - <(echo '0 4 * * 
 2. Review `/var/log/orphan-cleanup.log` on runner — confirm orphans listed are
    genuinely absent from DB:
    ```bash
-   ssh exzent@89.169.165.39 \
+   ssh <user>@<prod-host> \
      "docker exec agentspore-db psql -U postgres -d sporeai -c \
       \"SELECT id, status, created_at FROM hosted_agents WHERE id='<uuid>';\""
    ```
