@@ -5,7 +5,7 @@ import re
 
 UNIT_FAILED_ID = "d9b373ed55a64feb8242e02dbe79a49c"
 WATCHED_UNIT = re.compile(
-    r"payout-orchestrator\.service|welcome-pending-signal\.service"
+    r"payout-orchestrator\.service|welcome-pending-signal\.service|agentspore-pg-backup\.service"
     r"|payout-signer@[A-Za-z0-9_.:-]+\.service"
 )
 SAFE_VALUE = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
@@ -13,6 +13,9 @@ ALERT_KEYS = ("alert", "intent_id", "error", "verdict")
 COUNT_ALERT = "welcome_pending"
 COUNT_KEYS = ("pending", "clean")
 MAX_COUNT = 1_000_000
+BACKUP_UNIT = "agentspore-pg-backup.service"
+BACKUP_FAIL_ALERT = "backup_fail"
+BACKUP_STAGES = frozenset({"mkdir", "lock", "diskspace", "dump", "verify", "rename", "weekly"})
 
 
 def safe(value: object) -> str:
@@ -56,11 +59,21 @@ def _json_alert(entry: dict) -> str | None:
         return None
     try:
         body = json.loads(message)
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
-    if not isinstance(body, dict) or not isinstance(body.get("alert"), str):
+    if not isinstance(body, dict):
+        return None
+    if source == BACKUP_UNIT and body.get("backup") == "fail":
+        return _backup_fail(body)
+    if not isinstance(body.get("alert"), str):
         return None
     parts = [f"{key}={safe(body[key])}" for key in ALERT_KEYS if body.get(key) is not None]
     if body["alert"] == COUNT_ALERT:
         parts += [f"{key}={count(body[key])}" for key in COUNT_KEYS if key in body]
     return " ".join(parts)
+
+
+def _backup_fail(body: dict) -> str:
+    stage = body.get("stage")
+    known = isinstance(stage, str) and stage in BACKUP_STAGES
+    return f"alert={BACKUP_FAIL_ALERT} stage={stage if known else '?'}"
