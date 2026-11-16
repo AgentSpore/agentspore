@@ -1,130 +1,145 @@
-# Runbook: PostgreSQL Backup & Restore
+# Runbook: PostgreSQL backup and restore
 
-## Overview
+Status: 2026-11-16, type: how-to. Checked against `deploy/docker-compose.prod.yml`
+(container `agentspore-db`, PostgreSQL 16). Install and manual-run steps need systemd and Docker on the host.
 
-Daily `pg_dump` of `sporeai` DB on prod server `89.169.165.39`.
-Backups stored locally at `/var/backups/agentspore-pg/`.
-Retention: 7 days rolling.
+This runbook installs a daily `pg_dump` of the AgentSpore database, keeps 7 daily and 4 weekly
+dumps, and shows how to prove a dump restores and how to restore it into production.
+Dumps stay on the same host: copying them elsewhere is the operator's job ([Off-host copies](#off-host-copies)).
+Failures show up only in the journal until you add an alert.
 
-## Setup (one-time, run on prod server)
+## What the backup does
 
-```bash
-# 1. Copy script
-sudo mkdir -p /opt/scripts
-sudo cp /app/agentsspore/deploy/deploy/scripts/pg-backup.sh /opt/scripts/pg-backup.sh
-sudo chmod +x /opt/scripts/pg-backup.sh
+| Item | Behaviour |
+|---|---|
+| When | `agentspore-pg-backup.timer`: 03:00 UTC daily plus up to 30 min random delay, `Persistent=true` |
+| Dump | `pg_dump -Fc` inside the DB container through `docker exec`. Credentials stay in the container (`POSTGRES_USER`, `POSTGRES_DB`) |
+| Verify | Written to a hidden `.part` file. Renamed to `agentspore-<UTC>.dump` only after `pg_restore` reads the whole archive and lists more than `MIN_TOC` (100) entries |
+| Rotation | Keeps 7 daily dumps. Sunday (UTC) dumps are also kept in `weekly/`, 4 of them. Only files named `agentspore-<YYYYMMDD>T<HHMMSS>Z.dump` are ever deleted |
+| Disk guard | Aborts when free space is below 5 x the newest dump |
+| Journal | One JSON line: `{"backup":"ok","size_bytes":N,"toc":M}` or `{"backup":"fail","stage":"..."}` plus a non-zero exit |
+| Does NOT | Copy dumps off the host, send alerts, back up Redis, the runner, or Caddy data |
 
-# 2. Create backup dir
-sudo mkdir -p /var/backups/agentspore-pg
-sudo chown exzent:exzent /var/backups/agentspore-pg
-chmod 700 /var/backups/agentspore-pg
+Failure stages: `mkdir`, `lock`, `diskspace`, `dump`, `verify`, `rename`, `weekly`.
+A failed run is retried by systemd, 10 minutes apart, up to 2 more times (3 starts per 2 hours in total).
 
-# 3. Install cron (as exzent)
-crontab -e
-# Add:
-# 0 3 * * * /opt/scripts/pg-backup.sh >> /var/log/pg-backup.log 2>&1
-```
+Settings are environment variables of the script: `BACKUP_DIR` (default `/var/backups/agentspore-pg`),
+`DB_CONTAINER` (`agentspore-db`), `KEEP_DAILY`, `KEEP_WEEKLY`, `MIN_TOC`, `SPACE_FACTOR`.
+The unit sets `BACKUP_DIR` and `DB_CONTAINER`; to change another one, add an `Environment=` line.
+If you change `BACKUP_DIR`, change `ReadWritePaths=` in the unit to match.
 
-## Manual backup (ad-hoc)
+## Install
 
-```bash
-ssh exzent@89.169.165.39
-/opt/scripts/pg-backup.sh
-# or directly:
-docker exec agentspore-db pg_dump -U postgres sporeai | gzip > /var/backups/agentspore-pg/sporeai_manual_$(date +%F).sql.gz
-```
-
-## Restore procedure
-
-### Full restore to running container
+Run as root on the Docker host, from a checkout of this repository.
 
 ```bash
-# 1. Choose dump
-ls -lh /var/backups/agentspore-pg/
-
-# 2. Restore to existing DB (drops and recreates all tables)
-#    WARNING: this is destructive — all current data is replaced.
-DUMP=/var/backups/agentspore-pg/sporeai_2026-05-02_030000.sql.gz
-
-gunzip -c "$DUMP" | docker exec -i agentspore-db psql -U postgres sporeai
-
-# 3. Verify row counts (sanity check)
-docker exec agentspore-db psql -U postgres -d sporeai -c "
-  SELECT
-    (SELECT COUNT(*) FROM users)          AS users,
-    (SELECT COUNT(*) FROM agents)         AS agents,
-    (SELECT COUNT(*) FROM hosted_agents)  AS hosted_agents;
-"
+install -D -m 0755 deploy/scripts/pg-backup.sh /usr/local/sbin/agentspore-pg-backup
+install -D -m 0644 deploy/systemd/agentspore-pg-backup.service /etc/systemd/system/agentspore-pg-backup.service
+install -D -m 0644 deploy/systemd/agentspore-pg-backup.timer /etc/systemd/system/agentspore-pg-backup.timer
+install -d -m 0700 /var/backups/agentspore-pg
+systemd-analyze verify /etc/systemd/system/agentspore-pg-backup.service /etc/systemd/system/agentspore-pg-backup.timer
+systemctl daemon-reload
+systemctl enable --now agentspore-pg-backup.timer
+systemctl list-timers agentspore-pg-backup.timer --no-pager
 ```
 
-### Restore to a temporary DB (safe verification without touching prod)
+Expect: `verify` prints nothing; `list-timers` shows the next run at 03:00-03:30 UTC.
+Remove any old cron entry or `.sql.gz` job so two backups do not run side by side.
+
+## Run once manually
 
 ```bash
-# Create temp DB
-docker exec agentspore-db createdb -U postgres sporeai_restore_test
-
-# Restore into it
-DUMP=/var/backups/agentspore-pg/sporeai_2026-05-02_030000.sql.gz
-gunzip -c "$DUMP" | docker exec -i agentspore-db psql -U postgres sporeai_restore_test
-
-# Verify
-docker exec agentspore-db psql -U postgres -d sporeai_restore_test -c "\dt"
-docker exec agentspore-db psql -U postgres -d sporeai_restore_test -c "SELECT COUNT(*) FROM users;"
-
-# Drop temp DB when done
-docker exec agentspore-db dropdb -U postgres sporeai_restore_test
+systemctl start agentspore-pg-backup.service; echo rc=$?
+journalctl -u agentspore-pg-backup.service --since '-5min' --no-pager | tail -5
+ls -l /var/backups/agentspore-pg/
 ```
 
-## Test restore (run monthly)
+Expect: `rc=0`; a journal line `{"backup":"ok","size_bytes":...,"toc":...}` with `toc` above 100;
+one file `agentspore-<UTC>.dump`, mode `-rw-------`, no `.part` file left.
+
+Running the script by hand works too, as root: `/usr/local/sbin/agentspore-pg-backup`.
+Do not copy manual dumps into `BACKUP_DIR` under an `agentspore-<UTC>.dump` name: they count against the 7 and get rotated out.
+Keep them one level up, or under another name. Write manual dumps with `umask 077` (as in the restore steps below): they hold all data.
+Dumps from the old `sporeai_*.sql.gz` job are never rotated by this script. Once a new dump verifies, move them off the host or delete them.
+
+Check health at any time:
 
 ```bash
-# From prod server:
-LATEST=$(ls -t /var/backups/agentspore-pg/sporeai_*.sql.gz | head -1)
-echo "Testing restore of: $LATEST"
-
-# Create test DB
-docker exec agentspore-db createdb -U postgres sporeai_restore_test
-
-# Restore
-gunzip -c "$LATEST" | docker exec -i agentspore-db psql -U postgres sporeai_restore_test 2>&1 | tail -5
-
-# Drop a non-essential table to simulate data loss
-docker exec agentspore-db psql -U postgres -d sporeai_restore_test -c "DROP TABLE IF EXISTS activity_log;"
-
-# Re-restore
-gunzip -c "$LATEST" | docker exec -i agentspore-db psql -U postgres sporeai_restore_test 2>&1 | tail -5
-
-# Verify table is back
-docker exec agentspore-db psql -U postgres -d sporeai_restore_test -c "\d activity_log"
-
-# Cleanup
-docker exec agentspore-db dropdb -U postgres sporeai_restore_test
-echo "Restore test PASSED"
+journalctl -u agentspore-pg-backup.service --since '-2days' --no-pager | grep '"backup"'
+ls -lh /var/backups/agentspore-pg/ /var/backups/agentspore-pg/weekly/
 ```
 
-## Backup health check
+## Restore drill (monthly)
+
+A backup nobody restored is a guess. Restore into a throwaway container, never the live DB.
+Use the same PostgreSQL major as production (16).
 
 ```bash
-# List backups and sizes
-ls -lh /var/backups/agentspore-pg/
-
-# Tail log
-tail -50 /var/log/pg-backup.log
-
-# Verify gzip integrity (no corrupted dumps)
-for f in /var/backups/agentspore-pg/*.sql.gz; do
-    gunzip -t "$f" && echo "OK: $f" || echo "CORRUPT: $f"
-done
+D=/var/backups/agentspore-pg/agentspore-<UTC>.dump
+docker run -d --name bk-drill -v /var/lib/postgresql/data \
+  -e POSTGRES_USER=drill -e POSTGRES_DB=drill -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16-alpine
+# the image restarts the server once after init: wait for the second "ready" line
+until [ "$(docker logs bk-drill 2>&1 | grep -c 'ready to accept connections')" -ge 2 ]; do sleep 1; done
+docker exec -i bk-drill pg_restore -U drill -d drill --no-owner --no-acl --exit-on-error < "$D"; echo rc=$?
+docker exec bk-drill psql -tA -U drill -d drill -c "select count(*) from information_schema.tables where table_schema='public'"
+docker exec agentspore-db sh -c "psql -tA -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"select count(*) from information_schema.tables where table_schema='public'\""
+docker rm -f -v bk-drill
 ```
 
-## Off-site backup (recommended)
+Expect: `rc=0` and the two table counts equal. No ports are published; `rm -v` also removes the anonymous data volume.
+If the restore fails on a missing extension, use the production image tag instead of `postgres:16-alpine`.
 
-Backups on the same host = no backup. Add S3/Yandex Cloud upload.
+## Restore into production
+
+Destructive: the live database is dropped and recreated from the dump. Do the drill on the same file first.
+Set `D` to the dump to restore. Run as root.
+
+1. Pause the backup timer and take a verified safety copy of the current state:
+   ```bash
+   systemctl stop agentspore-pg-backup.timer
+   SAFE=/var/backups/agentspore-pre-restore/pre-$(date -u +%Y%m%dT%H%M%SZ).dump
+   (umask 077; install -d -m 0700 "$(dirname "$SAFE")"; docker exec agentspore-db sh -c 'exec pg_dump -Fc -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$SAFE"); echo rc=$?
+   docker exec -i agentspore-db pg_restore -l < "$SAFE" | grep -vcE '^(;|$)'
+   ```
+   Expect `rc=0` and a count above 100. Otherwise stop here.
+2. Stop every writer by container name (add `agentspore-a4-worker` if the `a4` profile is on), then check nobody else is connected:
+   ```bash
+   docker stop agentspore-backend
+   docker exec -i agentspore-db sh -c 'psql -tA -U "$POSTGRES_USER" -d postgres -v d="$POSTGRES_DB"' <<< "select count(*) from pg_stat_activity where datname = :'d' and backend_type = 'client backend'"
+   ```
+   Expect `0`. Another client holds a session: find and stop it, `dropdb --force` would cut it off mid-write.
+3. Recreate the database and restore into the empty one (no `--clean`, one transaction):
+   ```bash
+   docker exec agentspore-db sh -c 'dropdb --force -U "$POSTGRES_USER" "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" "$POSTGRES_DB"'
+   docker exec -i agentspore-db sh -c 'exec pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --single-transaction --exit-on-error' < "$D"; echo rc=$?
+   ```
+4. Expect `rc=0`. A non-zero rc rolls the restore back to an empty database: keep the backend down and restore `$SAFE` the same way (step 3), or ask the owner.
+5. Check out the app version that matches the dump. The Flyway history table is part of the dump, so it now
+   matches the dump's schema version, and starting the backend runs Flyway first (via `depends_on`) and applies
+   every newer migration. Use a newer version only if you want those migrations applied.
+6. Start the backend and check it (with the `a4` profile, add `--profile a4` and `a4-worker`):
+   ```bash
+   docker compose -f deploy/docker-compose.prod.yml up -d backend
+   docker logs --tail 50 agentspore-backend
+   systemctl start agentspore-pg-backup.timer
+   ```
+   Then call the public health URL.
+
+## Rollback and uninstall
 
 ```bash
-# Example — append to pg-backup.sh after the gzip step:
-# rclone copy "$DUMP_FILE" yandex-s3:agentspore-backups/pg/
-# or: aws s3 cp "$DUMP_FILE" s3://agentspore-backups/pg/
+systemctl disable --now agentspore-pg-backup.timer
+systemctl stop agentspore-pg-backup.service
+rm /etc/systemd/system/agentspore-pg-backup.timer /etc/systemd/system/agentspore-pg-backup.service /usr/local/sbin/agentspore-pg-backup
+systemctl daemon-reload
+systemctl reset-failed agentspore-pg-backup.service agentspore-pg-backup.timer 2>/dev/null || true
 ```
 
-Ask user for S3/YC credentials before enabling — do not store in this file.
+Dumps already written stay; delete them by hand if wanted.
+
+## Off-host copies
+
+Backups on the same host are not a full backup: a lost disk or host takes the dumps too.
+Copying `BACKUP_DIR` to another machine or object storage (rclone, `aws s3 cp`, rsync over SSH) is the operator's responsibility.
+The script ships no uploader and no credentials; keep storage credentials outside the repository.
+For failure alerts, add `OnFailure=` to the unit or check that a dump newer than 26 hours exists.

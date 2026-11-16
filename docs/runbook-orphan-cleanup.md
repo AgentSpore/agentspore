@@ -2,7 +2,7 @@
 
 ## When this triggers
 
-Agent directories at `/data/agents/<uuid>/` on runner `178.154.244.194` become
+Agent directories at `/data/agents/<uuid>/` on runner `<runner-host>` become
 orphans when:
 
 1. A user deletes their hosted agent — the backend sets `hosted_agents` row
@@ -19,13 +19,13 @@ Symptom: `ls /data/agents/ | wc -l` on runner exceeds
 ## Script location
 
 - **Source**: `deploy/scripts/orphan-agent-cleanup.sh`
-- **Deployed**: `/opt/scripts/orphan-agent-cleanup.sh` on runner `178.154.244.194`
+- **Deployed**: `/opt/scripts/orphan-agent-cleanup.sh` on runner `<runner-host>`
 - **Cron**: `0 4 * * *` (04:00 UTC daily)
 - **Log**: `/var/log/orphan-cleanup.log`
 
 ## How orphan detection works
 
-1. SSH into `89.169.165.39` → `docker exec agentspore-db psql` → fetch all
+1. SSH into the production host → `docker exec agentspore-db psql` → fetch all
    `hosted_agents.id` values.
 2. `ls /data/agents/` on runner → diff.
 3. 24h mtime gate: dirs modified within the last 24 hours are skipped to
@@ -44,12 +44,15 @@ requirement.
 ## Cron entry (runner crontab)
 
 ```
-0 4 * * * DEVOPS_API_KEY=***REMOVED*** DRY_RUN=true /opt/scripts/orphan-agent-cleanup.sh
+0 4 * * * DRY_RUN=true /opt/scripts/orphan-agent-cleanup.sh
 ```
+
+The script reads `DEVOPS_API_KEY` from `/etc/agentspore-cleanup.env` (root-owned, mode 600);
+never put the key in the crontab line.
 
 Install:
 ```bash
-ssh exzent@178.154.244.194 "sudo crontab -l 2>/dev/null | cat - <(echo '0 4 * * * DEVOPS_API_KEY=***REMOVED*** DRY_RUN=true /opt/scripts/orphan-agent-cleanup.sh') | sudo crontab -"
+ssh <user>@<runner-host> "sudo crontab -l 2>/dev/null | cat - <(echo '0 4 * * * DRY_RUN=true /opt/scripts/orphan-agent-cleanup.sh') | sudo crontab -"
 ```
 
 ## Observation period procedure
@@ -58,13 +61,13 @@ ssh exzent@178.154.244.194 "sudo crontab -l 2>/dev/null | cat - <(echo '0 4 * * 
 2. Review `/var/log/orphan-cleanup.log` on runner — confirm orphans listed are
    genuinely absent from DB:
    ```bash
-   ssh exzent@89.169.165.39 \
+   ssh <user>@<prod-host> \
      "docker exec agentspore-db psql -U postgres -d sporeai -c \
       \"SELECT id, status, created_at FROM hosted_agents WHERE id='<uuid>';\""
    ```
 3. If false positives = 0 over 7 days, flip to real mode:
    ```bash
-   ssh exzent@178.154.244.194 \
+   ssh <user>@<runner-host> \
      "sudo crontab -l | sed 's/DRY_RUN=true/DRY_RUN=false/' | sudo crontab -"
    ```
 
@@ -72,20 +75,20 @@ ssh exzent@178.154.244.194 "sudo crontab -l 2>/dev/null | cat - <(echo '0 4 * * 
 
 From any machine with SSH access to runner:
 ```bash
-ssh exzent@178.154.244.194 \
+ssh <user>@<runner-host> \
   "DRY_RUN=true DEVOPS_API_KEY=<key> /opt/scripts/orphan-agent-cleanup.sh"
 ```
 
 Or with real deletion:
 ```bash
-ssh exzent@178.154.244.194 \
+ssh <user>@<runner-host> \
   "DRY_RUN=false DEVOPS_API_KEY=<key> /opt/scripts/orphan-agent-cleanup.sh"
 ```
 
 ## Reading the logs
 
 ```bash
-ssh exzent@178.154.244.194 "tail -100 /var/log/orphan-cleanup.log"
+ssh <user>@<runner-host> "tail -100 /var/log/orphan-cleanup.log"
 ```
 
 Key log prefixes:
@@ -111,7 +114,7 @@ As of 2026-05-02, 6 confirmed orphans (all >24h old, all absent from DB):
 Ready-to-paste deletion commands (paste after your confirmation):
 
 ```bash
-ssh exzent@178.154.244.194 "
+ssh <user>@<runner-host> "
 rm -rf /data/agents/0626b80d-eee2-4dd1-9c24-057a899e522f
 rm -rf /data/agents/3a3c07c4-616c-4597-a3a7-c38d10beb6b2
 rm -rf /data/agents/72f0a679-26e5-48d2-bba1-e9fa6596c400
