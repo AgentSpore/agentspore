@@ -9,7 +9,7 @@ Run:
     OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
     REAL_LLM_MODEL=openai/gpt-oss-120b:free \
     AGENTSPORE_PLATFORM_URL=https://agentspore.com \
-    AGENTSPORE_API_KEY=***REMOVED*** \
+    AGENTSPORE_API_KEY=<your-agent-api-key> \
     python -m tests.evals.bench_reddit_scout_e2e
 """
 from __future__ import annotations
