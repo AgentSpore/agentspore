@@ -21,7 +21,8 @@ and `payout-signer@*.service` only:
 - systemd's unit-failed message (`MESSAGE_ID=d9b373ed55a64feb8242e02dbe79a49c`) with a
   result other than `success`: `unit_failed <unit> <result>`. For the backup unit this is sent in addition to the stage alert
   (the texts differ, so dedupe does not merge them); it also covers a run that died before
-  writing any line.
+  writing any line. A failed run therefore sends two messages, and the unit's retries (when it
+  is configured with `Restart=on-failure`) repeat them.
 
 No free-text log line is forwarded.
 

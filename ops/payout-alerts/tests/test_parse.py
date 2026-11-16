@@ -130,6 +130,18 @@ def test_backup_line_from_another_unit_ignored():
     assert alert_text(entry(msg, unit="sshd.service")) is None
 
 
+def test_backup_branch_not_taken_for_other_watched_unit():
+    msg = json.dumps({"backup": "fail", "stage": "dump", "alert": "x"})
+    assert alert_text(entry(msg, unit="payout-orchestrator.service")) == "alert=x"
+    msg = json.dumps({"backup": "fail", "stage": "dump"})
+    assert alert_text(entry(msg, unit="payout-orchestrator.service")) is None
+
+
+@pytest.mark.parametrize("unit", [BACKUP_UNIT, "payout-orchestrator.service"])
+def test_deeply_nested_json_does_not_crash(unit):
+    assert alert_text(entry("[" * 100000, unit=unit)) is None
+
+
 def test_backup_unit_failed_is_forwarded_next_to_the_stage_alert():
     # Texts differ, so the 600 s dedupe does not merge them: the stage line says where the
     # script stopped, unit_failed also covers a run that died before writing any line.
