@@ -21,7 +21,7 @@
 #   0 4 * * * DRY_RUN=true /opt/scripts/orphan-agent-cleanup.sh
 #
 # Required on runner:
-#   - SSH key access to exzent@89.169.165.39 (already present for deploy ops)
+#   - SSH key access to <user>@<prod-host> (already present for deploy ops)
 #   - curl (for API notification)
 #   - Standard coreutils (stat, du, sort)
 
