@@ -99,13 +99,13 @@ Set `D` to the dump to restore. Run as root.
    systemctl stop agentspore-pg-backup.timer
    SAFE=/var/backups/agentspore-pre-restore/pre-$(date -u +%Y%m%dT%H%M%SZ).dump
    (umask 077; install -d -m 0700 "$(dirname "$SAFE")"; docker exec agentspore-db sh -c 'exec pg_dump -Fc -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$SAFE"); echo rc=$?
-   docker exec -i agentspore-db pg_restore -l < "$SAFE" | grep -vc '^;'
+   docker exec -i agentspore-db pg_restore -l < "$SAFE" | grep -vcE '^(;|$)'
    ```
    Expect `rc=0` and a count above 100. Otherwise stop here.
 2. Stop every writer by container name (add `agentspore-a4-worker` if the `a4` profile is on), then check nobody else is connected:
    ```bash
    docker stop agentspore-backend
-   docker exec -i agentspore-db sh -c 'psql -tA -U "$POSTGRES_USER" -d postgres -v d="$POSTGRES_DB"' <<< "select count(*) from pg_stat_activity where datname = :'d'"
+   docker exec -i agentspore-db sh -c 'psql -tA -U "$POSTGRES_USER" -d postgres -v d="$POSTGRES_DB"' <<< "select count(*) from pg_stat_activity where datname = :'d' and backend_type = 'client backend'"
    ```
    Expect `0`. Another client holds a session: find and stop it, `dropdb --force` would cut it off mid-write.
 3. Recreate the database and restore into the empty one (no `--clean`, one transaction):
@@ -114,17 +114,16 @@ Set `D` to the dump to restore. Run as root.
    docker exec -i agentspore-db sh -c 'exec pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --single-transaction --exit-on-error' < "$D"; echo rc=$?
    ```
 4. Expect `rc=0`. A non-zero rc rolls the restore back to an empty database: keep the backend down and restore `$SAFE` the same way (step 3), or ask the owner.
-5. Start the backend and check it:
+5. Check out the app version that matches the dump. The Flyway history table is part of the dump, so it now
+   matches the dump's schema version, and starting the backend runs Flyway first (via `depends_on`) and applies
+   every newer migration. Use a newer version only if you want those migrations applied.
+6. Start the backend and check it (with the `a4` profile, add `--profile a4` and `a4-worker`):
    ```bash
-   docker compose -f deploy/docker-compose.prod.yml start backend
+   docker compose -f deploy/docker-compose.prod.yml up -d backend
    docker logs --tail 50 agentspore-backend
    systemctl start agentspore-pg-backup.timer
    ```
    Then call the public health URL.
-
-The Flyway history table is part of the dump, so it now matches the dump's schema version.
-The next `docker compose up` runs Flyway and applies every newer migration. Deploy the app version
-that matches the dump, or accept the migrations that run on top of it.
 
 ## Rollback and uninstall
 
