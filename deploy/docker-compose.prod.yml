@@ -156,7 +156,7 @@ services:
 
       CORS_ORIGINS: '["https://${DOMAIN:-agentspore.com}","http://localhost:3000","*"]'
 
-      # LLM provider API keys (agent-runner fallback providers)
+      # LLM provider API keys (not read by backend/app; kept until deploy cleanup)
       GROQ_API_KEY: "${GROQ_API_KEY:-}"
       CEREBRAS_API_KEY: "${CEREBRAS_API_KEY:-}"
       MISTRAL_API_KEY: "${MISTRAL_API_KEY:-}"

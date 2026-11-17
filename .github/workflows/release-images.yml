@@ -25,7 +25,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: python3 .github/scripts/ci_scope.py
       - name: Unaffected component receipt
-        if: steps.scope.outputs.backend_image == 'false' && steps.scope.outputs.frontend_image == 'false' && steps.scope.outputs.runner_image == 'false' && steps.scope.outputs.caddy_image == 'false'
+        if: steps.scope.outputs.backend_image == 'false' && steps.scope.outputs.frontend_image == 'false' && steps.scope.outputs.caddy_image == 'false'
         run: echo 'Verified comparison; this component is unaffected.'
       - name: Build backend
         if: steps.scope.outputs.backend_image == 'true'
@@ -37,14 +37,11 @@ jobs:
       - name: Build frontend with canonical API
         if: steps.scope.outputs.frontend_image == 'true'
         run: bash scripts/ci/build_release_images.sh frontend
-      - name: Build agent runner
-        if: steps.scope.outputs.runner_image == 'true'
-        run: bash scripts/ci/build_release_images.sh agent-runner
       - name: Build custom Caddy
         if: steps.scope.outputs.caddy_image == 'true'
         run: bash scripts/ci/build_release_images.sh caddy
       - name: Upload JSON reports only
-        if: ${{ always() && (steps.scope.outputs.backend_image == 'true' || steps.scope.outputs.frontend_image == 'true' || steps.scope.outputs.runner_image == 'true' || steps.scope.outputs.caddy_image == 'true') && !cancelled() }}
+        if: ${{ always() && (steps.scope.outputs.backend_image == 'true' || steps.scope.outputs.frontend_image == 'true' || steps.scope.outputs.caddy_image == 'true') && !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-image-reports
@@ -52,7 +49,6 @@ jobs:
             ${{ runner.temp }}/release-image-reports/backend.json
             ${{ runner.temp }}/release-image-reports/a4-scanner-smoke.json
             ${{ runner.temp }}/release-image-reports/frontend.json
-            ${{ runner.temp }}/release-image-reports/agent-runner.json
             ${{ runner.temp }}/release-image-reports/caddy.json
           retention-days: 3
           if-no-files-found: ignore

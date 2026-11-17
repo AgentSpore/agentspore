@@ -69,8 +69,7 @@ _MAX_ATTRIBUTE_LENGTH = 8192
 def _configure_attribute_limits() -> None:
     """Bound SDK string values before any provider accepts attributes.
 
-    Keep in sync across the separately packaged backend and agent-runner;
-    agent-runner/tests/test_telemetry_limits.py exercises both entrypoints.
+    backend/tests/test_telemetry_limits.py exercises this entrypoint.
     """
     limit = _MAX_ATTRIBUTE_LENGTH
     for key in ("OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT", "OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT"):

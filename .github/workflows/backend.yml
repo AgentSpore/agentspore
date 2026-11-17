@@ -39,15 +39,11 @@ jobs:
         run: echo 'Verified comparison; this component is unaffected.'
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         if: steps.scope.outputs.telemetry == 'true'
-      - run: uv sync --project agent-runner --frozen --extra dev
+      - run: uv sync --project backend --frozen --extra dev
         if: steps.scope.outputs.telemetry == 'true'
-      - name: Verify both services' telemetry boundaries without network exporters
+      - name: Verify telemetry boundaries without network exporters
         if: steps.scope.outputs.telemetry == 'true'
-        run: >-
-          uv run --project agent-runner --frozen --extra dev pytest -q
-          agent-runner/tests/test_telemetry_limits.py
-          agent-runner/tests/test_observability.py
-          agent-runner/tests/test_baggage_span_processor.py
+        run: uv run --project backend --frozen --extra dev pytest -q backend/tests/test_telemetry_limits.py
 
   backend:
     runs-on: ubuntu-latest

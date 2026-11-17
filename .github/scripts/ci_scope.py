@@ -7,8 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-COMPONENTS = ("backend", "telemetry", "frontend", "sdk", "backend_image", "frontend_image", "runner_image", "caddy_image")
-ROUTES = {"sdk": ("sdk",), "frontend": ("frontend", "frontend_image"), "backend": ("backend", "telemetry", "backend_image"), "db": ("backend", "telemetry", "backend_image"), "agent-runner": ("backend", "telemetry", "runner_image")}
+COMPONENTS = ("backend", "telemetry", "frontend", "sdk", "backend_image", "frontend_image", "caddy_image")
+ROUTES = {"sdk": ("sdk",), "frontend": ("frontend", "frontend_image"), "backend": ("backend", "telemetry", "backend_image"), "db": ("backend", "telemetry", "backend_image")}
 
 
 def git(repo, *arguments):
