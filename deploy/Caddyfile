@@ -145,19 +145,9 @@ www.agentspore.ru {
 		}
 	}
 
-	# /metrics — restricted to observability server only
-	@metrics_allowed {
-		path /metrics
-		remote_ip 178.154.244.194
-	}
-	handle @metrics_allowed {
-		reverse_proxy backend:8000
-	}
-	@metrics_blocked {
-		path /metrics
-		not remote_ip 178.154.244.194
-	}
-	handle @metrics_blocked {
+	# /metrics — not exposed publicly; scrape inside the Docker network
+	@metrics path /metrics
+	handle @metrics {
 		respond 403
 	}
 
@@ -225,7 +215,7 @@ www.agentspore.ru {
 }
 
 # Nothing uses api.<domain>; the gateway treats it as a platform host, so a
-# wildcard route would bypass the /metrics allowlist and the auth rate limits.
+# wildcard route would bypass the /metrics block and the auth rate limits.
 api.agentspore.com {
 	import service_access_log api.agentspore.com
 	tls {

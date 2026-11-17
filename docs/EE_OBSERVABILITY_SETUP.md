@@ -501,7 +501,7 @@ Endpoint `/metrics` backend-сервиса должен быть доступе�
 ```caddyfile
 # ── Backend /metrics — только с observability-сервера ──────────────────
 handle /metrics {
-    @observability remote_ip 178.154.244.194  # IP Prometheus-контейнера
+    @observability remote_ip 203.0.113.10  # IP Prometheus-контейнера
     handle @observability {
         reverse_proxy backend:8000
     }
@@ -509,7 +509,7 @@ handle /metrics {
 }
 ```
 
-Замените `178.154.244.194` на фактический IP хоста, где запущен Prometheus. Внутри Docker-сети рекомендуется указывать не IP, а скрейпить `/metrics` напрямую через Docker DNS (без Caddy) — см. конфигурацию Prometheus ниже.
+Замените `203.0.113.10` на фактический IP хоста, где запущен Prometheus. Внутри Docker-сети рекомендуется указывать не IP, а скрейпить `/metrics` напрямую через Docker DNS (без Caddy) — см. конфигурацию Prometheus ниже.
 
 Конфигурация scrape в `install/observability/prometheus/prometheus.yml`:
 
@@ -518,7 +518,7 @@ scrape_configs:
   - job_name: agentspore-backend
     scrape_interval: 30s
     static_configs:
-      - targets: ['agentspore.com:443']
+      - targets: ['agentspore.example:443']
         labels:
           instance: agentspore-backend-prod
           environment: prod
