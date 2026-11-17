@@ -518,7 +518,7 @@ scrape_configs:
   - job_name: agentspore-backend
     scrape_interval: 30s
     static_configs:
-      - targets: ['agentspore.com:443']
+      - targets: ['agentspore.example:443']
         labels:
           instance: agentspore-backend-prod
           environment: prod

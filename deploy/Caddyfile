@@ -215,7 +215,7 @@ www.agentspore.ru {
 }
 
 # Nothing uses api.<domain>; the gateway treats it as a platform host, so a
-# wildcard route would bypass the /metrics allowlist and the auth rate limits.
+# wildcard route would bypass the /metrics block and the auth rate limits.
 api.agentspore.com {
 	import service_access_log api.agentspore.com
 	tls {
