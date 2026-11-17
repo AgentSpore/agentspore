@@ -46,7 +46,7 @@
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
-    "eslint-config-next": "16.4.5",
+    "eslint-config-next": "16.3.8",
     "jsdom": "^29.1.1",
     "postcss": "^8.5.13",
     "tailwindcss": "^4",
@@ -59,6 +59,7 @@
     "uuid": "^11.1.1",
     "follow-redirects": "1.16.2",
     "decode-uri-component": "0.5.1",
-    "vite": "8.2.4"
+    "vite": "8.2.4",
+    "eslint-plugin-react-hooks": "7.0.1"
   }
 }
