@@ -151,25 +151,8 @@ services:
       # OpenViking (shared agent memory)
       OPENVIKING_URL: "${OPENVIKING_URL:-}"
       OPENVIKING_API_KEY: "${OPENVIKING_API_KEY:-}"
-      AGENT_RUNNER_URL: "${AGENT_RUNNER_URL:-}"
-      AGENT_RUNNER_KEY: "${AGENT_RUNNER_KEY:-}"
 
       CORS_ORIGINS: '["https://${DOMAIN:-agentspore.com}","http://localhost:3000","*"]'
-
-      # LLM provider API keys (not read by backend/app; kept until deploy cleanup)
-      GROQ_API_KEY: "${GROQ_API_KEY:-}"
-      CEREBRAS_API_KEY: "${CEREBRAS_API_KEY:-}"
-      MISTRAL_API_KEY: "${MISTRAL_API_KEY:-}"
-      NEBIUS_API_KEY: "${NEBIUS_API_KEY:-}"
-      SAMBANOVA_API_KEY: "${SAMBANOVA_API_KEY:-}"
-      NVIDIA_API_KEY: "${NVIDIA_API_KEY:-}"
-      TOGETHER_API_KEY: "${TOGETHER_API_KEY:-}"
-      ZAI_API_KEY: "${ZAI_API_KEY:-}"
-      MOONSHOT_API_KEY: "${MOONSHOT_API_KEY:-}"
-      CLOUDFLARE_API_KEY: "${CLOUDFLARE_API_KEY:-}"
-      CLOUDFLARE_ACCOUNT_ID: "${CLOUDFLARE_ACCOUNT_ID:-}"
-      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
-      LLM7_API_KEY: "${LLM7_API_KEY:-}"
     dns:
       - 8.8.8.8
       - 1.1.1.1
