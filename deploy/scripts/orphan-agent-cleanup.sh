@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # orphan-agent-cleanup.sh — delete /data/agents/<uuid> dirs with no matching DB row.
 #
-# Designed to run as a cron job on runner 178.154.244.194 at 04:00 UTC.
+# Designed to run as a cron job on the runner host at 04:00 UTC.
 # Default: DRY_RUN=true (logs only, never deletes). Set DRY_RUN=false after
 # one week of clean dry-runs to enable real deletion.
 #

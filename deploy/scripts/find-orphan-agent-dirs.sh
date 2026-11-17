@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # find-orphan-agent-dirs.sh — find /data/agents/<uuid> dirs with no matching DB row.
 #
-# Run on runner server 178.154.244.194 (or from any host with DB access).
+# Run on the runner host (or from any host with DB access).
 # NEVER auto-deletes. Reports orphans only — human must confirm.
 #
 # Usage: load /etc/agentspore-cleanup.env or supply env vars.

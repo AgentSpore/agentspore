@@ -17,7 +17,7 @@ Host iptables rules in the `DOCKER-USER` chain drop traffic from that subnet to
 all RFC1918 ranges, blocking SSRF to internal services while leaving public
 internet (LLM APIs) reachable.
 
-## One-time deploy steps (run as root on 178.154.244.194)
+## One-time deploy steps (run as root on the runner host)
 
 ### 1. Create the sandbox network
 
@@ -94,7 +94,7 @@ docker compose -f ../deploy/docker-compose.prod.yml restart runner
 
 From outside:
 ```bash
-curl http://178.154.244.194:8100/health
+curl http://<runner-host>:8100/health
 ```
 
 From inside a running sandbox container (should time out/refuse):
