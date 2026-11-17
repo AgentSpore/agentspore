@@ -1,6 +1,7 @@
-"""Exercise both deployable services through real Logfire/OTel export in memory."""
+"""Exercise backend telemetry through real Logfire/OTel export in memory."""
 
 import importlib.util
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,12 +18,10 @@ LIMIT_KEYS = (
 )
 
 
-@pytest.fixture(
-    params=["agent-runner/observability.py", "backend/app/observability.py"]
-)
-def service(request):
+@pytest.fixture
+def service():
     spec = importlib.util.spec_from_file_location(
-        "service_observability", ROOT / request.param
+        "service_observability", ROOT / "backend/app/observability.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -123,14 +122,10 @@ def test_span_override_and_global_fallback(
     with patch.object(logfire, "configure") as configure:
         service.configure()
         configure.assert_called_once()
-    import os
-
     assert tuple(os.environ[key] for key in LIMIT_KEYS) == expected
 
 
 def test_disabled_telemetry_does_not_change_limits(service, monkeypatch):
-    import os
-
     monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
     monkeypatch.setenv(LIMIT_KEYS[0], "unchanged")
     monkeypatch.delenv(LIMIT_KEYS[1], raising=False)

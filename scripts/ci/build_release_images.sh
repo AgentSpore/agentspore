@@ -3,11 +3,11 @@
 set -euo pipefail
 umask 077
 
-service=${1:?Usage: build_release_images.sh backend|frontend|agent-runner|caddy}
+service=${1:?Usage: build_release_images.sh backend|frontend|caddy}
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 options=(--platform linux/amd64 --load --provenance=false)
 case "$service" in
-  backend|agent-runner) context=$service; dockerfile=$service/Dockerfile ;;
+  backend) context=$service; dockerfile=$service/Dockerfile ;;
   frontend)
     context=frontend; dockerfile=frontend/Dockerfile
     options+=(--build-arg NEXT_PUBLIC_API_URL=

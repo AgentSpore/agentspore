@@ -5,15 +5,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-import sys
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.services.agent_webhook_service import AgentWebhookService
 from app.services.connection_manager import ConnectionManager
-
 
 # ── AgentWebhookService.sign ──────────────────────────────────────────────
 
@@ -191,40 +188,3 @@ async def test_disconnect_user_releases_listener_on_last_tab(monkeypatch):
     await cm.disconnect_user("user-1", ws2)
     assert "user-1" not in cm._user_connections
     await asyncio.wait_for(listener_cancelled.wait(), timeout=1)
-
-
-# ── Agent runner idempotency dedup ────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_agent_runner_drops_duplicate_event_ids():
-    """Reload agent-runner main and exercise the dedup deque on a stub session."""
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "agent-runner"))
-    # Importing main.py is heavy (FastAPI, docker, pydantic_deep). We only need the
-    # AgentSession class behaviour, so we recreate the relevant slice in isolation.
-    import collections
-
-    class StubSession:
-        def __init__(self):
-            self._seen_event_ids: collections.deque = collections.deque(maxlen=4)
-            self.handled = []
-
-        async def handle(self, event):
-            eid = event.get("id") or event.get("event_id")
-            if eid:
-                if eid in self._seen_event_ids:
-                    return "duplicate"
-                self._seen_event_ids.append(eid)
-            self.handled.append(eid)
-            return "ok"
-
-    s = StubSession()
-    assert await s.handle({"id": "e1", "type": "dm"}) == "ok"
-    assert await s.handle({"id": "e1", "type": "dm"}) == "duplicate"
-    assert await s.handle({"id": "e2", "type": "dm"}) == "ok"
-    assert s.handled == ["e1", "e2"]
-
-    # Ring buffer eviction: after 4 new ids, "e1" should be re-acceptable
-    for i in range(3, 7):
-        await s.handle({"id": f"e{i}"})
-    assert await s.handle({"id": "e1"}) == "ok"

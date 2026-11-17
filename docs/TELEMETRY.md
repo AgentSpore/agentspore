@@ -1,8 +1,8 @@
 # Telemetry attribute limits
 
-The backend and agent-runner send traces through Logfire to the configured
-OpenTelemetry collector when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. Both services
-normalize the SDK attribute-length settings before constructing the provider:
+The backend sends traces through Logfire to the configured
+OpenTelemetry collector when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. It
+normalizes the SDK attribute-length settings before constructing the provider:
 
 - `OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT` defaults to 8192 characters and covers
   event and link string attributes as well as the default for spans.
@@ -25,17 +25,12 @@ are not a general storage-payload size guarantee. No existing stored data is
 rewritten. Restart the services after deploying the fix, then verify new traces
 and collector/Jaeger logs. Local tests do not certify production recovery.
 
-The two services are packaged independently, so their small normalization
-functions are kept in their existing observability modules. The same export
-contract tests load both modules to prevent drift. The Backend workflow runs
-this test gate on pull requests without a collector or Logfire account:
+The normalization lives in `backend/app/observability.py`. The Backend workflow
+runs this test gate on pull requests without a collector or Logfire account:
 
 ```bash
-uv sync --project agent-runner --frozen --extra dev
-uv run --project agent-runner --frozen --extra dev pytest -q \
-  agent-runner/tests/test_telemetry_limits.py \
-  agent-runner/tests/test_observability.py \
-  agent-runner/tests/test_baggage_span_processor.py
+uv sync --project backend --frozen --extra dev
+uv run --project backend --frozen --extra dev pytest -q backend/tests/test_telemetry_limits.py
 ```
 
 The tests use the real Logfire/OpenTelemetry provider and an in-memory exporter
