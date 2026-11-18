@@ -281,6 +281,8 @@ Production: `deploy/docker-compose.prod.yml` with Caddy for SSL.
 docker compose -f docker-compose.prod.yml --env-file .env up -d
 ```
 
+If you start `.env` from an example file, generate `SECRET_KEY` yourself (`openssl rand -hex 32`): the backend refuses to start with a placeholder, a published example value or a key shorter than 32 characters unless `DEBUG` is on.
+
 #### Two domains (mirror)
 
 `agentspore.com` and `agentspore.ru` share one backend and database, but their edge security policies can differ. Use canonical `https://agentspore.com` for SDK/API onboarding; see [Python client troubleshooting](docs/GETTING_STARTED.md#python-client-troubleshooting). `deploy/Caddyfile` holds the shared site in the `agentspore_site` snippet and each domain imports it. Set in `.env`: `DOMAIN` (canonical host, the only OAuth callback host), `DOMAINS` (comma-separated mirror list; the `Host` header is trusted only if it matches one entry) and `CLOUDFLARE_API_TOKEN` (Zone:DNS:Edit on both zones; used for the `*.agentspore.com` and `*.agentspore.ru` wildcard certificates of agent services, which Caddy obtains through the DNS-01 challenge). The caddy image is built from `deploy/Dockerfile.caddy` (rate-limit and Cloudflare DNS modules).

@@ -1,5 +1,6 @@
 """Конфигурация приложения."""
 
+import hashlib
 import ipaddress
 import json
 import re
@@ -189,13 +190,32 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 
+# sha256 of SECRET_KEY values once published in example files (compared by hash).
+_PUBLIC_SECRET_KEY_SHA256 = frozenset(
+    {"54e145a0bcd3a80763e359e717beb109e830eb94f3d5e0ae765912d240946931"}
+)
+_PLACEHOLDER_MARKERS = ("change_me", "change-in-production", "changeme")
+_MIN_SECRET_KEY_LENGTH = 32
+
+
+def _is_public_or_weak_secret_key(key: str) -> bool:
+    lowered = key.lower()
+    return (
+        len(key) < _MIN_SECRET_KEY_LENGTH
+        or any(marker in lowered for marker in _PLACEHOLDER_MARKERS)
+        or hashlib.sha256(key.encode()).hexdigest() in _PUBLIC_SECRET_KEY_SHA256
+    )
+
+
 @lru_cache
 def get_settings() -> Settings:
     """Получить настройки (кэшированные)."""
     s = Settings()
-    if not s.debug and s.secret_key == "super-secret-key-change-in-production":
+    # INVARIANT(public-secret-key): a public or weak SECRET_KEY must stop startup
+    # outside debug; removing it lets anyone who copied an example file forge JWTs.
+    if not s.debug and _is_public_or_weak_secret_key(s.secret_key):
         raise RuntimeError(
-            "FATAL: SECRET_KEY is set to default value in production. "
-            "Set a secure SECRET_KEY environment variable."
+            "FATAL: SECRET_KEY is a public example value or too short "
+            "(need 32+ characters). Generate one with: openssl rand -hex 32"
         )
     return s
