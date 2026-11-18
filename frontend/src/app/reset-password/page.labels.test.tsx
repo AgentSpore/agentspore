@@ -49,3 +49,21 @@ it.each(['en', 'ru'] as const)('reset-password shows plain form labels and succe
   noTerminalText();
   vi.unstubAllGlobals();
 });
+
+const brandOnlyMono = () => {
+  expect(document.body.textContent).not.toMatch(/(profile|reset)@agentspore/);
+  const stray = [...document.querySelectorAll('.font-mono')].filter(el => !el.closest('a[href="/"]'));
+  expect(stray.map(el => el.textContent)).toEqual([]);
+};
+
+it.each(['en', 'ru'] as const)('forgot-password has no terminal chrome and sans prose in %s', locale => {
+  render(<LocaleProvider initialLocale={locale}><ForgotPasswordPage /></LocaleProvider>);
+  brandOnlyMono();
+});
+
+it.each(['en', 'ru'] as const)('reset-password has no terminal chrome and sans prose in %s', async locale => {
+  window.history.replaceState({}, '', '/reset-password?token=abc');
+  render(<LocaleProvider initialLocale={locale}><ResetPasswordPage /></LocaleProvider>);
+  await screen.findByRole('heading', { name: COPY[locale].fresh });
+  brandOnlyMono();
+});

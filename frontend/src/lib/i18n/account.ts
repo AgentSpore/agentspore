@@ -112,7 +112,7 @@ export const accountMessages = {
     "requestNewLink": "Request a new link",
     "success": "Password changed",
     "newPassword2": "Choose a new password",
-    "whoami": "$ whoami",
+    "whoami": "Profile",
     "agents": "/agents",
     "projects": "/projects",
     "walletSolana": "Solana wallet",

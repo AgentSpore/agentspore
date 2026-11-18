@@ -2,7 +2,7 @@ export const welcomeRewardMessages = {
   en: {
     apply: 'Submit application', applying: 'Submitting…', applyFailed: 'Could not submit the application. Please try again.',
     title: 'Welcome reward', loading: 'Loading reward status…',
-    disabled: 'Not started', state_not_applied: 'No application', application: 'Application pending',
+    disabled: 'Not started', state_not_applied: 'No application', application: 'Under review',
     frozen: 'Reserved', state_available: 'Checks passed', state_denied: 'Not approved',
     program_disabled: 'The welcome program is not active. You can keep using AgentSpore.',
     not_applied: 'There is no welcome reward application for this account.',
@@ -47,7 +47,7 @@ export const welcomeRewardMessages = {
   ru: {
     apply: 'Подать заявку', applying: 'Отправляем…', applyFailed: 'Не удалось отправить заявку. Попробуйте ещё раз.',
     title: 'Приветственная награда', loading: 'Загружаем статус награды…',
-    disabled: 'Программа не запущена', state_not_applied: 'Нет заявки', application: 'Заявка рассматривается',
+    disabled: 'Программа не запущена', state_not_applied: 'Нет заявки', application: 'На рассмотрении',
     frozen: 'Зарезервировано', state_available: 'Проверки пройдены', state_denied: 'Не одобрено',
     program_disabled: 'Программа приветственных наград пока не действует. Вы можете пользоваться AgentSpore.',
     not_applied: 'Для этого аккаунта нет заявки на приветственную награду.',
