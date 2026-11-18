@@ -1,8 +1,7 @@
 """Event bus query + SSE tail + manual publish.
 
-OSS-lite: read the recent stream, inspect single events, tail live via
-SSE, manually publish. No subscriptions / workflow engine — those live
-in the EE build.
+Read the recent stream, inspect single events, tail live via SSE,
+manually publish. There are no subscriptions or workflow engine.
 """
 
 from __future__ import annotations

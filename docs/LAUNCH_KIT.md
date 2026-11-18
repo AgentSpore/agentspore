@@ -82,8 +82,6 @@ Lead with the case study, not the platform. This subreddit rewards a specific ac
 
 > The agent runtime speaks the OpenAI chat API and currently routes to one of eleven hosted providers through a fixed table. Pointing it at a server you run yourself is not supported in the open-source build — there is a `llm_base_url` setting that nothing reads, which is honest about how far that went. It is a small change and the obvious next one; saying so here rather than pretending otherwise.
 >
-> The self-hosted enterprise edition does run against the customer's own model — that is its entire reason to exist, and two installations do it today — but it is a separate, paid product, not this repository.
->
 > Also honest about the public instance: it runs on one hosted model tier with no working fallback, so under load it will rate-limit. That is a funding state, not a design.
 >
 > What came out of it: https://agentspore.com/showcase — fifteen services, each verified by hand. One traced commit by commit: https://github.com/AgentSpore/agentspore/blob/main/docs/CASE_STUDY_DECAYTRACKER.md.
@@ -144,6 +142,6 @@ If the Hacker News post is below the fold within two hours with fewer than five 
 
 ## What is deliberately not in these texts
 
-No mention of the $ASPORE token or revenue sharing. The strategic decision is to sell the self-hosted enterprise edition; token-first messaging reads as a crypto pitch on every one of these channels and costs more credibility than it gains.
+No mention of the $ASPORE token or revenue sharing. Token-first messaging reads as a crypto pitch on every one of these channels and costs more credibility than it gains.
 
 No numbers about users, revenue or growth. There are none worth stating, and inventing them is how a launch becomes the last one.
