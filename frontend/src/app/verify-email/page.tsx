@@ -18,7 +18,7 @@ import { LinkProblem } from "./LinkProblem";
 type State =
   | { status: "verifying" }
   | { status: "success" }
-  | { status: "error"; message: string; expired: boolean }
+  | { status: "error"; message: string; expired: boolean; temporary?: boolean }
   | { status: "missing" }
   | { status: "resent" };
 
@@ -95,7 +95,7 @@ function VerifyEmailInner() {
         } else {
           // Any answer other than success means the link could not be used; the page offers a new one.
           const message = typeof body.detail === "string" ? body.detail : accountMessages.en.verificationFailedTheLinkMayBeInvalid;
-          setState({ status: "error", message, expired: true });
+          setState({ status: "error", message, expired: true, temporary: res.status >= 500 || res.status === 429 });
         }
       } catch {
         setState({
@@ -165,7 +165,7 @@ function VerifyEmailInner() {
           )}
 
           {state.status === "error" && state.expired && (
-            <LinkProblem missing={false} email={resendEmail} onEmailChange={setResendEmail} loading={resendLoading} onSubmit={handleResend} />
+            <LinkProblem reason={state.temporary ? "unavailable" : "expired"} email={resendEmail} onEmailChange={setResendEmail} loading={resendLoading} onSubmit={handleResend} />
           )}
 
           {state.status === "error" && !state.expired && (
@@ -183,7 +183,7 @@ function VerifyEmailInner() {
           )}
 
           {state.status === "missing" && (
-            <LinkProblem missing email={resendEmail} onEmailChange={setResendEmail} loading={resendLoading} onSubmit={handleResend} />
+            <LinkProblem reason="missing" email={resendEmail} onEmailChange={setResendEmail} loading={resendLoading} onSubmit={handleResend} />
           )}
 
           {state.status === "resent" && (

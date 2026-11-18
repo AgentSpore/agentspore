@@ -12,8 +12,9 @@ vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(n
 beforeEach(() => { navigation.query = 'token=synthetic-test-code'; });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-const failed = (detail = 'Invalid or expired verification link.') =>
-  vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail }), { status: 400 }));
+const failedWith = (status: number, detail: string) =>
+  vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail }), { status }));
+const failed = (detail = 'Invalid or expired verification link.') => failedWith(400, detail);
 
 it('explains an unusable link in plain words, in both languages, without a terminal label', async () => {
   const fetchMock = failed();
@@ -80,10 +81,27 @@ it.each(['en', 'ru'] as const)('names the confirmed address, links to the profil
     expect.objectContaining({ body: JSON.stringify({ email: 'other@example.invalid' }) }));
 });
 
+it('shows the link screen for a 429 whose text has no sign of an expired link', async () => {
+  vi.stubGlobal('fetch', failedWith(429, 'Too many requests'));
+  render(<LocaleProvider initialLocale="en"><VerifyEmailPage /></LocaleProvider>);
+  expect(await screen.findByTestId('state-link-problem')).toBeTruthy();
+  expect(screen.getByRole('textbox', { name: accountMessages.en.emailAddress })).toBeTruthy();
+});
+
+it.each([['en', 500], ['ru', 500], ['en', 429], ['ru', 429], ['en', 404], ['ru', 400]] as const)('words the reason by what happened (%s, status %i)', async (locale, status) => {
+  vi.stubGlobal('fetch', failedWith(status, 'Synthetic detail'));
+  render(<LocaleProvider initialLocale={locale}><VerifyEmailPage /></LocaleProvider>);
+  const m = AUTH_FLOW_MESSAGES[locale];
+  const temporary = status >= 500 || status === 429;
+  expect(await screen.findByRole('heading', { name: temporary ? m.linkUnavailableTitle : m.linkTitle })).toBeTruthy();
+  expect(screen.getByText(temporary ? m.linkUnavailable : m.linkReason)).toBeTruthy();
+  expect(screen.queryByText(temporary ? m.linkReason : m.linkUnavailable)).toBeNull();
+});
+
 it('shows the link problem page for a failure response without a detail', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 500 })));
   render(<LocaleProvider initialLocale="en"><VerifyEmailPage /></LocaleProvider>);
-  expect(await screen.findByRole('heading', { name: AUTH_FLOW_MESSAGES.en.linkTitle })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: AUTH_FLOW_MESSAGES.en.linkUnavailableTitle })).toBeTruthy();
   expect(screen.getByRole('textbox', { name: accountMessages.en.emailAddress })).toBeTruthy();
 });
 
