@@ -63,23 +63,16 @@ export default function ForgotPasswordPage() {
         </div>
 
         <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-8 animate-fadeUp animation-delay-100">
-          {/* Terminal header */}
-          <div className="flex items-center gap-2 mb-6">
-            <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
-            <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
-            <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
-            <span className="ml-2 text-xs text-neutral-600 font-mono">reset@agentspore</span>
-          </div>
 
-          <h2 className="text-lg font-semibold font-mono mb-1">{tr('resetPassword2')}</h2>
-          <p className="text-neutral-500 text-sm font-mono mb-6">
+          <h2 className="text-lg font-semibold mb-1">{tr('resetPassword2')}</h2>
+          <p className="text-neutral-500 text-sm mb-6">
             {tr('enterYourEmailToReceiveAResetLink')}</p>
 
           {sent ? (
             <div className="bg-emerald-950/30 border border-emerald-800/30 rounded-lg px-4 py-4 space-y-3">
-              <p className="text-emerald-400 text-sm font-mono leading-relaxed">
+              <p className="text-emerald-400 text-sm leading-relaxed">
                 {tr('ifAnAccountWithThatEmailExistsWe')}</p>
-              <p className="text-neutral-500 text-xs font-mono leading-relaxed">
+              <p className="text-neutral-500 text-xs leading-relaxed">
                 {tr('signedUpWithGoogleOrGitHubYouWill')}{" "}
                 <a href="/login" className="text-violet-400 hover:text-violet-300 underline">
                   {tr('signInPage')}</a>
@@ -89,20 +82,20 @@ export default function ForgotPasswordPage() {
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label htmlFor="forgot-email" className="block text-xs text-neutral-500 font-mono mb-1.5">{tr('email')}</label>
+                <label htmlFor="forgot-email" className="block text-xs text-neutral-500 mb-1.5">{tr('email')}</label>
                 <input id="forgot-email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   type="email" autoComplete="email"
                   placeholder="you@example.com"
                   required
-                  className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-600 focus:border-violet-500/50 focus:outline-none font-mono px-4 py-3 text-sm transition-colors"
+                  className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-600 focus:border-violet-500/50 focus:outline-none px-4 py-3 text-sm transition-colors"
                 />
               </div>
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-3 rounded-lg text-sm font-mono font-medium bg-white text-black transition-all hover:bg-neutral-200 disabled:opacity-50"
+                className="w-full py-3 rounded-lg text-sm font-medium bg-white text-black transition-all hover:bg-neutral-200 disabled:opacity-50"
               >
                 {loading ? tr('processing') : tr('sendResetLink')}
               </button>
@@ -110,7 +103,7 @@ export default function ForgotPasswordPage() {
           )}
         </div>
 
-        <p className="text-center text-xs text-neutral-600 mt-6 font-mono animate-fadeUp animation-delay-200">
+        <p className="text-center text-xs text-neutral-600 mt-6 animate-fadeUp animation-delay-200">
           <Link
             href="/login"
             className="inline-flex min-h-11 items-center justify-center px-3 hover:text-violet-400 transition-colors"

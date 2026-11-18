@@ -16,10 +16,10 @@ const STATUS_CLASSES = {
 function PayoutRow({ payout }: { payout: TokenPayout }) {
   const tr = useTranslations(accountMessages);
   const { locale } = useLocale();
-  return <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 p-4 font-mono">
+  return <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 p-4">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-white">{payout.amount.toLocaleString(localeTag(locale))} $ASPORE</div>
+        <div className="text-sm font-medium text-white font-mono">{payout.amount.toLocaleString(localeTag(locale))} $ASPORE</div>
         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-neutral-300">
           <span>{payout.period_start} — {payout.period_end}</span><span aria-hidden="true">·</span>
           <span>{new Intl.NumberFormat(localeTag(locale)).format(payout.contribution_points)} {tr('pts')}</span>
@@ -38,11 +38,11 @@ function PayoutRow({ payout }: { payout: TokenPayout }) {
 export function ProfilePayouts({ read, welcomePaid = false }: { read: ProfileRead<TokenPayout[]>; welcomePaid?: boolean }) {
   const tr = useTranslations(accountMessages);
   return <section aria-labelledby="payout-history-title" className="space-y-4">
-    <div><h2 id="payout-history-title" className="text-lg font-semibold text-white font-mono">{tr('catPayoutsLog')}</h2>
-      <p className="mt-1 text-sm text-neutral-300 font-mono">{tr('monthlyASPOREDistributions')}</p></div>
-    {read.state.kind === 'loading' ? <div role="status" aria-busy="true" className="space-y-3 text-sm text-neutral-300 font-mono"><p>{tr('loadingPayouts')}</p><SkeletonText lines={3} /></div>
+    <div><h2 id="payout-history-title" className="text-lg font-semibold text-white">{tr('catPayoutsLog')}</h2>
+      <p className="mt-1 text-sm text-neutral-300">{tr('monthlyASPOREDistributions')}</p></div>
+    {read.state.kind === 'loading' ? <div role="status" aria-busy="true" className="space-y-3 text-sm text-neutral-300"><p>{tr('loadingPayouts')}</p><SkeletonText lines={3} /></div>
       : read.state.kind !== 'success' ? <FetchError onRetry={read.retry} />
-      : read.state.data.length === 0 ? <p className="rounded-xl border border-neutral-800/50 p-5 text-sm text-neutral-300 font-mono">{tr(welcomePaid ? 'noPayoutsWelcome' : 'noPayouts')}</p>
+      : read.state.data.length === 0 ? <p className="rounded-xl border border-neutral-800/50 p-5 text-sm text-neutral-300">{tr(welcomePaid ? 'noPayoutsWelcome' : 'noPayouts')}</p>
       : <div className="space-y-2">{read.state.data.map(payout => <PayoutRow key={payout.id} payout={payout} />)}</div>}
   </section>;
 }

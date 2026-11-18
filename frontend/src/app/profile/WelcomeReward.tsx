@@ -4,17 +4,25 @@ import { FetchError } from '@/components/FetchError';
 import { SkeletonText } from '@/components/Skeleton';
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { welcomeRewardMessages } from '@/lib/i18n/welcomeReward';
-import { formatRewardAmount, rewardBadgeKey, showsRewardReason, type WelcomeRewardStatus } from '@/lib/welcome-reward';
+import { ACTION_STEPS, formatRewardAmount, rewardBadgeKey, showsRewardReason, type WelcomeRewardStatus } from '@/lib/welcome-reward';
 import type { ProfileRead } from './useProfileRead';
 import { WelcomeApplication } from './WelcomeApplication';
 import { WelcomeEmailProof } from './WelcomeEmailProof';
 import { WelcomeStepper } from './WelcomeStepper';
 
+/** Once the review step is done the badge must not say the review is ongoing: it names the owner action or the finished review. */
+function badgeKey(data: WelcomeRewardStatus) {
+  const progress = data.progress;
+  const key = rewardBadgeKey(data);
+  if (key !== 'application' || !progress?.steps.some(step => step.id === 'review' && step.done)) return key;
+  return ACTION_STEPS.includes(progress.nextStep) ? 'badge_action' : 'badge_reviewed';
+}
+
 function RewardDetails({ data }: { data: WelcomeRewardStatus }) {
   const tr = useTranslations(welcomeRewardMessages);
   const { locale } = useLocale();
   return <>
-    <span className="inline-flex rounded-full border border-neutral-700 px-2.5 py-1 text-xs font-medium text-neutral-200">{tr(rewardBadgeKey(data))}</span>
+    <span className="inline-flex rounded-full border border-neutral-700 px-2.5 py-1 text-xs font-medium text-neutral-200">{tr(badgeKey(data))}</span>
     {data.amount_raw !== null && <p className="break-words text-2xl font-semibold tabular-nums text-white">{formatRewardAmount(data.amount_raw, locale)} <span className="text-base text-neutral-300">ASPORE</span></p>}
     {showsRewardReason(data) && <p className="text-sm leading-relaxed text-neutral-300">{tr(data.reason)}</p>}
     {data.state === 'application' && <p className="text-xs leading-relaxed text-neutral-400">{tr('conditional')}</p>}

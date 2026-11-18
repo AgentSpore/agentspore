@@ -73,7 +73,7 @@ export default function ResetPasswordPage() {
   };
 
   const inputClass =
-    "w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-600 focus:border-violet-500/50 focus:outline-none font-mono px-4 py-3 text-sm transition-colors";
+    "w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-600 focus:border-violet-500/50 focus:outline-none px-4 py-3 text-sm transition-colors";
 
   return (
     <main id="main-content" tabIndex={-1} className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center px-4 relative">
@@ -91,46 +91,39 @@ export default function ResetPasswordPage() {
         </div>
 
         <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-8 animate-fadeUp animation-delay-100">
-          {/* Terminal header */}
-          <div className="flex items-center gap-2 mb-6">
-            <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
-            <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
-            <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
-            <span className="ml-2 text-xs text-neutral-600 font-mono">reset@agentspore</span>
-          </div>
 
           {!token ? (
             <>
-              <h2 className="text-lg font-semibold font-mono mb-2">{tr('errorInvalidLink')}</h2>
-              <p className="text-neutral-500 text-sm font-mono mb-5">
+              <h2 className="text-lg font-semibold mb-2">{tr('errorInvalidLink')}</h2>
+              <p className="text-neutral-500 text-sm mb-5">
                 {tr('thisResetLinkIsInvalidOrHasExpired')}</p>
               <Link
                 href="/forgot-password"
-                className="inline-flex min-h-11 items-center text-sm text-violet-400 hover:text-violet-300 transition-colors font-mono"
+                className="inline-flex min-h-11 items-center text-sm text-violet-400 hover:text-violet-300 transition-colors"
               >
                 {tr('requestNewLink')}</Link>
             </>
           ) : done ? (
             <>
               <div className="bg-emerald-950/30 border border-emerald-800/30 rounded-lg px-4 py-4 mb-5">
-                <h2 className="text-emerald-400 font-semibold font-mono mb-1">{tr('success')}</h2>
-                <p className="text-emerald-400/80 text-sm font-mono">
+                <h2 className="text-emerald-400 font-semibold mb-1">{tr('success')}</h2>
+                <p className="text-emerald-400/80 text-sm">
                   {tr('yourPasswordHasBeenResetSuccessfully')}</p>
               </div>
               <Link
                 href="/login"
-                className="inline-block w-full py-3 rounded-lg text-sm font-mono font-medium bg-white text-black text-center transition-all hover:bg-neutral-200"
+                className="inline-block w-full py-3 rounded-lg text-sm font-medium bg-white text-black text-center transition-all hover:bg-neutral-200"
               >
                 {tr('signIn')}</Link>
             </>
           ) : (
             <>
-              <h2 className="text-lg font-semibold font-mono mb-1">{tr('newPassword2')}</h2>
-              <p className="text-neutral-500 text-sm font-mono mb-6">
+              <h2 className="text-lg font-semibold mb-1">{tr('newPassword2')}</h2>
+              <p className="text-neutral-500 text-sm mb-6">
                 {tr('enterYourNewPasswordBelow')}</p>
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                  <label htmlFor="reset-password" className="block text-xs text-neutral-500 font-mono mb-1.5">{tr('newPassword')}</label>
+                  <label htmlFor="reset-password" className="block text-xs text-neutral-500 mb-1.5">{tr('newPassword')}</label>
                   <input id="reset-password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -142,7 +135,7 @@ export default function ResetPasswordPage() {
                   />
                 </div>
                 <div>
-                  <label htmlFor="reset-confirm" className="block text-xs text-neutral-500 font-mono mb-1.5">{tr('confirmPassword')}</label>
+                  <label htmlFor="reset-confirm" className="block text-xs text-neutral-500 mb-1.5">{tr('confirmPassword')}</label>
                   <input id="reset-confirm"
                     value={confirm}
                     onChange={(e) => setConfirm(e.target.value)}
@@ -155,13 +148,13 @@ export default function ResetPasswordPage() {
                 </div>
                 {error && (
                   <div className="bg-red-950/30 border border-red-800/30 rounded-lg px-4 py-3">
-                    <p role="alert" className="text-red-400 text-xs font-mono">{displayAccountLabel(locale, error)}</p>
+                    <p role="alert" className="text-red-400 text-xs">{displayAccountLabel(locale, error)}</p>
                   </div>
                 )}
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full py-3 rounded-lg text-sm font-mono font-medium bg-white text-black transition-all hover:bg-neutral-200 disabled:opacity-50"
+                  className="w-full py-3 rounded-lg text-sm font-medium bg-white text-black transition-all hover:bg-neutral-200 disabled:opacity-50"
                 >
                   {loading ? tr('processing') : tr('resetPassword')}
                 </button>
@@ -170,7 +163,7 @@ export default function ResetPasswordPage() {
           )}
         </div>
 
-        <p className="text-center text-xs text-neutral-600 mt-6 font-mono animate-fadeUp animation-delay-200">
+        <p className="text-center text-xs text-neutral-600 mt-6 animate-fadeUp animation-delay-200">
           <Link
             href="/login"
             className="inline-flex min-h-11 items-center justify-center px-3 hover:text-violet-400 transition-colors"

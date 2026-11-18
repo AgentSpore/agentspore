@@ -88,17 +88,16 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
       <Header />
 
       <main id="main-content" tabIndex={-1} className="relative z-10 max-w-2xl mx-auto px-6 py-10 space-y-8">
-        {profile.state.kind === 'loading' && <div role="status" aria-busy="true" className="space-y-4 rounded-xl border border-neutral-800/50 p-6 text-sm text-neutral-300 font-mono"><p>{tr('loadingProfile')}</p><SkeletonText lines={4} /></div>}
+        {profile.state.kind === 'loading' && <div role="status" aria-busy="true" className="space-y-4 rounded-xl border border-neutral-800/50 p-6 text-sm text-neutral-300"><p>{tr('loadingProfile')}</p><SkeletonText lines={4} /></div>}
         {profile.state.kind === 'error' && <FetchError onRetry={profile.retry} />}
 
         {/* Not logged in */}
         {profile.state.kind === 'auth' && (
           <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-10 text-center space-y-4 animate-fadeUp">
-            <div className="text-5xl opacity-30 font-mono">&gt;_</div>
-            <h1 className="text-xl font-semibold text-white font-mono">{tr('whoami')}</h1>
-            <p className="text-neutral-500 text-sm font-mono">{tr('signInToViewYourProfileTrackASPORE')}</p>
+            <h1 className="text-xl font-semibold text-white">{tr('whoami')}</h1>
+            <p className="text-neutral-500 text-sm">{tr('signInToViewYourProfileTrackASPORE')}</p>
             <Link href="/login"
-              className="inline-block mt-2 px-6 py-3 rounded-lg text-sm font-mono font-medium bg-white text-black transition-all hover:bg-neutral-200"
+              className="inline-block mt-2 px-6 py-3 rounded-lg text-sm font-medium bg-white text-black transition-all hover:bg-neutral-200"
             >
               {tr('signIn')}</Link>
           </div>
@@ -107,45 +106,38 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
         {/* User info card */}
         {user && (
           <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-6 animate-fadeUp">
-            {/* Terminal header */}
-            <div className="flex items-center gap-2 mb-5">
-              <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
-              <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
-              <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
-              <span className="ml-2 text-xs text-neutral-600 font-mono">profile@agentspore</span>
-            </div>
 
             <div className="grid grid-cols-[4rem_minmax(0,1fr)] items-center gap-x-5 gap-y-3 sm:flex sm:gap-5">
               <div
-                className="w-16 h-16 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-2xl font-bold font-mono text-violet-400 flex-shrink-0"
+                className="w-16 h-16 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-2xl font-bold text-violet-400 flex-shrink-0"
               >
                 {initials}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h1 className="min-w-0 max-w-full break-words text-xl font-bold text-white font-mono">{user.name}</h1>
+                  <h1 className="min-w-0 max-w-full break-words text-xl font-bold text-white">{user.name}</h1>
                   {user.is_admin && (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300 border border-violet-500/30 font-mono font-medium">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300 border border-violet-500/30 font-medium">
                       {tr('admin')}</span>
                   )}
                 </div>
-                <p className="text-neutral-400 text-sm mt-0.5 truncate font-mono">{user.email}</p>
-                <p className="text-neutral-600 text-xs mt-1 font-mono">{tr('joined')}{' '}{joinedDate}</p>
+                <p className="text-neutral-400 text-sm mt-0.5 truncate">{user.email}</p>
+                <p className="text-neutral-600 text-xs mt-1">{tr('joined')}{' '}{joinedDate}</p>
               </div>
             </div>
 
             {/* Quick links */}
             <div className="mt-5 pt-5 border-t border-neutral-800/50 flex items-center gap-3 flex-wrap">
-              <Link href="/agents" className="scroll-mt-32 inline-flex min-h-11 min-w-11 items-center justify-center text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all font-mono">
+              <Link href="/agents" className="scroll-mt-32 inline-flex min-h-11 min-w-11 items-center justify-center text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all">
                 {tr('agents')}</Link>
-              <Link href="/projects" className="scroll-mt-32 inline-flex min-h-11 min-w-11 items-center justify-center text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all font-mono">
+              <Link href="/projects" className="scroll-mt-32 inline-flex min-h-11 min-w-11 items-center justify-center text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all">
                 {tr('projects')}</Link>
             </div>
           </div>
         )}
 
         {/* Always mounted so the text, added after the profile loads, is announced. */}
-        <p aria-live="polite" aria-atomic="true" className={user && emailVerified ? 'rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-sm text-emerald-300 font-mono' : undefined}>{user && emailVerified ? tr('profileEmailConfirmed') : null}</p>
+        <p aria-live="polite" aria-atomic="true" className={user && emailVerified ? 'rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-sm text-emerald-300' : undefined}>{user && emailVerified ? tr('profileEmailConfirmed') : null}</p>
         {user && authToken && <WelcomeReward read={welcome} token={authToken} hasPassword={user.has_password} onWalletSaved={refreshWallet} />}
         {user && <DepositBalance read={deposit} />}
 
@@ -154,11 +146,11 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
           <div className="space-y-4 animate-fadeUp animation-delay-150">
             <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className="text-lg font-semibold text-white font-mono">{workspaceText('agents')}</h2>
-                <p className="text-neutral-500 text-xs mt-1 font-mono">{workspaceText('intro')}</p>
+                <h2 className="text-lg font-semibold text-white">{workspaceText('agents')}</h2>
+                <p className="text-neutral-500 text-xs mt-1">{workspaceText('intro')}</p>
               </div>
               <Link href="/workspace#connect-agent"
-                className="inline-flex min-h-11 min-w-11 self-stretch shrink-0 items-center justify-center gap-1.5 whitespace-nowrap sm:self-auto px-3 py-1.5 text-xs font-mono bg-violet-500/10 text-violet-400 border border-violet-500/20 rounded-lg hover:bg-violet-500/20 transition-colors">
+                className="inline-flex min-h-11 min-w-11 self-stretch shrink-0 items-center justify-center gap-1.5 whitespace-nowrap sm:self-auto px-3 py-1.5 text-xs bg-violet-500/10 text-violet-400 border border-violet-500/20 rounded-lg hover:bg-violet-500/20 transition-colors">
                 <span className="text-sm leading-none">+</span> {workspaceText('connect')}</Link>
             </div>
             <Link href="/workspace"
@@ -170,8 +162,8 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
                     ⊕
                   </div>
                   <div className="min-w-0">
-                    <span className="text-sm font-mono text-neutral-300 group-hover:text-violet-300 transition-colors">{workspaceText('title')}</span>
-                    <p className="text-xs break-words font-mono text-neutral-600">{workspaceText('readonly')}</p>
+                    <span className="text-sm text-neutral-300 group-hover:text-violet-300 transition-colors">{workspaceText('title')}</span>
+                    <p className="text-xs break-words text-neutral-600">{workspaceText('readonly')}</p>
                   </div>
                 </div>
                 <svg className="w-4 h-4 shrink-0 text-neutral-700 group-hover:text-violet-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -186,8 +178,8 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
         {showsWalletSection(user, welcomeOwnsWallet) && (
           <div className="space-y-4 animate-fadeUp animation-delay-300">
             <div>
-              <h2 className="text-lg font-semibold text-white font-mono">{tr('walletSolana')}</h2>
-              <p className="text-neutral-500 text-xs mt-1 font-mono">{tr(walletNote)}</p>
+              <h2 className="text-lg font-semibold text-white">{tr('walletSolana')}</h2>
+              <p className="text-neutral-500 text-xs mt-1">{tr(walletNote)}</p>
               <p className="text-neutral-400 text-xs mt-1 leading-5">{docsText('walletSolanaNote')}</p>
             </div>
 
@@ -196,7 +188,7 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
                 <div className="space-y-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs text-neutral-500 mb-1 font-mono">{tr('connectedWallet')}</div>
+                      <div className="text-xs text-neutral-500 mb-1">{tr('connectedWallet')}</div>
                       <div className="text-sm font-mono text-emerald-400 truncate">{user.solana_wallet}</div>
                     </div>
                     <button
@@ -214,14 +206,14 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
                         setSolanaLoading(false);
                       }}
                       disabled={solanaLoading}
-                      className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center text-xs px-3 py-1.5 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-50 font-mono"
+                      className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center text-xs px-3 py-1.5 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-50"
                     >
                       {tr('disconnect')}</button>
                   </div>
                   <a href={`https://solscan.io/account/${user.solana_wallet}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex min-h-11 min-w-11 items-center text-xs text-neutral-600 hover:text-cyan-400 transition-colors font-mono"
+                    className="inline-flex min-h-11 min-w-11 items-center text-xs text-neutral-600 hover:text-cyan-400 transition-colors"
                   >
                     {tr('viewOnSolscan')}</a>
                 </div>
@@ -262,16 +254,16 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
                     <button
                       type="submit"
                       disabled={solanaLoading || !solanaInput.trim()}
-                      className="px-5 py-3 rounded-lg text-sm font-mono font-medium bg-white text-black hover:bg-neutral-200 transition-all disabled:opacity-50"
+                      className="px-5 py-3 rounded-lg text-sm font-medium bg-white text-black hover:bg-neutral-200 transition-all disabled:opacity-50"
                     >
                       {tr('connect')}</button>
                   </form>
-                  <p className="text-neutral-600 text-xs font-mono">{tr('pasteYourPhantomSolflareWalletAddressToReceive')}</p>
+                  <p className="text-neutral-600 text-xs">{tr('pasteYourPhantomSolflareWalletAddressToReceive')}</p>
                 </div>
               )}
               {solanaError && (
                 <div role="alert" className="mt-3 bg-red-950/30 border border-red-800/30 rounded-lg px-4 py-3">
-                  <p className="text-red-400 text-xs font-mono">{displayAccountLabel(locale, solanaError)}</p>
+                  <p className="text-red-400 text-xs">{displayAccountLabel(locale, solanaError)}</p>
                 </div>
               )}
             </div>
@@ -284,7 +276,7 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
 
         {/* How to earn */}
         {user && (
-          <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5 space-y-2 text-xs font-mono animate-fadeUp animation-delay-400">
+          <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5 space-y-2 text-xs animate-fadeUp animation-delay-400">
             <div className="flex items-center gap-2 mb-3">
               <span className="text-violet-400 font-medium text-sm">{tr('catREADMEMd')}</span>
               <span className="text-neutral-600">{tr('howToEarnASPORE')}</span>
