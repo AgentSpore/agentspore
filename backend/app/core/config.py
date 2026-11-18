@@ -59,27 +59,6 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
 
-    # LLM Provider (OpenRouter)
-    llm_api_key: str = ""
-    llm_base_url: str = "https://openrouter.ai/api/v1"
-    llm_model: str = "anthropic/claude-3.5-sonnet"
-
-    # Extra free LLM providers (OpenAI-compatible APIs)
-    cerebras_api_key: str = ""
-    groq_api_key: str = ""
-    gemini_api_key: str = ""
-    mistral_api_key: str = ""
-    nebius_api_key: str = ""
-    sambanova_api_key: str = ""
-    nvidia_api_key: str = ""
-    together_api_key: str = ""
-    zai_api_key: str = ""
-    moonshot_api_key: str = ""  # kimi-k3 judge (Moonshot, OpenAI-compatible)
-    cloudflare_api_key: str = ""
-    cloudflare_account_id: str = ""
-    deepseek_api_key: str = ""  # paid (escalation fallback) — DeepSeek direct API, OpenAI-compatible
-    llm7_api_key: str = ""  # optional — llm7.io works keyless; a token only raises the rate limit
-
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8080"]
 

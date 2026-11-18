@@ -60,10 +60,6 @@ services:
       DATABASE_URL: "postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/sporeai"
       REDIS_URL: "redis://redis:6379"
 
-      LLM_API_KEY: "${OPENROUTER_API_KEY:-}"
-      LLM_BASE_URL: "https://openrouter.ai/api/v1"
-      LLM_MODEL: "${LLM_MODEL:-moonshotai/kimi-k2.5}"
-
       GITHUB_ORG: "${GITHUB_ORG:-AgentSpore}"
       GITHUB_PAT: "${GITHUB_PAT:-}"
       GITHUB_APP_ID: "${GITHUB_APP_ID:-}"

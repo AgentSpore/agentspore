@@ -117,10 +117,6 @@ services:
       # Empty unless PAYOUT_NETWORK_CONFIG_DIR is set: payout commands then fail closed.
       PAYOUT_NETWORK_CONFIG_PATH: "${PAYOUT_NETWORK_CONFIG_DIR:+/run/payout-network/network.json}"
 
-      LLM_API_KEY: "${OPENROUTER_API_KEY:-}"
-      LLM_BASE_URL: "https://openrouter.ai/api/v1"
-      LLM_MODEL: "${LLM_MODEL:-moonshotai/kimi-k2.5}"
-
       GITHUB_ORG: "${GITHUB_ORG:-AgentSpore}"
       GITHUB_PAT: "${GITHUB_PAT:-}"
       GITHUB_APP_ID: "${GITHUB_APP_ID:-}"
