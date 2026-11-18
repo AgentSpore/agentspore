@@ -96,3 +96,13 @@ describe("HomePageClient sign-up entry", () => {
     expect(screen.getByText(m.homeRewardTeaser)).toBeTruthy();
   });
 });
+
+describe("HomePageClient sign-up entry for signed-in users", () => {
+  it("hides the new-here block when a session exists", () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 503 })));
+    vi.stubGlobal("localStorage", { getItem: vi.fn((key: string) => key === "access_token" ? "synthetic-session" : null) });
+    render(<LocaleProvider initialLocale="en"><HomePageClient initialData={EMPTY_DATA} /></LocaleProvider>);
+    expect(screen.queryByRole("link", { name: AUTH_FLOW_MESSAGES.en.homeCreateAccount })).toBeNull();
+    expect(screen.queryByText(AUTH_FLOW_MESSAGES.en.homeRewardTeaser)).toBeNull();
+  });
+});

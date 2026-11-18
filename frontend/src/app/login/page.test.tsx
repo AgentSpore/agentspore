@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import LoginPage from './page';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
@@ -345,4 +345,57 @@ it('keeps a confirmation notice with the typed address after registration', asyn
   expect(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES.en.resendAction })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES.en.backToSignIn }));
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(accountMessages.en.signIn);
+});
+
+it('moves focus to the confirmation heading, then to the email field on the way back', async () => {
+  quiet();
+  navigation.query = 'tab=register';
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => String(url).includes('/auth/register')
+    ? json(202, { requires_verification: true }) : json(200, { ok: true })));
+  render(<LocaleProvider initialLocale="en"><LoginPage /></LocaleProvider>);
+  fireEvent.change(screen.getByLabelText(accountMessages.en.name), { target: { value: 'Synthetic' } });
+  fillAndSubmit('synthetic@example.invalid');
+  const heading = await screen.findByRole('heading', { name: AUTH_FLOW_MESSAGES.en.sentTitle });
+  expect(document.activeElement).toBe(heading);
+  fireEvent.click(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES.en.backToSignIn }));
+  expect(document.activeElement).toBe(screen.getByLabelText(accountMessages.en.email));
+});
+
+it('resends to the address that was refused and clears the notice when the tab changes', async () => {
+  quiet();
+  const fetchMock = vi.fn<typeof fetch>(async url => String(url).includes('/auth/login')
+    ? json(403, { detail: 'Please verify your email before logging in.' }) : json(200, { ok: true }));
+  vi.stubGlobal('fetch', fetchMock);
+  render(<LocaleProvider initialLocale="en"><LoginPage /></LocaleProvider>);
+  fillAndSubmit('first@example.invalid');
+  const resend = await screen.findByRole('button', { name: AUTH_FLOW_MESSAGES.en.resendAction });
+  fireEvent.change(screen.getByLabelText(accountMessages.en.email), { target: { value: 'second@example.invalid' } });
+  fireEvent.click(resend);
+  await waitFor(() => expect(screen.getByRole('status').textContent).toContain(AUTH_FLOW_MESSAGES.en.resendDone));
+  const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/auth/resend-verification'));
+  expect(JSON.parse(String(call?.[1]?.body))).toEqual({ email: 'first@example.invalid' });
+  expect(call?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  fireEvent.click(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES.en.tabRegister }));
+  expect(screen.queryByRole('button', { name: AUTH_FLOW_MESSAGES.en.resendAction })).toBeNull();
+});
+
+it('keeps resend disabled for a minute after a request, with a visible hint', async () => {
+  quiet();
+  vi.useFakeTimers();
+  try {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => String(url).includes('/auth/login')
+      ? json(403, { detail: 'x' }) : json(200, { ok: true })));
+    render(<LocaleProvider initialLocale="en"><LoginPage /></LocaleProvider>);
+    await act(async () => { fillAndSubmit('synthetic@example.invalid'); });
+    const resend = screen.getByRole('button', { name: AUTH_FLOW_MESSAGES.en.resendAction });
+    await act(async () => { fireEvent.click(resend); });
+    expect(screen.getByRole('status').textContent).toContain(AUTH_FLOW_MESSAGES.en.resendWait);
+    expect((resend as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { vi.advanceTimersByTime(59_000); });
+    expect((resend as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { vi.advanceTimersByTime(1_500); });
+    expect((resend as HTMLButtonElement).disabled).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
 });
