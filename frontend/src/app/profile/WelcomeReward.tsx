@@ -25,7 +25,7 @@ function RewardDetails({ data }: { data: WelcomeRewardStatus }) {
 /** Reward entitlements stay visibly separate from deposits and completed transfers. */
 type Notice = 'confirmed' | 'walletSaved' | 'applied';
 
-export function WelcomeReward({ read, token, hasPassword, onWalletSaved }: { read: ProfileRead<WelcomeRewardStatus>; token: string; hasPassword?: boolean; onWalletSaved?: () => void }) {
+export function WelcomeReward({ read, token, hasPassword, onWalletSaved }: { read: ProfileRead<WelcomeRewardStatus>; token: string; hasPassword?: boolean; onWalletSaved?: (address: string) => void }) {
   const tr = useTranslations(welcomeRewardMessages);
   const [notice, setNotice] = useState<Notice | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -41,7 +41,7 @@ export function WelcomeReward({ read, token, hasPassword, onWalletSaved }: { rea
     {data && <div className="mt-4 space-y-3">
       <RewardDetails data={data} />
       {data.progress && <WelcomeStepper progress={data.progress} token={token} hasPassword={hasPassword}
-        onApplied={value => { read.replace(value); done('applied'); }} onChanged={kind => { done(kind); read.retry(); if (kind === 'walletSaved') onWalletSaved?.(); }} />}
+        onApplied={value => { read.replace(value); done('applied'); }} onChanged={(kind, address) => { done(kind); read.retry(); if (kind === 'walletSaved' && address) onWalletSaved?.(address); }} />}
       {!data.progress && data.reason === 'not_applied' && <WelcomeApplication token={token} onApplied={value => { read.replace(value); done('applied'); }} />}
       {!data.progress && data.reason === 'email_required' && notice !== 'confirmed' && <WelcomeEmailProof token={token} onConfirmed={() => { done('confirmed'); read.retry(); }} />}
     </div>}

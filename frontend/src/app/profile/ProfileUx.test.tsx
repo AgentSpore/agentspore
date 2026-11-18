@@ -78,3 +78,20 @@ it.each(['en', 'ru'] as const)('shows a one-time notice after the email link and
   expect(await screen.findByText(accountMessages[locale].profileEmailConfirmed)).toBeTruthy();
   await waitFor(() => expect(window.location.search).toBe(''));
 });
+
+it('keeps the address the owner just saved when the account re-read fails', async () => {
+  let saved = false;
+  vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(url);
+    if (path.endsWith('/users/solana-wallet') && init?.method === 'PATCH') { saved = true; return new Response('{}', { status: 200 }); }
+    if (path.endsWith('/rewards/welcome')) return Response.json(welcome({ hold_reasons: saved ? [] : ['wallet_missing'], steps: steps(saved ? ['email', 'wallet', 'application'] : ['email', 'application']), next_step: saved ? 'wait_review' : 'bind_wallet' }));
+    if (path.endsWith('/auth/me')) return saved ? new Response('{}', { status: 500 }) : Response.json(owner(null));
+    if (path.endsWith('/users/me/aspore')) return Response.json({ aspore_balance: 0 });
+    return Response.json([]);
+  }));
+  mount();
+  fireEvent.change(await screen.findByLabelText(welcomeRewardMessages.en.walletLabel), { target: { value: WALLET } });
+  fireEvent.click(screen.getByRole('button', { name: welcomeRewardMessages.en.walletSave }));
+  expect(await screen.findByText(WALLET)).toBeTruthy();
+  expect(screen.queryByPlaceholderText(accountMessages.en.solanaWalletAddress)).toBeNull();
+});

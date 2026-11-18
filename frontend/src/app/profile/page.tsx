@@ -34,12 +34,26 @@ function DotGrid() {
   );
 }
 
-export default function ProfilePage() {
-  const auth = useSyncExternalStore(subscribeAuthChanges, getAuthSnapshot, getServerAuthSnapshot);
-  return <ProfileSession key={auth.generation} auth={auth} />;
+/** Read the marker where the page is not remounted by the auth generation, then drop it from the URL. */
+function useEmailVerifiedNotice(): boolean {
+  const [verified] = useState(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('email') === 'verified');
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('email') !== 'verified') return;
+    params.delete('email');
+    const rest = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${rest && `?${rest}`}${window.location.hash}`);
+  }, []);
+  return verified;
 }
 
-function ProfileSession({ auth }: { auth: ReturnType<typeof getAuthSnapshot> }) {
+export default function ProfilePage() {
+  const auth = useSyncExternalStore(subscribeAuthChanges, getAuthSnapshot, getServerAuthSnapshot);
+  const emailVerified = useEmailVerifiedNotice();
+  return <ProfileSession key={auth.generation} auth={auth} emailVerified={emailVerified} />;
+}
+
+function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAuthSnapshot>; emailVerified: boolean }) {
   const { locale } = useLocale();
   const tr = useTranslations(accountMessages);
   const workspaceText = useTranslations(WORKSPACE_MESSAGES);
@@ -51,16 +65,11 @@ function ProfileSession({ auth }: { auth: ReturnType<typeof getAuthSnapshot> }) 
   const welcome = useProfileRead('users/me/rewards/welcome', authToken, decodeWelcomeReward);
   const user = profile.state.kind === 'success' ? profile.state.data : null, setUser = profile.replace;
   const { ownsWallet: welcomeOwnsWallet, walletNote, earnNote } = welcomeWalletFlags(welcome.state);
-  // Read once; only rendered after the client-side profile fetch, so it cannot mismatch server markup.
-  const [verifiedNotice] = useState(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('email') === 'verified');
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('email') !== 'verified') return;
-    params.delete('email');
-    const rest = params.toString();
-    window.history.replaceState(null, '', `${window.location.pathname}${rest && `?${rest}`}${window.location.hash}`);
-  }, []);
-  const refreshWallet = () => { if (authToken) void fetchProfile(authToken).then(fresh => { if (fresh) setUser(fresh); }); };
+  /** Show the saved address at once, then reconcile with the server; a failed re-read keeps the shown value. */
+  const refreshWallet = (address: string) => {
+    if (user) setUser({ ...user, solana_wallet: address });
+    if (authToken) void fetchProfile(authToken).then(fresh => { if (fresh) setUser(fresh); });
+  };
   const [solanaInput, setSolanaInput] = useState("");
   const [solanaLoading, setSolanaLoading] = useState(false);
   const [solanaError, setSolanaError] = useState("");
@@ -135,7 +144,8 @@ function ProfileSession({ auth }: { auth: ReturnType<typeof getAuthSnapshot> }) 
           </div>
         )}
 
-        {user && verifiedNotice && <p role="status" className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-sm text-emerald-300 font-mono">{tr('profileEmailConfirmed')}</p>}
+        {/* Always mounted so the text, added after the profile loads, is announced. */}
+        <p aria-live="polite" aria-atomic="true" className={user && emailVerified ? 'rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-sm text-emerald-300 font-mono' : undefined}>{user && emailVerified ? tr('profileEmailConfirmed') : null}</p>
         {user && <DepositBalance read={deposit} />}
         {user && authToken && <WelcomeReward read={welcome} token={authToken} hasPassword={user.has_password} onWalletSaved={refreshWallet} />}
 

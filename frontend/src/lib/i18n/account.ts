@@ -212,7 +212,7 @@ export const accountMessages = {
     "connectYourSolanaWalletToReceiveMonthlyASPORE": "Сохраните адрес кошелька Solana. Выплаты пока не включены.",
     "walletNoteWelcomeActive": "Сохраните адрес кошелька Solana.",
     "earnNoteWelcomeActive": "5. Баллы за вклад не гарантируют выплату.",
-    "connectedWallet": "подключённый кошелёк",
+    "connectedWallet": "Подключённый кошелёк",
     "failedToDisconnect": "Не удалось отключить",
     "networkError": "Ошибка сети",
     "disconnect": "отключить",

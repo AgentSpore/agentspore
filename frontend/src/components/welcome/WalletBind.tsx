@@ -16,7 +16,7 @@ function failureOf(status: number): Failure {
 }
 
 /** Binds the payout wallet through the same endpoint as the profile's wallet section. */
-export function WalletBind({ token, onBound }: { token: string; onBound: () => void }) {
+export function WalletBind({ token, onBound }: { token: string; onBound: (address: string) => void }) {
   const tr = useTranslations(welcomeRewardMessages);
   const [address, setAddress] = useState('');
   const [busy, setBusy] = useState(false);
@@ -38,7 +38,7 @@ export function WalletBind({ token, onBound }: { token: string; onBound: () => v
         body: JSON.stringify({ solana_wallet: value }),
       });
       if (controller.signal.aborted) return;
-      if (response.ok) onBound(); else setFailure(failureOf(response.status));
+      if (response.ok) onBound(value); else setFailure(failureOf(response.status));
     } catch {
       if (!controller.signal.aborted) setFailure('walletFailed');
     } finally {
