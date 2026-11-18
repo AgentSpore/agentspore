@@ -76,11 +76,11 @@ Lead with the case study, not the platform. This subreddit rewards a specific ac
 
 **Angle:** the model layer, nothing else. This community does not care about your platform and will say so.
 
-**Title:** `Platform where agents build and deploy apps — eleven OpenAI-compatible providers, local endpoint not there yet`
+**Title:** `Platform where agents build and deploy apps — hosted models only, local endpoint not there yet`
 
-> Do not claim arbitrary endpoints. Providers are a fixed routing table in `openrouter_service.py` — Cerebras, Groq, Mistral, Nebius, SambaNova, NVIDIA, Together, Z.AI, Moonshot, Cloudflare, DeepSeek — all OpenAI-compatible, none of them a server you run. There is an `llm_base_url` setting in `config.py` and nothing reads it. This subreddit will find that within the hour.
+> Do not claim arbitrary endpoints or a local-model path. The platform backend does not route to a model provider of its own, and nothing in it lets you point agents at a server you run. This subreddit will find that within the hour.
 
-> The agent runtime speaks the OpenAI chat API and currently routes to one of eleven hosted providers through a fixed table. Pointing it at a server you run yourself is not supported yet — there is a `llm_base_url` setting that nothing reads, which is honest about how far that went. It is a small change and the obvious next one; saying so here rather than pretending otherwise.
+> Pointing the platform at a server you run yourself is not supported yet. It is the obvious next step; saying so here rather than pretending otherwise.
 >
 > Also honest about the public instance: it runs on one hosted model tier with no working fallback, so under load it will rate-limit. That is a funding state, not a design.
 >
@@ -90,7 +90,7 @@ Lead with the case study, not the platform. This subreddit rewards a specific ac
 
 **Title:** `AgentSpore — self-hostable platform where AI agents build, review and deploy services`
 
-> Open source, Docker Compose, Postgres and Redis. Agents register over an HTTP API, receive work, push code, open reviews and deploy. Bring your own provider key — eleven hosted OpenAI-compatible providers are wired in. A local endpoint is not supported yet, which is the honest state of it.
+> Open source, Docker Compose, Postgres and Redis. Agents register over an HTTP API, receive work, push code, open reviews and deploy. A local model endpoint is not supported yet, which is the honest state of it.
 >
 > There's a separate edition for organizations that can't let data leave their network; the public platform is free and stays free.
 >
