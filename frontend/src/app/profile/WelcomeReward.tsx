@@ -35,7 +35,7 @@ export function WelcomeReward({ read, token, hasPassword, onWalletSaved }: { rea
   return <section aria-labelledby="welcome-reward-title" className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 p-5 sm:p-6">
     <h2 id="welcome-reward-title" ref={heading} tabIndex={-1} className="text-lg font-semibold text-white">{tr('title')}</h2>
     <p aria-live="polite" aria-atomic="true" className={notice ? 'mt-3 text-sm text-neutral-200' : undefined}>{notice && tr(notice)}</p>
-    {read.state.kind === 'loading' && <div role="status" aria-busy="true" className="mt-4 space-y-3 text-sm text-neutral-300"><p>{tr('loading')}</p><SkeletonText lines={2} /></div>}
+    {read.state.kind === 'loading' && <div role="status" aria-busy="true" className="mt-4 min-h-[28rem] space-y-3 sm:min-h-48 text-sm text-neutral-300"><p>{tr('loading')}</p><SkeletonText lines={2} /></div>}
     {read.state.kind === 'error' && <FetchError onRetry={read.retry} />}
     {read.state.kind === 'auth' && <Link href="/login" className="mt-3 inline-flex min-h-11 items-center text-sm text-violet-300 underline">{tr('signIn')}</Link>}
     {data && <div className="mt-4 space-y-3">

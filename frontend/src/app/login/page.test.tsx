@@ -340,8 +340,8 @@ it('keeps a confirmation notice with the typed address after registration', asyn
   vi.stubGlobal('fetch', fetchMock);
   render(<LocaleProvider initialLocale="en"><LoginPage /></LocaleProvider>);
   fireEvent.change(screen.getByLabelText(accountMessages.en.name), { target: { value: 'Synthetic' } });
-  fillAndSubmit('synthetic@example.invalid');
-  expect(await screen.findByText('We sent a confirmation link to synthetic@example.invalid.')).toBeTruthy();
+  fillAndSubmit('registered@example.invalid');
+  expect(await screen.findByText('We sent a confirmation link to registered@example.invalid.')).toBeTruthy();
   expect(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES.en.resendAction })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES.en.backToSignIn }));
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(accountMessages.en.signIn);

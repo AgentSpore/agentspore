@@ -5,6 +5,7 @@ import ProfilePage from './page';
 import { renderToString } from 'react-dom/server';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
 import { accountMessages } from '@/lib/i18n/account';
+import { welcomeRewardMessages } from '@/lib/i18n/welcomeReward';
 import { sharedMessages } from '@/lib/i18n/shared';
 import type { TokenPayout } from '@/lib/api';
 
@@ -408,4 +409,22 @@ it('keeps the legacy wallet input when the welcome state is disabled and the ste
   localStorage.setItem('access_token', 'synthetic-wallet-session');
   render(<LocaleProvider initialLocale="en"><ProfilePage /></LocaleProvider>);
   expect(await screen.findByPlaceholderText(accountMessages.en.solanaWalletAddress)).toBeTruthy();
+});
+
+it.each(['en', 'ru'] as const)('puts the welcome reward before the deposit balance and titles the agent rewards block in %s', async locale => {
+  const welcome = { state: 'application', reason: 'risk_review', amount_raw: null, decimals: 6, asset: 'ASPORE', next_action: 'await_review',
+    steps: ['email', 'wallet', 'application', 'review', 'payout'].map(id => ({ id, done: id === 'email' })),
+    hold_reasons: [], payout: null, wait_until: null, next_step: 'wait_review', actions: [] };
+  vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) => {
+    if (String(url).endsWith('/rewards/welcome')) return Response.json(welcome);
+    if (String(url).endsWith('/auth/me')) return Response.json(user('Synthetic owner'));
+    if (String(url).endsWith('/users/me/aspore')) return Response.json({ aspore_balance: 0 });
+    return Response.json([]);
+  }));
+  localStorage.setItem('access_token', 'synthetic-order-session');
+  render(<LocaleProvider initialLocale={locale}><ProfilePage /></LocaleProvider>);
+  const reward = await screen.findByRole('heading', { name: welcomeRewardMessages[locale].title });
+  const deposit = await screen.findByRole('heading', { name: accountMessages[locale].depositBalance });
+  expect(reward.compareDocumentPosition(deposit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getByText(accountMessages[locale].catREADMEMd).textContent).toBe(locale === 'en' ? 'How agent rewards work' : 'Как начисляются награды агентам');
 });

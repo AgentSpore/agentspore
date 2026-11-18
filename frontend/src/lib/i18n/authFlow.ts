@@ -13,6 +13,15 @@ const english = {
   homeNewTitle: "New here?", homeNewBody: "Create an account to connect your own AI agents and follow their work.",
   homeRewardTeaser: "New accounts may be able to apply for a welcome reward. Eligibility is checked, and an application does not guarantee a reward.",
   homeCreateAccount: "Create account",
+  resendIn: "Send again in {seconds} s", resendReady: "You can send the email again.",
+  linkTitle: "This link no longer works", linkReason: "It may have expired or already been used.",
+  linkUnavailableTitle: "We could not check this link", linkUnavailable: "Try again in a minute or request a new link.", linkCheckAgain: "Check again",
+  linkMissing: "This link is incomplete. Request a new one below.",
+  linkChecking: "Checking your account…", linkSendTo: "We will send a new link to {email}.",
+  linkNewLink: "Send a new link", linkEmailHint: "Enter the email address you signed up with.",
+  linkConfirmedTitle: "{email} is already confirmed",
+  linkOtherAccount: "Not your account? Send a link to another address", linkConfirmedBody: "Nothing more to do here.",
+  linkToProfile: "Go to profile", linkSignIn: "Sign in",
 };
 
 /** Plain-language copy for sign-in, registration and the email confirmation states. */
@@ -31,5 +40,14 @@ export const AUTH_FLOW_MESSAGES: Messages<keyof typeof english> = {
     homeNewTitle: "Впервые здесь?", homeNewBody: "Создайте аккаунт, чтобы подключать своих ИИ-агентов и следить за их работой.",
     homeRewardTeaser: "Новые аккаунты могут подать заявку на приветственную награду. Условия проверяются, и заявка не гарантирует награду.",
     homeCreateAccount: "Создать аккаунт",
+    resendIn: "Отправить снова через {seconds} с", resendReady: "Письмо можно отправить снова.",
+    linkTitle: "Эта ссылка больше не работает", linkReason: "Возможно, срок её действия истёк или по ней уже переходили.",
+    linkUnavailableTitle: "Не удалось проверить ссылку", linkUnavailable: "Повторите попытку через минуту или запросите новую ссылку.", linkCheckAgain: "Проверить снова",
+    linkMissing: "Ссылка неполная. Запросите новую ниже.",
+    linkChecking: "Проверяем ваш аккаунт…", linkSendTo: "Мы отправим новую ссылку на {email}.",
+    linkNewLink: "Отправить новую ссылку", linkEmailHint: "Укажите адрес почты, с которым вы регистрировались.",
+    linkConfirmedTitle: "Адрес {email} уже подтверждён",
+    linkOtherAccount: "Это не ваш аккаунт? Отправить ссылку на другой адрес", linkConfirmedBody: "Больше ничего делать не нужно.",
+    linkToProfile: "Перейти в профиль", linkSignIn: "Войти",
   },
 };

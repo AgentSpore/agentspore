@@ -243,3 +243,21 @@ it('keeps the plain wallet hold when the email is fine', () => {
 it('says "Sending payout" for the sending badge', () => {
   expect(m.en.badge_sending).toBe('Sending payout');
 });
+
+it.each(['en', 'ru'] as const)('reads a sent application as a fact while the wallet is the current step in %s', locale => {
+  const steps = STEP_IDS.map(id => ({ id, done: id === 'email' || id === 'application' }));
+  mount(wire({ steps, hold_reasons: ['wallet_missing'], next_step: 'bind_wallet' }), locale);
+  const items = within(screen.getByRole('list', { name: m[locale].stepsLabel })).getAllByRole('listitem');
+  expect(items[0]?.textContent).toContain(m[locale].stepDone);
+  expect(items[2]?.textContent).toContain(m[locale].stepSubmitted);
+  expect(items[2]?.textContent).not.toContain(m[locale].stepDone);
+  expect(items[1]?.textContent).toContain(m[locale].stepCurrent);
+  expect(m.en.stepSubmitted).toBe('submitted');
+  expect(m.ru.stepSubmitted).toBe('заявка подана');
+});
+
+it('reserves the loaded card height while the reward status loads', () => {
+  const read: ProfileRead<ReturnType<typeof decodeWelcomeReward>> = { state: { kind: 'loading' }, retry: vi.fn(), replace: vi.fn() };
+  render(<LocaleProvider initialLocale="en"><WelcomeReward read={read} token="synthetic-owner" /></LocaleProvider>);
+  expect(screen.getByRole('status').className).toMatch(/min-h-\[28rem\].*sm:min-h-48/);
+});
