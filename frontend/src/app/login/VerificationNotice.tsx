@@ -8,20 +8,25 @@ import { resendVerification } from "./resendVerification";
 /** The server skips a repeat verification email requested within a minute. */
 const RESEND_COOLDOWN_MS = 60_000;
 
+const lastSentAt = new Map<string, number>();
+const cooldownLeft = (key: string) => Math.max(0, (lastSentAt.get(key) ?? 0) + RESEND_COOLDOWN_MS - Date.now());
+
 /** Inline "send the link again" action with an account-neutral confirmation and a one-minute cooldown. */
 export function ResendVerification({ email }: { email: string }) {
   const tr = useTranslations(AUTH_FLOW_MESSAGES);
-  const [state, setState] = useState<"idle" | "sending" | "cooldown">("idle");
+  const key = email.trim().toLowerCase();
+  const [state, setState] = useState<"idle" | "sending" | "cooldown">(() => cooldownLeft(key) > 0 ? "cooldown" : "idle");
 
   useEffect(() => {
     if (state !== "cooldown") return;
-    const timer = setTimeout(() => setState("idle"), RESEND_COOLDOWN_MS);
+    const timer = setTimeout(() => setState("idle"), cooldownLeft(key));
     return () => clearTimeout(timer);
-  }, [state]);
+  }, [state, key]);
 
   const resend = async () => {
     setState("sending");
     await resendVerification(email);
+    lastSentAt.set(key, Date.now());
     setState("cooldown");
   };
 

@@ -386,7 +386,7 @@ it('keeps resend disabled for a minute after a request, with a visible hint', as
     vi.stubGlobal('fetch', vi.fn(async (url: string) => String(url).includes('/auth/login')
       ? json(403, { detail: 'x' }) : json(200, { ok: true })));
     render(<LocaleProvider initialLocale="en"><LoginPage /></LocaleProvider>);
-    await act(async () => { fillAndSubmit('synthetic@example.invalid'); });
+    await act(async () => { fillAndSubmit('cooldown@example.invalid'); });
     const resend = screen.getByRole('button', { name: AUTH_FLOW_MESSAGES.en.resendAction });
     await act(async () => { fireEvent.click(resend); });
     expect(screen.getByRole('status').textContent).toContain(AUTH_FLOW_MESSAGES.en.resendWait);

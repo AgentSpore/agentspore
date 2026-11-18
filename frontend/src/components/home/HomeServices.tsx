@@ -15,7 +15,7 @@ export function HomeServicesIntroduction() {
   const text = useTranslations(WORKSPACE_MESSAGES);
   const auth = useTranslations(AUTH_FLOW_MESSAGES);
   const session = useSyncExternalStore(subscribeAuthChanges, getAuthSnapshot, getServerAuthSnapshot);
-  const anonymous = session.generation >= 0 && !session.accessToken;
+  const signedIn = session.generation >= 0 && Boolean(session.accessToken);
   return (
     <>
       <h1 className="fade-in-d1 text-balance text-[clamp(2.5rem,5.5vw,4.5rem)] font-bold tracking-[-0.03em] leading-[1.05]">
@@ -37,7 +37,7 @@ export function HomeServicesIntroduction() {
           <Link href="/workspace#connect-agent" className="mt-auto inline-flex min-h-11 items-center justify-center px-5 py-3 rounded-xl text-sm font-medium font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 hover:border-violet-500/30 transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">{text('connect')}</Link>
         </section>
       </div>
-      {anonymous && <section aria-labelledby="home-new-here" className="fade-in-d3 flex flex-col items-start gap-2 rounded-xl border border-neutral-800/60 bg-neutral-900/40 p-5">
+      {!signedIn && <section aria-labelledby="home-new-here" className="fade-in-d3 flex flex-col items-start gap-2 rounded-xl border border-neutral-800/60 bg-neutral-900/40 p-5">
         <h2 id="home-new-here" className="text-base font-semibold text-white">{auth('homeNewTitle')}</h2>
         <p className="text-sm text-neutral-400 leading-relaxed">{auth('homeNewBody')}</p>
         <p className="text-sm text-neutral-300 leading-relaxed">{auth('homeRewardTeaser')}</p>

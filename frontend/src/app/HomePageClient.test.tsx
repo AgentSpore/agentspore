@@ -98,6 +98,11 @@ describe("HomePageClient sign-up entry", () => {
 });
 
 describe("HomePageClient sign-up entry for signed-in users", () => {
+  it("includes the new-here block in the server-rendered HTML to avoid a layout shift", () => {
+    const markup = renderToString(<LocaleProvider initialLocale="en"><HomePageClient initialData={EMPTY_DATA} /></LocaleProvider>);
+    expect(markup).toContain('href="/login?tab=register"');
+  });
+
   it("hides the new-here block when a session exists", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 503 })));
     vi.stubGlobal("localStorage", { getItem: vi.fn((key: string) => key === "access_token" ? "synthetic-session" : null) });
