@@ -22,6 +22,7 @@ from app.core.security import (
     get_password_hash,
     verify_password,
 )
+from app.core.verification_token import VerificationToken
 from app.models import User
 from app.repositories.email_proof_repo import EmailProofRepository
 from app.repositories.funnel_repo import FunnelRepository
@@ -108,8 +109,8 @@ async def register(
 
     # Generate verification token (32 bytes → 43-char urlsafe string).
     # Store only the SHA-256 hash in the DB so a DB dump cannot be replayed.
-    raw_token = secrets.token_urlsafe(32)
-    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    nonce = VerificationToken.new_nonce()
+    raw_token = VerificationToken.from_nonce(nonce)
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=cfg.email_verification_ttl_seconds)
 
     # Create user (unverified)
@@ -119,7 +120,7 @@ async def register(
         name=data.name,
         token_balance=0,
         is_verified=False,
-        verification_token=token_hash,
+        verification_token=VerificationToken.digest(raw_token),
         verification_email=data.email, verification_purpose="registration",
         verification_expires_at=expires_at,
     )
@@ -128,7 +129,7 @@ async def register(
 
     # Persist token in Redis (authoritative TTL)
     await _store_verification_token(
-        redis, raw_token, str(user.id), cfg.email_verification_ttl_seconds
+        redis, nonce, str(user.id), cfg.email_verification_ttl_seconds
     )
     # Send verification email without exposing its bearer link in logs.
     sent = await email_svc.send_verification_email(data.email, raw_token, site_base_url(request))
@@ -141,11 +142,12 @@ async def register(
 
 
 async def _store_verification_token(
-    redis: aioredis.Redis, raw_token: str, user_id: str, ttl: int
+    redis: aioredis.Redis, nonce: str, user_id: str, ttl: int
 ) -> None:
-    """Persist a link token plus a per-user pointer so a resend can reuse it."""
-    await redis.setex(f"email_verify:{raw_token}", ttl, user_id)
-    await redis.setex(f"email_verify_user:{user_id}", ttl, raw_token)
+    """Persist the hashed link key plus a per-user nonce pointer so a resend can reuse the link."""
+    raw_token = VerificationToken.from_nonce(nonce)
+    await redis.setex(VerificationToken.link_key(raw_token), ttl, user_id)
+    await redis.setex(f"email_verify_user:{user_id}", ttl, nonce)
 
 
 async def _reusable_verification_token(
@@ -155,20 +157,23 @@ async def _reusable_verification_token(
 
     A link about to expire is not re-sent: the caller issues a fresh one instead.
     """
-    raw = await redis.get(f"email_verify_user:{user.id}")
-    if not raw:
+    nonce = await redis.get(f"email_verify_user:{user.id}")
+    if not nonce:
         return None
-    raw = raw if isinstance(raw, str) else raw.decode()
+    nonce = nonce if isinstance(nonce, str) else nonce.decode()
+    # A pre-hardening pointer holds the raw token: it derives to a different value
+    # and fails the hash check below, so a fresh token is issued.
+    raw = VerificationToken.from_nonce(nonce)
     expires_at = user.verification_expires_at
     if (
         user.verification_purpose != "registration"
         or not user.verification_token
         or not secrets.compare_digest(
-            user.verification_token, hashlib.sha256(raw.encode()).hexdigest()
+            user.verification_token, VerificationToken.digest(raw)
         )
         or expires_at is None
         or expires_at - datetime.now(timezone.utc) < timedelta(seconds=ttl / 2)
-        or not await redis.exists(f"email_verify:{raw}")
+        or not await redis.exists(VerificationToken.link_key(raw))
     ):
         return None
     return raw
@@ -182,6 +187,18 @@ async def _drop_verification_pointer(redis: aioredis.Redis, user_id: str) -> Non
         logger.warning("Verification pointer cleanup failed; it expires on its own")
 
 
+async def _consume_link_key(redis: aioredis.Redis, token: str) -> str | bytes | None:
+    """Atomically take the single-use link key for a token; None when absent."""
+    user_id = await redis.getdel(VerificationToken.link_key(token))
+    if not user_id and VerificationToken.has_legacy_shape(token):
+        # INVARIANT(182): links emailed before token hashing keep a raw-token key until they
+        # expire; dropping this fallback breaks them. The shape check keeps a stored digest
+        # (64 hex) from reaching this lookup and consuming the real hashed key. Safe to delete
+        # once the verification TTL has passed after this release.
+        user_id = await redis.getdel(VerificationToken.legacy_link_key(token))
+    return user_id
+
+
 @router.get("/verify-email")
 async def verify_email(
     token: str,
@@ -193,8 +210,7 @@ async def verify_email(
     On success: marks user as verified and returns JWT pair so the frontend
     can log the user in immediately without a second round-trip.
     """
-    redis_key = f"email_verify:{token}"
-    user_id = await redis.getdel(redis_key)
+    user_id = await _consume_link_key(redis, token)
 
     if not user_id:
         raise HTTPException(
@@ -206,7 +222,7 @@ async def verify_email(
     result = await db.execute(select(User).where(User.id == user_id).with_for_update())
     user = result.scalar_one_or_none()
 
-    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    token_hash = VerificationToken.digest(token)
     if (
         not user
         or user.is_verified
@@ -280,8 +296,9 @@ async def resend_verification(
         redis, user, cfg.email_verification_ttl_seconds
     )
     if raw_token is None:
-        raw_token = secrets.token_urlsafe(32)
-        user.verification_token = hashlib.sha256(raw_token.encode()).hexdigest()
+        nonce = VerificationToken.new_nonce()
+        raw_token = VerificationToken.from_nonce(nonce)
+        user.verification_token = VerificationToken.digest(raw_token)
         user.verification_email = user.email
         user.verification_purpose = "registration"
         user.verification_expires_at = datetime.now(timezone.utc) + timedelta(
@@ -289,7 +306,7 @@ async def resend_verification(
         )
         await db.commit()
         await _store_verification_token(
-            redis, raw_token, str(user.id), cfg.email_verification_ttl_seconds
+            redis, nonce, str(user.id), cfg.email_verification_ttl_seconds
         )
 
     await email_svc.send_verification_email(

@@ -19,6 +19,7 @@ from app.api.v1 import auth, oauth
 from app.core.database import get_db
 from app.core.redis_client import get_redis
 from app.core.security import get_password_hash
+from app.core.verification_token import VerificationToken
 from app.models import User
 from app.services.email_proof_service import EmailProofService
 
@@ -284,7 +285,7 @@ async def unverified_identity(identity_case):
         db.add(user)
         await db.flush()
         user_id = user.id
-    await case.redis.setex(f"email_verify:{token}", 3600, str(user_id))
+    await case.redis.setex(VerificationToken.link_key(token), 3600, str(user_id))
     return SimpleNamespace(case=case, token=token, user_id=user_id)
 
 
