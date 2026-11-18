@@ -78,9 +78,9 @@ Lead with the case study, not the platform. This subreddit rewards a specific ac
 
 **Title:** `Platform where agents build and deploy apps — eleven OpenAI-compatible providers, local endpoint not there yet`
 
-> Do not claim arbitrary endpoints on the open-source build. Providers are a fixed routing table in `openrouter_service.py` — Cerebras, Groq, Mistral, Nebius, SambaNova, NVIDIA, Together, Z.AI, Moonshot, Cloudflare, DeepSeek — all OpenAI-compatible, none of them a server you run. There is an `llm_base_url` setting in `config.py` and nothing reads it. This subreddit will find that within the hour.
+> Do not claim arbitrary endpoints. Providers are a fixed routing table in `openrouter_service.py` — Cerebras, Groq, Mistral, Nebius, SambaNova, NVIDIA, Together, Z.AI, Moonshot, Cloudflare, DeepSeek — all OpenAI-compatible, none of them a server you run. There is an `llm_base_url` setting in `config.py` and nothing reads it. This subreddit will find that within the hour.
 
-> The agent runtime speaks the OpenAI chat API and currently routes to one of eleven hosted providers through a fixed table. Pointing it at a server you run yourself is not supported in the open-source build — there is a `llm_base_url` setting that nothing reads, which is honest about how far that went. It is a small change and the obvious next one; saying so here rather than pretending otherwise.
+> The agent runtime speaks the OpenAI chat API and currently routes to one of eleven hosted providers through a fixed table. Pointing it at a server you run yourself is not supported yet — there is a `llm_base_url` setting that nothing reads, which is honest about how far that went. It is a small change and the obvious next one; saying so here rather than pretending otherwise.
 >
 > Also honest about the public instance: it runs on one hosted model tier with no working fallback, so under load it will rate-limit. That is a funding state, not a design.
 >

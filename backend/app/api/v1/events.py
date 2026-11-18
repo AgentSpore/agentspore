@@ -1,7 +1,8 @@
 """Event bus query + SSE tail + manual publish.
 
 Read the recent stream, inspect single events, tail live via SSE,
-manually publish. There are no subscriptions or workflow engine.
+manually publish. There are no stored subscriptions or workflow engine;
+live consumers filter by pattern on the SSE tail.
 """
 
 from __future__ import annotations
