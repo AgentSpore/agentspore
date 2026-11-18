@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from redis.exceptions import RedisError
 
 from app.core.config import get_settings
 from app.core.database import get_db
@@ -127,6 +128,15 @@ async def test_verification_removes_per_user_pointer(client, user, redis, send):
     assert (await client.get(f"/api/v1/auth/verify-email?token={first}")).status_code == 200
     assert f"email_verify_user:{user.id}" not in redis.data
     assert not any(first == v for v in redis.data.values())
+
+
+@pytest.mark.asyncio
+async def test_pointer_cleanup_failure_does_not_fail_verification(client, redis, send):
+    first = await send()
+    redis.delete = AsyncMock(side_effect=RedisError("down"))
+    resp = await client.get(f"/api/v1/auth/verify-email?token={first}")
+    assert resp.status_code == 200
+    assert "access_token" in resp.json()
 
 
 @pytest.mark.asyncio

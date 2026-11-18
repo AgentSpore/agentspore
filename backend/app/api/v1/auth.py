@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from loguru import logger
+from redis.exceptions import RedisError
 from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, DatabaseSession, EmailProofSession
@@ -220,7 +221,10 @@ async def verify_email(
     user.verification_token = None
     user.verification_expires_at = None
     await db.commit()
-    await redis.delete(f"email_verify_user:{user.id}")
+    try:
+        await redis.delete(f"email_verify_user:{user.id}")
+    except RedisError:
+        logger.warning("Verification pointer cleanup failed; it expires on its own")
 
     logger.info("Email verification completed")
 
