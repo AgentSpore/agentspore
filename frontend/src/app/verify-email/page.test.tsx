@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import VerifyEmailPage from './page';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
@@ -101,13 +102,24 @@ it.each([['en', 500], ['ru', 500], ['en', 429], ['ru', 429], ['en', 404], ['ru',
 it.each(['en', 'ru'] as const)('checks the link again after a temporary failure without reloading (%s)', async locale => {
   const fetchMock = vi.fn()
     .mockResolvedValueOnce(new Response('{}', { status: 503 }))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ [`access_${'token'}`]: 'synthetic-value' }), { status: 200 }));
+    .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'synthetic-value' }), { status: 200 }));
   vi.stubGlobal('fetch', fetchMock);
   vi.stubGlobal('localStorage', { setItem: vi.fn(), getItem: vi.fn(() => null) });
   render(<LocaleProvider initialLocale={locale}><VerifyEmailPage /></LocaleProvider>);
   fireEvent.click(await screen.findByRole('button', { name: AUTH_FLOW_MESSAGES[locale].linkCheckAgain }));
   await screen.findByTestId('state-success');
   expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+it('sends exactly one verification request per attempt under StrictMode', async () => {
+  const fetchMock = vi.fn().mockImplementation(async () => new Response('{}', { status: 503 }));
+  vi.stubGlobal('fetch', fetchMock);
+  render(<StrictMode><LocaleProvider initialLocale="en"><VerifyEmailPage /></LocaleProvider></StrictMode>);
+  const again = AUTH_FLOW_MESSAGES.en.linkCheckAgain;
+  const verifyCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).includes('/verify-email')).length;
+  fireEvent.click(await screen.findByRole('button', { name: again }));
+  await screen.findByRole('button', { name: again });
+  expect(verifyCalls()).toBe(2);
 });
 
 it('offers no re-check for a link that is simply expired', async () => {
