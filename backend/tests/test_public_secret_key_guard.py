@@ -17,7 +17,7 @@ def _isolated_settings(monkeypatch):
         "_PUBLIC_SECRET_KEY_SHA256",
         frozenset({hashlib.sha256(SAMPLE_LEAKED.encode()).hexdigest()}),
     )
-    monkeypatch.delenv("DEBUG", raising=False)
+    monkeypatch.setenv("DEBUG", "false")
     config.get_settings.cache_clear()
     yield
     config.get_settings.cache_clear()

@@ -30,9 +30,9 @@ R187.3: Outside shape B, additional instructions, CPI, delegate/multisig authori
 
 R187.4: Output contains only `{"verdict":"..."}`; input, endpoint, RPC error values and tracebacks are not printed by the command. HTTP requests have a 10-second timeout and do not use environment proxy configuration. Null receipts and transport failures do not prove nonexecution.
 
-The existing `app.schemas` package eagerly loads backend configuration. A configured backend environment is therefore required even though the receipt-only command performs no database queries. For synthetic local QA only, the public placeholder `SECRET_KEY=ci-placeholder-value` satisfies that existing prerequisite; never use it in a deployment.
+The existing `app.schemas` package eagerly loads backend configuration. A configured backend environment is therefore required even though the receipt-only command performs no database queries. For synthetic local QA only, the public placeholder `SECRET_KEY=ci-placeholder-value-synthetic-ci-only-0123456789` satisfies that existing prerequisite; never use it in a deployment.
 
-Reproduce synthetic QA from `backend`: `SECRET_KEY=ci-placeholder-value uv run --frozen python -m pytest -q tests/test_payout_delivery_cli.py`. Fixtures use installed SPL/solders message builders; tests exercise the actual CLI/service and real subprocesses against a loopback HTTP server, including private-input rejection. Synthetic receipts are not production chain evidence.
+Reproduce synthetic QA from `backend`: `SECRET_KEY=ci-placeholder-value-synthetic-ci-only-0123456789 uv run --frozen python -m pytest -q tests/test_payout_delivery_cli.py`. Fixtures use installed SPL/solders message builders; tests exercise the actual CLI/service and real subprocesses against a loopback HTTP server, including private-input rejection. Synthetic receipts are not production chain evidence.
 
 Current verification uses the command above and a narrow guard mutation against the restored source. Generated QA evidence is kept outside Git; historical test counts do not certify this integration. No database, public RPC, wallet or real payment is exercised.
 
@@ -55,7 +55,7 @@ R188.4: Exit codes are 0 for accepted/replayed/found, 5 for invalid input, 6 for
 
 R188.5: The additive table migration is `db/migrations/V111__payout_delivery.sql`; immutability functions and triggers are installed by `db/migrations/R__payout_delivery_identity.sql`. Existing receipt-only applications ignore this table. Application rollback retains admitted data and the new table; no automatic drop or down migration is provided.
 
-Reproduce synthetic PostgreSQL intake QA with `SECRET_KEY=ci-placeholder-value uv run --frozen python -m pytest -q tests/test_payout_delivery_db.py`; preserve generated evidence outside Git. These checks do not establish entitlement, live chain activity or production mint compatibility. PostgreSQL 16 documents the [separate READ COMMITTED command snapshots](https://www.postgresql.org/docs/16/transaction-iso.html) and [conflict-safe insertion and RETURNING](https://www.postgresql.org/docs/16/sql-insert.html).
+Reproduce synthetic PostgreSQL intake QA with `SECRET_KEY=ci-placeholder-value-synthetic-ci-only-0123456789 uv run --frozen python -m pytest -q tests/test_payout_delivery_db.py`; preserve generated evidence outside Git. These checks do not establish entitlement, live chain activity or production mint compatibility. PostgreSQL 16 documents the [separate READ COMMITTED command snapshots](https://www.postgresql.org/docs/16/transaction-iso.html) and [conflict-safe insertion and RETURNING](https://www.postgresql.org/docs/16/sql-insert.html).
 
 ## Exact-intent leases (issue #189)
 
