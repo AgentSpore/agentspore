@@ -154,7 +154,7 @@ async def test_dispose_failure_does_not_claim_success(review, monkeypatch):
 
 def _run_module(payload, environ, prelude=""):
     env = {
-        "SECRET_KEY": "synthetic-decision-test-key",
+        "SECRET_KEY": "synthetic-decision-test-key-synthetic-ci-only-0123456789",
         "DATABASE_URL": "postgresql+asyncpg://synthetic:synthetic@database.invalid/synthetic",
         **environ,
     }

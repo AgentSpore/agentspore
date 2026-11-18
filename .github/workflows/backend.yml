@@ -19,7 +19,7 @@ env:
   # app/core/config.py aborts at import when secret_key still holds its default
   # and debug is off. A placeholder, not a credential: no job here reaches a
   # real service, and nothing in this workflow may depend on a secret.
-  SECRET_KEY: ci-placeholder-value
+  SECRET_KEY: ci-placeholder-value-synthetic-ci-only-0123456789
 
 jobs:
   telemetry:
