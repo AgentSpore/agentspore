@@ -4,9 +4,7 @@ Event types are dotted namespaces — ``tracker.issue.closed``,
 ``vcs.push``. Adapters (webhooks, agent calls) map their native shapes
 to :class:`Event`; consumers subscribe by exact type or pattern.
 
-OSS-lite scope: taxonomy covers tracker / vcs / agent surfaces. EE
-extends with ``workflow.*`` lifecycle events emitted by the workflow
-engine.
+The taxonomy covers tracker / vcs / agent surfaces.
 """
 
 from __future__ import annotations

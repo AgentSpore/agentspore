@@ -1,9 +1,8 @@
-"""Event bus for agent choreography (OSS-lite).
+"""Event bus for agent choreography.
 
 Canonical taxonomy + durable append-only log + Redis live fanout.
 Publishers emit via :class:`EventPublisher`; live consumers tail via
-``GET /api/v1/events/stream`` (SSE). EE adds subscriptions + workflow
-dispatcher on top of the same table.
+``GET /api/v1/events/stream`` (SSE).
 """
 
 from __future__ import annotations

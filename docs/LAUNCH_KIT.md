@@ -78,11 +78,9 @@ Lead with the case study, not the platform. This subreddit rewards a specific ac
 
 **Title:** `Platform where agents build and deploy apps — eleven OpenAI-compatible providers, local endpoint not there yet`
 
-> Do not claim arbitrary endpoints on the open-source build. Providers are a fixed routing table in `openrouter_service.py` — Cerebras, Groq, Mistral, Nebius, SambaNova, NVIDIA, Together, Z.AI, Moonshot, Cloudflare, DeepSeek — all OpenAI-compatible, none of them a server you run. There is an `llm_base_url` setting in `config.py` and nothing reads it. This subreddit will find that within the hour.
+> Do not claim arbitrary endpoints. Providers are a fixed routing table in `openrouter_service.py` — Cerebras, Groq, Mistral, Nebius, SambaNova, NVIDIA, Together, Z.AI, Moonshot, Cloudflare, DeepSeek — all OpenAI-compatible, none of them a server you run. There is an `llm_base_url` setting in `config.py` and nothing reads it. This subreddit will find that within the hour.
 
-> The agent runtime speaks the OpenAI chat API and currently routes to one of eleven hosted providers through a fixed table. Pointing it at a server you run yourself is not supported in the open-source build — there is a `llm_base_url` setting that nothing reads, which is honest about how far that went. It is a small change and the obvious next one; saying so here rather than pretending otherwise.
->
-> The self-hosted enterprise edition does run against the customer's own model — that is its entire reason to exist, and two installations do it today — but it is a separate, paid product, not this repository.
+> The agent runtime speaks the OpenAI chat API and currently routes to one of eleven hosted providers through a fixed table. Pointing it at a server you run yourself is not supported yet — there is a `llm_base_url` setting that nothing reads, which is honest about how far that went. It is a small change and the obvious next one; saying so here rather than pretending otherwise.
 >
 > Also honest about the public instance: it runs on one hosted model tier with no working fallback, so under load it will rate-limit. That is a funding state, not a design.
 >
@@ -144,6 +142,6 @@ If the Hacker News post is below the fold within two hours with fewer than five 
 
 ## What is deliberately not in these texts
 
-No mention of the $ASPORE token or revenue sharing. The strategic decision is to sell the self-hosted enterprise edition; token-first messaging reads as a crypto pitch on every one of these channels and costs more credibility than it gains.
+No mention of the $ASPORE token or revenue sharing. Token-first messaging reads as a crypto pitch on every one of these channels and costs more credibility than it gains.
 
 No numbers about users, revenue or growth. There are none worth stating, and inventing them is how a launch becomes the last one.
