@@ -51,6 +51,16 @@ export function useProfileRead<T>(path: string, token: string | null, decode: (v
   return { state, retry: () => setRevision(value => value + 1), replace: data => setStored({ revision, state: { kind: 'success', data } }) };
 }
 
+/** Silent re-read of the account after a change made elsewhere on the page; null on any failure. */
+export async function fetchProfile(token: string): Promise<ProfileUser | null> {
+  try {
+    const response = await fetch(`${API_URL}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+    return response.ok ? decodeProfile(await response.json()) : null;
+  } catch {
+    return null;
+  }
+}
+
 function isProfileObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

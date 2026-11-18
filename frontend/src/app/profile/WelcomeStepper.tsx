@@ -11,7 +11,7 @@ import { WelcomeEmailProof } from './WelcomeEmailProof';
 import { WELCOME_FOCUS } from '@/components/welcome/focus';
 
 const BUTTON_LINK = `inline-flex min-h-11 items-center rounded-lg border border-neutral-600 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800 ${WELCOME_FOCUS}`;
-interface Props { progress: WelcomeProgress; token: string; hasPassword?: boolean; onApplied: (value: WelcomeRewardStatus) => void; onChanged: (kind: 'confirmed' | 'walletSaved') => void }
+interface Props { progress: WelcomeProgress; token: string; hasPassword?: boolean; onApplied: (value: WelcomeRewardStatus) => void; onChanged: (kind: 'confirmed' | 'walletSaved', address?: string) => void }
 
 function Steps({ progress }: { progress: WelcomeProgress }) {
   const tr = useTranslations(welcomeRewardMessages);
@@ -60,7 +60,7 @@ function NextAction({ progress, token, hasPassword, onApplied, onChanged }: Prop
   switch (progress.nextStep) {
     case 'confirm_email': return <WelcomeEmailProof token={token} onConfirmed={() => onChanged('confirmed')} />;
     case 'change_email': return <div className="space-y-2"><h3 className="text-sm font-medium text-white">{tr('changeEmailTitle')}</h3><EmailChangeForm token={token} hasPassword={hasPassword} /></div>;
-    case 'bind_wallet': return <WalletBind token={token} onBound={() => onChanged('walletSaved')} />;
+    case 'bind_wallet': return <WalletBind token={token} onBound={address => onChanged('walletSaved', address)} />;
     case 'apply': return <WelcomeApplication token={token} onApplied={onApplied} />;
     case 'relink_github': return progress.githubRelinkPath
       ? <a href={`${API_URL}${progress.githubRelinkPath}`} className={BUTTON_LINK}>{tr('relink')}</a> : null;
