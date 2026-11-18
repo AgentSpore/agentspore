@@ -62,3 +62,15 @@ it.each([200, 503, 'network'] as const)('keeps resend account-neutral after %s',
   expect(screen.getByText(accountMessages.en.ifTheAccountExistsAndIsUnverifiedA)).toBeTruthy();
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
+
+it('redirects to the profile with the email-verified marker after success', async () => {
+  const destination = { href: '', origin: window.location.origin };
+  vi.stubGlobal('window', new Proxy(window, {
+    get: (target, property) => property === 'location' ? destination : Reflect.get(target, property),
+  }));
+  vi.stubGlobal('localStorage', { setItem: vi.fn(), getItem: vi.fn(() => null) });
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ access_token: 'synthetic-test-session' }), { status: 200 })));
+  render(<LocaleProvider initialLocale="en"><VerifyEmailPage /></LocaleProvider>);
+  await screen.findByTestId('state-success');
+  await waitFor(() => expect(destination.href).toMatch(/\/profile\?email=verified$/), { timeout: 5000 });
+});

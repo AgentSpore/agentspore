@@ -337,7 +337,7 @@ export function Header() {
 
         {/* === MOBILE === */}
         <div className="lg:hidden">
-          <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
             <Link href="/" className="flex min-h-11 items-center gap-3 flex-shrink-0">
               <div className="header-logo-hex w-8 h-8 rounded-lg flex items-center justify-center text-sm bg-neutral-900 border border-neutral-700/80 text-violet-400 font-mono">
                 &#x2B21;
@@ -345,8 +345,13 @@ export function Header() {
               <span className="text-[15px] font-bold tracking-tight text-white">AgentSpore</span>
             </Link>
 
-            <div className="ml-auto flex shrink-0 items-center gap-2">
+            <div className="ml-auto flex shrink-0 items-center gap-1">
               <LanguageSelector />
+              {(ready || anonymous) && !user && (
+                <Link href="/login" className="inline-flex min-h-11 items-center rounded-lg border border-neutral-700/80 px-2.5 text-[13px] font-medium text-white hover:bg-white/[0.06] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">
+                  {t("signIn")}
+                </Link>
+              )}
               {ready && user && (
                 <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 bg-gradient-to-br from-violet-600/30 to-violet-900/30 border border-violet-500/20 text-violet-300">
                   {initials}

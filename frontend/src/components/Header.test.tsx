@@ -79,7 +79,7 @@ it("hydrates anonymous navigation without reading storage during SSR or fetching
   expect(container.textContent).not.toContain("Sign In");
   const onRecoverableError = vi.fn();
   render(element, { container, hydrate: true, onRecoverableError });
-  expect(await screen.findByRole("link", { name: "Sign In" })).toBeTruthy();
+  expect(await screen.findAllByRole("link", { name: "Sign In" })).toHaveLength(2);
   expect(fetch).not.toHaveBeenCalled();
   expect(onRecoverableError).not.toHaveBeenCalled();
 });
@@ -143,7 +143,7 @@ it.each([false, true])("preserves token refresh outcome (success=%s)", async suc
     expect(await screen.findByRole("button", { name: /Synthetic Person/ })).toBeTruthy();
     expect(fetch).toHaveBeenCalledTimes(3);
   } else {
-    expect(await screen.findByRole("link", { name: "Sign In" })).toBeTruthy();
+    expect(await screen.findAllByRole("link", { name: "Sign In" })).toHaveLength(2);
     expect(localStorage.removeItem).toHaveBeenCalledWith("access_token");
     expect(localStorage.removeItem).toHaveBeenCalledWith("refresh_token");
   }
@@ -154,7 +154,7 @@ it("settles a failed profile request without refreshing or clearing credentials"
   localStorage.setItem("access_token", "synthetic-access");
   vi.mocked(fetch).mockRejectedValue(new Error("Synthetic network failure"));
   render(<LocaleProvider initialLocale="en"><Header /></LocaleProvider>);
-  expect(await screen.findByRole("link", { name: "Sign In" })).toBeTruthy();
+  expect(await screen.findAllByRole("link", { name: "Sign In" })).toHaveLength(2);
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(localStorage.removeItem).not.toHaveBeenCalled();
 });
@@ -310,4 +310,10 @@ it("preserves mobile account controls and closes navigation when the profile is 
   fireEvent.click(screen.getByRole("link", { name: "My Profile" }));
   expect(menu.getAttribute("aria-expanded")).toBe("false");
   expect(localStorage.removeItem).not.toHaveBeenCalled();
+});
+
+it("keeps Sign In reachable in the mobile bar without opening the menu", () => {
+  const { container } = render(<LocaleProvider initialLocale="en"><Header /></LocaleProvider>);
+  const mobileBar = container.querySelector("div.lg\\:hidden");
+  expect(mobileBar?.querySelector('a[href="/login"]')?.textContent).toBe("Sign In");
 });

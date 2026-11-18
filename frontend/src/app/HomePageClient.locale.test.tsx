@@ -30,7 +30,8 @@ it.each(['en', 'ru'] as const)('offers external agent connection and services fi
   expect(links[0]?.getAttribute('href')).toBe('/showcase');
   expect(links[1]?.textContent).toBe(locale === 'en' ? 'Connect an agent' : 'Подключить агента');
   expect(links[1]?.getAttribute('href')).toBe('/workspace#connect-agent');
-  expect(links[2]?.getAttribute('href')).toMatch(/\/skill.md$/);
+  expect(links[2]?.getAttribute('href')).toBe('/login?tab=register');
+  expect(links[3]?.getAttribute('href')).toMatch(/\/skill.md$/);
 });
 
 it.each(['en', 'ru'] as const)('distinguishes unavailable stats from loaded zero in %s', locale => {

@@ -11,6 +11,8 @@ import Link from "next/link";
 import { Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import { API_URL } from "@/lib/api";
+import { AUTH_FLOW_MESSAGES } from '@/lib/i18n/authFlow';
+import { resendVerification } from "../login/resendVerification";
 
 type State =
   | { status: "verifying" }
@@ -53,6 +55,7 @@ export default function VerifyEmailPage() {
 function VerifyEmailInner() {
   const { locale } = useLocale();
   const tr = useTranslations(accountMessages);
+  const flowTr = useTranslations(AUTH_FLOW_MESSAGES);
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
   const [state, setState] = useState<State>(
@@ -111,7 +114,7 @@ function VerifyEmailInner() {
   useEffect(() => {
     if (state.status !== "success") return;
     if (redirectCountdown <= 0) {
-      window.location.href = new URL("/profile", window.location.origin).href;
+      window.location.href = new URL("/profile?email=verified", window.location.origin).href;
       return;
     }
     const t = setTimeout(() => setRedirectCountdown(c => c - 1), 1000);
@@ -122,18 +125,9 @@ function VerifyEmailInner() {
     event.preventDefault();
     if (!resendEmail.trim()) return;
     setResendLoading(true);
-    try {
-      await fetch(`${API_URL}/api/v1/auth/resend-verification`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: resendEmail.trim().toLowerCase() }),
-      });
-    } catch {
-      // Keep the response account-neutral even when the request cannot reach the server.
-    } finally {
-      setResendLoading(false);
-      setState({ status: "resent" });
-    }
+    await resendVerification(resendEmail);
+    setResendLoading(false);
+    setState({ status: "resent" });
   };
 
   return (
@@ -174,7 +168,7 @@ function VerifyEmailInner() {
               <h2 className="text-white font-mono font-semibold text-lg mb-2">{tr('emailVerified')}</h2>
               <p className="text-neutral-400 text-sm font-mono mb-6">
                 {tr('youReSignedInRedirectingToYourProfile')}{" "}{new Intl.NumberFormat(localeTag(locale)).format(redirectCountdown)}{" "}{tr('s')}</p>
-              <Link href="/profile"
+              <Link href="/profile?email=verified"
                 className="inline-flex min-h-11 min-w-11 items-center justify-center px-6 py-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-sm font-mono hover:bg-emerald-500/20 transition-colors"
               >
                 {tr('goToProfile')}</Link>
@@ -237,7 +231,7 @@ function VerifyEmailInner() {
         </div>
 
         <p className="text-center text-xs text-neutral-600 mt-6 font-mono animate-fadeUp animation-delay-200">
-          <Link href="/" className="inline-flex min-h-11 min-w-11 items-center justify-center hover:text-cyan-400 transition-colors">{tr('cdHome')}</Link>
+          <Link href="/" className="inline-flex min-h-11 min-w-11 items-center justify-center hover:text-cyan-400 transition-colors">{flowTr('backToHome')}</Link>
         </p>
       </div>
 

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/", useRouter: () => ({ refresh: vi.fn() }) }));
@@ -7,6 +7,7 @@ vi.mock("next/navigation", () => ({ usePathname: () => "/", useRouter: () => ({ 
 import { renderToString } from "react-dom/server";
 import HomePageClient, { HomePageInitialData } from "./HomePageClient";
 import { LocaleProvider } from "@/lib/i18n/LocaleProvider";
+import { AUTH_FLOW_MESSAGES } from "@/lib/i18n/authFlow";
 
 const EMPTY_DATA: HomePageInitialData = {
   stats: null,
@@ -83,4 +84,30 @@ it.each(['en', 'ru'] as const)('labels imported activity and links its real GitH
   expect(container.textContent).toContain(locale === 'en' ? 'Unknown author' : 'Автор неизвестен');
   expect(container.querySelector('a[href="https://github.com/Example/repo/commit/abc"]')).not.toBeNull();
   expect(container.querySelector('a[href="/agents/null"]')).toBeNull();
+});
+
+describe("HomePageClient sign-up entry", () => {
+  it.each(["en", "ru"] as const)("links to registration and teases the welcome reward in %s", (locale) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 503 })));
+    vi.stubGlobal("localStorage", { getItem: vi.fn(() => null) });
+    render(<LocaleProvider initialLocale={locale}><HomePageClient initialData={EMPTY_DATA} /></LocaleProvider>);
+    const m = AUTH_FLOW_MESSAGES[locale];
+    expect(screen.getByRole("link", { name: m.homeCreateAccount }).getAttribute("href")).toBe("/login?tab=register");
+    expect(screen.getByText(m.homeRewardTeaser)).toBeTruthy();
+  });
+});
+
+describe("HomePageClient sign-up entry for signed-in users", () => {
+  it("includes the new-here block in the server-rendered HTML to avoid a layout shift", () => {
+    const markup = renderToString(<LocaleProvider initialLocale="en"><HomePageClient initialData={EMPTY_DATA} /></LocaleProvider>);
+    expect(markup).toContain('href="/login?tab=register"');
+  });
+
+  it("hides the new-here block when a session exists", () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 503 })));
+    vi.stubGlobal("localStorage", { getItem: vi.fn((key: string) => key === "access_token" ? "synthetic-session" : null) });
+    render(<LocaleProvider initialLocale="en"><HomePageClient initialData={EMPTY_DATA} /></LocaleProvider>);
+    expect(screen.queryByRole("link", { name: AUTH_FLOW_MESSAGES.en.homeCreateAccount })).toBeNull();
+    expect(screen.queryByText(AUTH_FLOW_MESSAGES.en.homeRewardTeaser)).toBeNull();
+  });
 });
