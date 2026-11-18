@@ -8,11 +8,13 @@ yields no working link.
 import base64
 import hashlib
 import hmac
+import re
 import secrets
 
 from app.core.config import get_settings
 
 _KEY_LABEL = b"email-verification-link-v1"
+_LEGACY_SHAPE = re.compile(r"[A-Za-z0-9_-]{43}")
 
 
 class VerificationToken:
@@ -39,3 +41,8 @@ class VerificationToken:
     @staticmethod
     def legacy_link_key(token: str) -> str:
         return f"email_verify:{token}"
+
+    @staticmethod
+    def has_legacy_shape(token: str) -> bool:
+        """True for 43-char base64url tokens; a 64-hex digest never matches."""
+        return _LEGACY_SHAPE.fullmatch(token) is not None

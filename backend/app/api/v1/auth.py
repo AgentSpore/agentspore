@@ -190,10 +190,11 @@ async def _drop_verification_pointer(redis: aioredis.Redis, user_id: str) -> Non
 async def _consume_link_key(redis: aioredis.Redis, token: str) -> str | bytes | None:
     """Atomically take the single-use link key for a token; None when absent."""
     user_id = await redis.getdel(VerificationToken.link_key(token))
-    if not user_id:
+    if not user_id and VerificationToken.has_legacy_shape(token):
         # INVARIANT(182): links emailed before token hashing keep a raw-token key until they
-        # expire; dropping this fallback breaks them. Safe to delete once the verification
-        # TTL has passed after this release.
+        # expire; dropping this fallback breaks them. The shape check keeps a stored digest
+        # (64 hex) from reaching this lookup and consuming the real hashed key. Safe to delete
+        # once the verification TTL has passed after this release.
         user_id = await redis.getdel(VerificationToken.legacy_link_key(token))
     return user_id
 

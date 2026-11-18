@@ -18,7 +18,7 @@ from tests.test_resend_verification_keeps_first_link import FakeRedis
 
 EMAIL = "newcomer@example.com"
 TTL = get_settings().email_verification_ttl_seconds
-LEGACY = "legacy-token-sent-before-hashing"
+LEGACY = "legacy-token-" + "x" * 30  # 43 chars, shape of the old secrets.token_urlsafe(32)
 OTHER_KEY = "another-secret-key-for-tests-only-0123456789"
 
 
@@ -145,3 +145,11 @@ async def test_token_from_other_secret_key_rejected(world):
         forged = VerificationToken.from_nonce(nonce)
     assert forged != first
     assert await world.verify(forged) == 400
+
+
+@pytest.mark.asyncio
+async def test_digest_of_token_cannot_consume_real_link(world):
+    """The hash seen in a DB or Redis dump must not burn the real link via the legacy path."""
+    first = world.emailed()
+    assert await world.verify(VerificationToken.digest(first)) == 400
+    assert await world.verify(first) == 200
