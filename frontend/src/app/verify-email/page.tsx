@@ -93,13 +93,9 @@ function VerifyEmailInner() {
           }
           setState({ status: "success" });
         } else {
-          const msg = typeof body.detail === "string"
-            ? body.detail
-            : accountMessages.en.verificationFailedTheLinkMayBeInvalid;
-          const expired =
-            msg.toLowerCase().includes("expired") ||
-            msg.toLowerCase().includes("invalid");
-          setState({ status: "error", message: msg, expired });
+          // Any answer other than success means the link could not be used; the page offers a new one.
+          const message = typeof body.detail === "string" ? body.detail : accountMessages.en.verificationFailedTheLinkMayBeInvalid;
+          setState({ status: "error", message, expired: true });
         }
       } catch {
         setState({

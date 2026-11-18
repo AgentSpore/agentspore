@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useSyncExternalStore, type FormEvent } from "react";
+import { useState, useSyncExternalStore, type FormEvent } from "react";
 import { getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 import { useTranslations } from "@/lib/i18n/LocaleProvider";
 import { AUTH_FLOW_MESSAGES } from "@/lib/i18n/authFlow";
@@ -42,14 +42,16 @@ export function LinkProblem({ missing, ...form }: { missing: boolean } & ResendF
   const tr = useTranslations(AUTH_FLOW_MESSAGES);
   const auth = useSyncExternalStore(subscribeAuthChanges, getAuthSnapshot, getServerAuthSnapshot);
   const me = useProfileRead("auth/me", auth.accessToken, decodeProfile);
-  const user = me.state.kind === "success" ? me.state.data : null;
+  const [other, setOther] = useState(false);
+  const signedIn = me.state.kind === "success" && !other ? me.state.data : null;
 
-  if (user?.is_verified) {
+  if (signedIn?.is_verified) {
     return (
       <section data-testid="state-confirmed" className="space-y-3">
-        <h1 className="text-lg font-semibold text-white">{tr("linkConfirmedTitle")}</h1>
+        <h1 className="text-lg font-semibold text-white wrap-anywhere">{tr("linkConfirmedTitle", { email: signedIn.email })}</h1>
         <p className="text-sm text-neutral-300">{tr("linkConfirmedBody")}</p>
         <Link href="/profile" className={TEXT_LINK}>{tr("linkToProfile")}</Link>
+        <button type="button" onClick={() => setOther(true)} className={`${TEXT_LINK} text-left`}>{tr("linkOtherAccount")}</button>
       </section>
     );
   }
@@ -57,8 +59,8 @@ export function LinkProblem({ missing, ...form }: { missing: boolean } & ResendF
     <section data-testid="state-link-problem" className="space-y-4">
       <h1 className="text-lg font-semibold text-white">{tr("linkTitle")}</h1>
       <p className="text-sm text-neutral-300">{tr(missing ? "linkMissing" : "linkReason")}</p>
-      {me.state.kind === "loading" ? <p role="status" className="text-sm text-neutral-300">{tr("linkChecking")}</p>
-        : user ? <div><p className="text-sm text-neutral-200 wrap-anywhere">{tr("linkSendTo", { email: user.email })}</p><ResendVerification email={user.email} /></div>
+      {me.state.kind === "loading" && !other ? <p role="status" className="text-sm text-neutral-300">{tr("linkChecking")}</p>
+        : signedIn ? <div><p className="text-sm text-neutral-200 wrap-anywhere">{tr("linkSendTo", { email: signedIn.email })}</p><ResendVerification email={signedIn.email} /></div>
         : <ResendForm {...form} />}
       <Link href="/login" className={TEXT_LINK}>{tr("linkSignIn")}</Link>
     </section>

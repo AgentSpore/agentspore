@@ -18,7 +18,8 @@ const english = {
   linkMissing: "This link is incomplete. Request a new one below.",
   linkChecking: "Checking your account…", linkSendTo: "We will send a new link to {email}.",
   linkNewLink: "Send a new link", linkEmailHint: "Enter the email address you signed up with.",
-  linkConfirmedTitle: "Your email is already confirmed", linkConfirmedBody: "Nothing more to do here.",
+  linkConfirmedTitle: "{email} is already confirmed",
+  linkOtherAccount: "Not your account? Send a link to another address", linkConfirmedBody: "Nothing more to do here.",
   linkToProfile: "Go to profile", linkSignIn: "Sign in",
 };
 
@@ -43,7 +44,8 @@ export const AUTH_FLOW_MESSAGES: Messages<keyof typeof english> = {
     linkMissing: "Ссылка неполная. Запросите новую ниже.",
     linkChecking: "Проверяем ваш аккаунт…", linkSendTo: "Мы отправим новую ссылку на {email}.",
     linkNewLink: "Отправить новую ссылку", linkEmailHint: "Укажите адрес почты, с которым вы регистрировались.",
-    linkConfirmedTitle: "Ваша почта уже подтверждена", linkConfirmedBody: "Больше ничего делать не нужно.",
+    linkConfirmedTitle: "Адрес {email} уже подтверждён",
+    linkOtherAccount: "Это не ваш аккаунт? Отправить ссылку на другой адрес", linkConfirmedBody: "Больше ничего делать не нужно.",
     linkToProfile: "Перейти в профиль", linkSignIn: "Войти",
   },
 };

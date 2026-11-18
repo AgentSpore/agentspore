@@ -255,3 +255,9 @@ it.each(['en', 'ru'] as const)('reads a sent application as a fact while the wal
   expect(m.en.stepSubmitted).toBe('submitted');
   expect(m.ru.stepSubmitted).toBe('заявка подана');
 });
+
+it('reserves the loaded card height while the reward status loads', () => {
+  const read: ProfileRead<ReturnType<typeof decodeWelcomeReward>> = { state: { kind: 'loading' }, retry: vi.fn(), replace: vi.fn() };
+  render(<LocaleProvider initialLocale="en"><WelcomeReward read={read} token="synthetic-owner" /></LocaleProvider>);
+  expect(screen.getByRole('status').className).toContain('min-h-64');
+});

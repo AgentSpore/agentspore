@@ -64,12 +64,27 @@ it.each(['en', 'ru'] as const)('resends to the signed-in address without asking 
     expect.objectContaining({ body: JSON.stringify({ email }) })));
 });
 
-it.each(['en', 'ru'] as const)('says the email is already confirmed and links to the profile (%s)', async locale => {
-  signIn({ is_verified: true });
+it.each(['en', 'ru'] as const)('names the confirmed address, links to the profile and offers another address (%s)', async locale => {
+  const email = `confirmed-${locale}@example.invalid`;
+  const fetchMock = signIn({ is_verified: true }, email);
   render(<LocaleProvider initialLocale={locale}><VerifyEmailPage /></LocaleProvider>);
-  expect(await screen.findByRole('heading', { name: AUTH_FLOW_MESSAGES[locale].linkConfirmedTitle })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: AUTH_FLOW_MESSAGES[locale].linkConfirmedTitle.replace('{email}', email) })).toBeTruthy();
   expect(screen.getByRole('link', { name: AUTH_FLOW_MESSAGES[locale].linkToProfile }).getAttribute('href')).toBe('/profile');
   expect(screen.queryByText(AUTH_FLOW_MESSAGES[locale].linkTitle)).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES[locale].linkOtherAccount }));
+  const field = screen.getByRole('textbox', { name: accountMessages[locale].emailAddress });
+  fireEvent.change(field, { target: { value: 'Other@Example.Invalid' } });
+  fireEvent.click(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES[locale].linkNewLink }));
+  await screen.findByTestId('state-resent');
+  expect(fetchMock).toHaveBeenLastCalledWith(expect.stringContaining('/auth/resend-verification'),
+    expect.objectContaining({ body: JSON.stringify({ email: 'other@example.invalid' }) }));
+});
+
+it('shows the link problem page for a failure response without a detail', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 500 })));
+  render(<LocaleProvider initialLocale="en"><VerifyEmailPage /></LocaleProvider>);
+  expect(await screen.findByRole('heading', { name: AUTH_FLOW_MESSAGES.en.linkTitle })).toBeTruthy();
+  expect(screen.getByRole('textbox', { name: accountMessages.en.emailAddress })).toBeTruthy();
 });
 
 it('keeps the network failure message for a request that never reached the server', async () => {
