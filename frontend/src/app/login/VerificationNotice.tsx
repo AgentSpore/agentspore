@@ -11,34 +11,43 @@ const RESEND_COOLDOWN_MS = 60_000;
 const lastSentAt = new Map<string, number>();
 const cooldownLeft = (key: string) => Math.max(0, (lastSentAt.get(key) ?? 0) + RESEND_COOLDOWN_MS - Date.now());
 
-/** Inline "send the link again" action with an account-neutral confirmation and a one-minute cooldown. */
+const secondsLeft = (key: string) => Math.ceil(cooldownLeft(key) / 1000);
+
+/** Inline "send the link again" action with an account-neutral confirmation and a visible one-minute countdown. */
 export function ResendVerification({ email }: { email: string }) {
   const tr = useTranslations(AUTH_FLOW_MESSAGES);
   const key = email.trim().toLowerCase();
-  const [state, setState] = useState<"idle" | "sending" | "cooldown">(() => cooldownLeft(key) > 0 ? "cooldown" : "idle");
+  const [state, setState] = useState<"idle" | "sending" | "cooldown" | "ready">(() => cooldownLeft(key) > 0 ? "cooldown" : "idle");
+  const [seconds, setSeconds] = useState(() => secondsLeft(key));
 
   useEffect(() => {
     if (state !== "cooldown") return;
-    const timer = setTimeout(() => setState("idle"), cooldownLeft(key));
-    return () => clearTimeout(timer);
+    const timer = setInterval(() => {
+      const left = secondsLeft(key);
+      setSeconds(left);
+      if (left <= 0) setState("ready");
+    }, 1000);
+    return () => clearInterval(timer);
   }, [state, key]);
 
   const resend = async () => {
     setState("sending");
     await resendVerification(email);
     lastSentAt.set(key, Date.now());
+    setSeconds(secondsLeft(key));
     setState("cooldown");
   };
+  const label = state === "sending" ? tr("resending") : state === "cooldown" ? tr("resendIn", { seconds }) : tr("resendAction");
+  // Only the start and the end of the wait are announced; the ticking label is not a live region.
+  const status = state === "cooldown" ? `${tr("resendDone")} ${tr("resendWait")}` : state === "ready" ? tr("resendReady") : "";
 
   return (
     <div className="mt-3 space-y-2">
-      <button type="button" onClick={resend} disabled={state !== "idle"}
-        className="min-h-11 rounded-lg border border-violet-500/30 bg-violet-500/10 px-4 py-2 text-sm text-violet-200 transition-colors hover:bg-violet-500/20 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">
-        {state === "sending" ? tr("resending") : tr("resendAction")}
+      <button type="button" onClick={resend} disabled={state === "sending" || state === "cooldown"}
+        className="min-h-11 rounded-lg border border-violet-500/30 bg-violet-500/10 px-4 py-2 text-sm text-violet-200 transition-colors hover:bg-violet-500/20 disabled:opacity-70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">
+        {label}
       </button>
-      <p role="status" className="text-xs leading-5 text-neutral-300">
-        {state === "cooldown" ? `${tr("resendDone")} ${tr("resendWait")}` : ""}
-      </p>
+      <p role="status" className="text-xs leading-5 text-neutral-300">{status}</p>
     </div>
   );
 }

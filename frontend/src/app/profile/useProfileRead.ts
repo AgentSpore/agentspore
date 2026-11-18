@@ -19,6 +19,8 @@ export interface ProfileUser {
   is_admin: boolean;
   /** Absent on servers that predate the field. */
   has_password?: boolean;
+  /** Absent on servers that predate the field. */
+  is_verified?: boolean;
   created_at: string;
 }
 
@@ -92,6 +94,7 @@ export function decodeProfile(value: unknown): ProfileUser {
     avatar_url: readNullableText(row.avatar_url), solana_wallet: readNullableText(row.solana_wallet),
     token_balance: readUnits(row.token_balance), created_at: readText(row.created_at), is_admin: row.is_admin === true,
     ...(typeof row.has_password === 'boolean' && { has_password: row.has_password }),
+    ...(typeof row.is_verified === 'boolean' && { is_verified: row.is_verified }),
   };
 }
 

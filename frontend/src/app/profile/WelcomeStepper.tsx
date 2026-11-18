@@ -22,7 +22,7 @@ function Steps({ progress }: { progress: WelcomeProgress }) {
       className={`min-w-0 rounded-lg border px-3 py-2 text-sm ${step.id === current ? 'border-violet-400 text-white' : 'border-neutral-700 text-neutral-200'}`}>
       <span className="block break-words">{tr(`step_${step.id}`)}</span>
       {(step.done || progress.nextStep !== 'none') &&
-        <span className="block text-xs text-neutral-300">{tr(step.done ? 'stepDone' : step.id === current ? 'stepCurrent' : 'stepLater')}</span>}
+        <span className="block text-xs text-neutral-300">{tr(step.done ? (step.id === 'application' ? 'stepSubmitted' : 'stepDone') : step.id === current ? 'stepCurrent' : 'stepLater')}</span>}
     </li>)}
   </ol>;
 }

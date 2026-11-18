@@ -13,6 +13,7 @@ import { useSearchParams } from "next/navigation";
 import { API_URL } from "@/lib/api";
 import { AUTH_FLOW_MESSAGES } from '@/lib/i18n/authFlow';
 import { resendVerification } from "../login/resendVerification";
+import { LinkProblem } from "./LinkProblem";
 
 type State =
   | { status: "verifying" }
@@ -147,14 +148,6 @@ function VerifyEmailInner() {
         </div>
 
         <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-8 animate-fadeUp animation-delay-100">
-          {/* Terminal chrome */}
-          <div className="flex items-center gap-2 mb-6">
-            <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
-            <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
-            <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
-            <span className="ml-2 text-xs text-neutral-600 font-mono">verify@agentspore</span>
-          </div>
-
           {state.status === "verifying" && (
             <div className="text-center py-6" data-testid="state-verifying">
               <div className="inline-block w-6 h-6 border-2 border-neutral-700 border-t-cyan-400 rounded-full animate-spin mb-4" />
@@ -175,22 +168,17 @@ function VerifyEmailInner() {
             </div>
           )}
 
-          {state.status === "error" && (
+          {state.status === "error" && state.expired && (
+            <LinkProblem missing={false} email={resendEmail} onEmailChange={setResendEmail} loading={resendLoading} onSubmit={handleResend} />
+          )}
+
+          {state.status === "error" && !state.expired && (
             <div data-testid="state-error">
               <div role="alert" className="bg-red-950/30 border border-red-800/30 rounded-lg px-4 py-3 mb-6">
                 <p className="text-red-400 text-xs font-mono" data-testid="error-message">
                   {displayAccountLabel(locale, state.message)}
                 </p>
               </div>
-
-              {state.expired && (
-                <ResendForm email={resendEmail}
-                  onEmailChange={setResendEmail}
-                  loading={resendLoading}
-                  onSubmit={handleResend}
-                />
-              )}
-
               <p className="text-center mt-4">
                 <Link href="/login" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-500 hover:text-cyan-400 transition-colors font-mono">
                   {tr('backToLogin')}</Link>
@@ -199,23 +187,7 @@ function VerifyEmailInner() {
           )}
 
           {state.status === "missing" && (
-            <div data-testid="state-missing">
-              <div className="bg-amber-950/30 border border-amber-800/30 rounded-lg px-4 py-3 mb-6">
-                <p className="text-amber-400 text-xs font-mono">
-                  {tr('invalidLinkNoVerificationTokenFound')}</p>
-              </div>
-
-              <ResendForm email={resendEmail}
-                onEmailChange={setResendEmail}
-                loading={resendLoading}
-                onSubmit={handleResend}
-              />
-
-              <p className="text-center mt-4">
-                <Link href="/login" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-500 hover:text-cyan-400 transition-colors font-mono">
-                  {tr('backToLogin')}</Link>
-              </p>
-            </div>
+            <LinkProblem missing email={resendEmail} onEmailChange={setResendEmail} loading={resendLoading} onSubmit={handleResend} />
           )}
 
           {state.status === "resent" && (
@@ -248,38 +220,5 @@ function VerifyEmailInner() {
         .animation-delay-200 { animation-delay: 0.2s; }
       `}</style>
     </div>
-  );
-}
-
-function ResendForm({ email, onEmailChange, loading, onSubmit }: {
-  email: string;
-  onEmailChange: (v: string) => void;
-  loading: boolean;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-}) {
-  const tr = useTranslations(accountMessages);
-  return (
-    <form onSubmit={onSubmit}>
-      <p className="text-neutral-500 text-xs font-mono mb-3">{tr('requestANewVerificationLink')}</p>
-      <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
-        <input
-          type="email"
-          autoComplete="email"
-          required
-          value={email}
-          onChange={e => onEmailChange(e.target.value)}
-          placeholder="you@example.com"
-          aria-label={tr('emailAddress')}
-          className="min-h-11 min-w-0 w-full flex-1 bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-600 focus:border-cyan-500/50 focus:outline-none font-mono px-3 py-2.5 text-sm transition-colors"
-        />
-        <button
-          type="submit"
-          disabled={loading || !email.trim()}
-          className="min-h-11 px-4 py-2.5 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-sm font-mono hover:bg-cyan-500/20 transition-colors disabled:opacity-50 whitespace-nowrap"
-        >
-          {loading ? "…" : tr('resend')}
-        </button>
-      </div>
-    </form>
   );
 }

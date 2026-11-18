@@ -146,8 +146,8 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
 
         {/* Always mounted so the text, added after the profile loads, is announced. */}
         <p aria-live="polite" aria-atomic="true" className={user && emailVerified ? 'rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-sm text-emerald-300 font-mono' : undefined}>{user && emailVerified ? tr('profileEmailConfirmed') : null}</p>
-        {user && <DepositBalance read={deposit} />}
         {user && authToken && <WelcomeReward read={welcome} token={authToken} hasPassword={user.has_password} onWalletSaved={refreshWallet} />}
+        {user && <DepositBalance read={deposit} />}
 
         {/* My Hosted Agents */}
         {user && (
