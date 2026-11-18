@@ -15,6 +15,8 @@ import pytest
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 
+from app.core.verification_token import VerificationToken
+
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -318,7 +320,7 @@ class TestVerifyEmailEndpoint:
             assert "access_token" in body
             assert body["access_token"] != ""
             # Token was deleted (single-use)
-            mock_redis.getdel.assert_called_once_with("email_verify:somevalidtoken")
+            mock_redis.getdel.assert_called_once_with(VerificationToken.link_key("somevalidtoken"))
             # User marked verified
             assert user.is_verified is True
         finally:
@@ -402,7 +404,7 @@ class TestVerifyEmailEndpoint:
                 resp = await client.get("/api/v1/auth/verify-email?token=tok123")
             assert resp.status_code == 200
             # Verify atomic consumption used the correct key
-            mock_redis.getdel.assert_called_with("email_verify:tok123")
+            mock_redis.getdel.assert_called_with(VerificationToken.link_key("tok123"))
         finally:
             app.dependency_overrides.clear()
 

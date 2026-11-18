@@ -13,12 +13,14 @@ from redis.exceptions import RedisError
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.redis_client import get_redis
+from app.core.verification_token import VerificationToken
 from app.main import app
 from app.services.email_service import get_email_service
 
 EMAIL = "newcomer@example.com"
 TTL = get_settings().email_verification_ttl_seconds
-SEED_TOKEN = "seeded-first-email-token"
+SEED_NONCE = "seeded-nonce"
+SEED_TOKEN = VerificationToken.from_nonce(SEED_NONCE)
 
 
 class FakeRedis:
@@ -68,8 +70,8 @@ def user():
 async def redis(user):
     """State register() leaves behind: token key plus per-user pointer."""
     r = FakeRedis()
-    await r.setex(f"email_verify:{SEED_TOKEN}", TTL, user.id)
-    await r.setex(f"email_verify_user:{user.id}", TTL, SEED_TOKEN)
+    await r.setex(VerificationToken.link_key(SEED_TOKEN), TTL, user.id)
+    await r.setex(f"email_verify_user:{user.id}", TTL, SEED_NONCE)
     return r
 
 
@@ -144,7 +146,7 @@ async def test_link_is_harmless_after_verification(client, user, redis, send):
     """Token still live in Redis, but the account is verified: the guard rejects it."""
     first = await send()
     user.is_verified = True
-    assert f"email_verify:{first}" in redis.data
+    assert VerificationToken.link_key(first) in redis.data
     resp = await client.get(f"/api/v1/auth/verify-email?token={first}")
     assert resp.status_code == 400
     assert "access_token" not in resp.json()
@@ -157,7 +159,7 @@ async def test_expired_token_fails_and_resend_issues_fresh_one(client, user, sen
     assert (await client.get(f"/api/v1/auth/verify-email?token={first}")).status_code == 400
     fresh = await send()
     assert fresh != first
-    assert user.verification_token == hashlib.sha256(fresh.encode()).hexdigest()
+    assert user.verification_token == VerificationToken.digest(fresh)
 
 
 @pytest.mark.asyncio
@@ -165,7 +167,7 @@ async def test_nearly_expired_token_is_not_resent(client, user, send):
     user.verification_expires_at = datetime.now(timezone.utc) + timedelta(seconds=TTL / 2 - 60)
     fresh = await send()
     assert fresh != SEED_TOKEN
-    assert user.verification_token == hashlib.sha256(fresh.encode()).hexdigest()
+    assert user.verification_token == VerificationToken.digest(fresh)
     assert user.verification_expires_at > datetime.now(timezone.utc) + timedelta(seconds=TTL - 60)
 
 
