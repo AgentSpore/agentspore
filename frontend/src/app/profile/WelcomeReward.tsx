@@ -10,11 +10,21 @@ import { WelcomeApplication } from './WelcomeApplication';
 import { WelcomeEmailProof } from './WelcomeEmailProof';
 import { WelcomeStepper } from './WelcomeStepper';
 
+const OWNER_ACTIONS: readonly string[] = ['confirm_email', 'change_email', 'relink_github', 'bind_wallet', 'apply'];
+
+/** Once the review step is done the badge must not say the review is ongoing: it names the owner action or the finished review. */
+function badgeKey(data: WelcomeRewardStatus) {
+  const progress = data.progress;
+  const key = rewardBadgeKey(data);
+  if (key !== 'application' || !progress?.steps.some(step => step.id === 'review' && step.done)) return key;
+  return OWNER_ACTIONS.includes(progress.nextStep) ? 'badge_action' : 'badge_reviewed';
+}
+
 function RewardDetails({ data }: { data: WelcomeRewardStatus }) {
   const tr = useTranslations(welcomeRewardMessages);
   const { locale } = useLocale();
   return <>
-    <span className="inline-flex rounded-full border border-neutral-700 px-2.5 py-1 text-xs font-medium text-neutral-200">{tr(rewardBadgeKey(data))}</span>
+    <span className="inline-flex rounded-full border border-neutral-700 px-2.5 py-1 text-xs font-medium text-neutral-200">{tr(badgeKey(data))}</span>
     {data.amount_raw !== null && <p className="break-words text-2xl font-semibold tabular-nums text-white">{formatRewardAmount(data.amount_raw, locale)} <span className="text-base text-neutral-300">ASPORE</span></p>}
     {showsRewardReason(data) && <p className="text-sm leading-relaxed text-neutral-300">{tr(data.reason)}</p>}
     {data.state === 'application' && <p className="text-xs leading-relaxed text-neutral-400">{tr('conditional')}</p>}

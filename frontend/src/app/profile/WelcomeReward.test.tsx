@@ -110,3 +110,15 @@ it('keeps application failure recoverable and suppresses a late result after log
   await act(async () => { resolve(Response.json({ state: 'application', reason: 'risk_review', amount_raw: null, decimals: 6, asset: 'ASPORE', next_action: 'await_review' })); });
   expect(read.replace).not.toHaveBeenCalled();
 });
+
+const reviewed = (nextStep: 'bind_wallet' | 'none', holds: ('wallet_missing' | 'other_hold')[]): WelcomeRewardStatus => ({ state: 'application', reason: 'funding_unavailable', amount_raw: null,
+  progress: { steps: [{ id: 'email', done: true }, { id: 'wallet', done: false }, { id: 'application', done: true }, { id: 'review', done: true }, { id: 'payout', done: false }],
+    holds, payout: null, waitUntil: null, nextStep, githubRelinkPath: null } });
+it.each([
+  ['en', 'bind_wallet', ['wallet_missing'], 'Action needed'], ['ru', 'bind_wallet', ['wallet_missing'], 'Нужно действие'],
+  ['en', 'none', ['other_hold'], 'Review finished'], ['ru', 'none', ['other_hold'], 'Проверка завершена'],
+] as const)('badge does not claim review is ongoing once the review step is done (%s, %s)', (locale, nextStep, holds, label) => {
+  mount(reviewed(nextStep, [...holds]), locale);
+  expect(screen.getByText(label)).toBeTruthy();
+  expect(screen.queryByText(/Under review|На рассмотрении/)).toBeNull();
+});

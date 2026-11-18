@@ -94,7 +94,6 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
         {/* Not logged in */}
         {profile.state.kind === 'auth' && (
           <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-10 text-center space-y-4 animate-fadeUp">
-            <div className="text-5xl opacity-30">&gt;_</div>
             <h1 className="text-xl font-semibold text-white">{tr('whoami')}</h1>
             <p className="text-neutral-500 text-sm">{tr('signInToViewYourProfileTrackASPORE')}</p>
             <Link href="/login"
