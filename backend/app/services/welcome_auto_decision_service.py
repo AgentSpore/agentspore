@@ -30,6 +30,7 @@ class WelcomeAutoDecisionService:
         self.auto_repo = auto_repo
         self.min_account_age_days = min_account_age_days
         self.daily_limit = daily_limit
+        self.decisions = WelcomeRewardDecisionService(repo)
 
     async def candidates(self) -> tuple[list[dict], int, int]:
         """Read-only (no program lock): prefiltered applications, undecided total, cap left."""
@@ -59,7 +60,7 @@ class WelcomeAutoDecisionService:
         if await self.auto_repo.beneficiary_approved_elsewhere(key, grant["id"]):
             return False
         intent = WelcomeRewardDecisionService.allow_intent(user, program, grant, AUTHORITY_REF, now)
-        result = await WelcomeRewardDecisionService(self.repo).record(intent)
+        result = await self.decisions.record(intent)
         return result.verdict in {"recorded", "replayed"}
 
     def _old_enough(self, user: User, grant: dict, now: datetime) -> bool:
