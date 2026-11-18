@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import ForgotPasswordPage from '../forgot-password/page';
 import ResetPasswordPage from './page';
@@ -10,8 +10,8 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }), use
 afterEach(() => { cleanup(); window.history.replaceState({}, '', '/'); });
 
 const COPY = {
-  en: { back: 'Back to sign in', forgot: 'Reset your password', invalid: 'This link is not valid', again: 'Request a new link', fresh: 'Choose a new password' },
-  ru: { back: 'Вернуться ко входу', forgot: 'Сброс пароля', invalid: 'Ссылка недействительна', again: 'Запросить новую ссылку', fresh: 'Задайте новый пароль' },
+  en: { back: 'Back to sign in', forgot: 'Reset your password', invalid: 'This link is not valid', again: 'Request a new link', fresh: 'Choose a new password', done: 'Password changed', pw: 'New password', confirm: 'Confirm password' },
+  ru: { back: 'Вернуться ко входу', forgot: 'Сброс пароля', invalid: 'Ссылка недействительна', again: 'Запросить новую ссылку', fresh: 'Задайте новый пароль', done: 'Готово', pw: 'Новый пароль', confirm: 'Повторите пароль' },
 } as const;
 
 const noTerminalText = () => expect(document.body.textContent).not.toMatch(/cd ~|\$ [a-zа-я]/);
@@ -36,4 +36,16 @@ it.each(['en', 'ru'] as const)('reset-password with token uses plain heading in 
   render(<LocaleProvider initialLocale={locale}><ResetPasswordPage /></LocaleProvider>);
   expect(await screen.findByRole('heading', { name: COPY[locale].fresh })).toBeTruthy();
   noTerminalText();
+});
+
+it.each(['en', 'ru'] as const)('reset-password shows plain form labels and success heading in %s', async locale => {
+  window.history.replaceState({}, '', '/reset-password?token=abc');
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+  render(<LocaleProvider initialLocale={locale}><ResetPasswordPage /></LocaleProvider>);
+  fireEvent.change(await screen.findByLabelText(COPY[locale].pw), { target: { value: 'longenough1' } });
+  fireEvent.change(screen.getByLabelText(COPY[locale].confirm), { target: { value: 'longenough1' } });
+  fireEvent.submit(screen.getByLabelText(COPY[locale].pw).closest('form') as HTMLFormElement);
+  await waitFor(() => expect(screen.getByRole('heading', { name: COPY[locale].done })).toBeTruthy());
+  noTerminalText();
+  vi.unstubAllGlobals();
 });

@@ -2,7 +2,7 @@
 
 2026-11-08 · Ledger core · Owner: AgentSpore maintainers.
 
-The welcome program is switched on or off by operators through server configuration. While it is off, onboarding creates no applications. Switching it on permits eligible applications, but never automatically creates funding, risk decisions, bonuses or transfers. `GET /api/v1/users/me/rewards/welcome` returns only the authenticated user's status; it never creates a record. Public response shapes are defined in OpenAPI.
+The welcome program is switched on or off by operators in its program record in the database (`reward_programs.enabled`), and is off by default. While it is off, onboarding creates no applications. Switching it on permits eligible applications, but never automatically creates funding, risk decisions, bonuses or transfers. `GET /api/v1/users/me/rewards/welcome` returns only the authenticated user's status; it never creates a record. Public response shapes are defined in OpenAPI.
 
 | State | Meaning | Amount |
 |---|---|---|
