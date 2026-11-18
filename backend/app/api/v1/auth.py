@@ -111,7 +111,6 @@ async def register(
     # Store only the SHA-256 hash in the DB so a DB dump cannot be replayed.
     nonce = VerificationToken.new_nonce()
     raw_token = VerificationToken.from_nonce(nonce)
-    token_hash = VerificationToken.digest(raw_token)
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=cfg.email_verification_ttl_seconds)
 
     # Create user (unverified)
@@ -121,7 +120,7 @@ async def register(
         name=data.name,
         token_balance=0,
         is_verified=False,
-        verification_token=token_hash,
+        verification_token=VerificationToken.digest(raw_token),
         verification_email=data.email, verification_purpose="registration",
         verification_expires_at=expires_at,
     )
@@ -188,6 +187,17 @@ async def _drop_verification_pointer(redis: aioredis.Redis, user_id: str) -> Non
         logger.warning("Verification pointer cleanup failed; it expires on its own")
 
 
+async def _consume_link_key(redis: aioredis.Redis, token: str) -> str | bytes | None:
+    """Atomically take the single-use link key for a token; None when absent."""
+    user_id = await redis.getdel(VerificationToken.link_key(token))
+    if not user_id:
+        # INVARIANT(182): links emailed before token hashing keep a raw-token key until they
+        # expire; dropping this fallback breaks them. Safe to delete once the verification
+        # TTL has passed after this release.
+        user_id = await redis.getdel(VerificationToken.legacy_link_key(token))
+    return user_id
+
+
 @router.get("/verify-email")
 async def verify_email(
     token: str,
@@ -199,12 +209,7 @@ async def verify_email(
     On success: marks user as verified and returns JWT pair so the frontend
     can log the user in immediately without a second round-trip.
     """
-    user_id = await redis.getdel(VerificationToken.link_key(token))
-    if not user_id:
-        # INVARIANT(182): links emailed before token hashing keep a raw-token key until they
-        # expire; dropping this fallback breaks them. Safe to delete once the verification
-        # TTL has passed after this release.
-        user_id = await redis.getdel(VerificationToken.legacy_link_key(token))
+    user_id = await _consume_link_key(redis, token)
 
     if not user_id:
         raise HTTPException(
