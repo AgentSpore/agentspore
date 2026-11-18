@@ -147,8 +147,13 @@ async def _store_verification_token(
     await redis.setex(f"email_verify_user:{user_id}", ttl, raw_token)
 
 
-async def _reusable_verification_token(redis: aioredis.Redis, user: User) -> str | None:
-    """Return the user's issued, unexpired, unconsumed registration token, else None."""
+async def _reusable_verification_token(
+    redis: aioredis.Redis, user: User, ttl: int
+) -> str | None:
+    """Return the issued registration token if unconsumed with at least half of `ttl` left.
+
+    A link about to expire is not re-sent: the caller issues a fresh one instead.
+    """
     raw = await redis.get(f"email_verify_user:{user.id}")
     if not raw:
         return None
@@ -161,7 +166,7 @@ async def _reusable_verification_token(redis: aioredis.Redis, user: User) -> str
             user.verification_token, hashlib.sha256(raw.encode()).hexdigest()
         )
         or expires_at is None
-        or expires_at <= datetime.now(timezone.utc)
+        or expires_at - datetime.now(timezone.utc) < timedelta(seconds=ttl / 2)
         or not await redis.exists(f"email_verify:{raw}")
     ):
         return None
@@ -215,6 +220,7 @@ async def verify_email(
     user.verification_token = None
     user.verification_expires_at = None
     await db.commit()
+    await redis.delete(f"email_verify_user:{user.id}")
 
     logger.info("Email verification completed")
 
@@ -261,7 +267,9 @@ async def resend_verification(
         return generic  # silent — don't reveal the cooldown to scrapers
 
     # A resend re-sends the still-valid token, so a link from the first email keeps working.
-    raw_token = await _reusable_verification_token(redis, user)
+    raw_token = await _reusable_verification_token(
+        redis, user, cfg.email_verification_ttl_seconds
+    )
     if raw_token is None:
         raw_token = secrets.token_urlsafe(32)
         user.verification_token = hashlib.sha256(raw_token.encode()).hexdigest()
