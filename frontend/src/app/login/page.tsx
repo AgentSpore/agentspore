@@ -6,6 +6,8 @@ import { Header } from "@/components/Header";
 
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { accountMessages, displayAccountLabel } from '@/lib/i18n/account';
+import { AUTH_FLOW_MESSAGES } from '@/lib/i18n/authFlow';
+import { ConfirmationSent, ResendVerification } from './VerificationNotice';
 
 import Link from "next/link";
 import { Suspense, useState } from "react";
@@ -54,6 +56,7 @@ function LoginPageInner() {
   const { locale } = useLocale();
   const tr = useTranslations(accountMessages);
   const workspaceTr = useTranslations(WORKSPACE_MESSAGES);
+  const flowTr = useTranslations(AUTH_FLOW_MESSAGES);
   const searchParams = useSearchParams();
   const nextUrl = safeNext(searchParams.get("next"));
   const { info: toastInfo } = useToast();
@@ -65,11 +68,14 @@ function LoginPageInner() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [slowHint, setSlowHint] = useState(false);
+  const [unverified, setUnverified] = useState(false);
+  const [sentTo, setSentTo] = useState<string | null>(null);
   const oauth = useOAuthProviders();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setUnverified(false);
     setSlowHint(false);
     setLoading(true);
 
@@ -124,6 +130,10 @@ function LoginPageInner() {
       }
       console.error(`[auth:${action}] server rejected`, { status: res.status, detail });
       setLoading(false);
+      if (action === "login" && res.status === 403) {
+        setUnverified(true);
+        return;
+      }
       setError(detail);
       return;
     }
@@ -143,7 +153,7 @@ function LoginPageInner() {
     if (action === "register" && data?.requires_verification) {
       setLoading(false);
       toastInfo(tr('checkYourEmailToVerifyYourAccountThen'));
-      setTab("login");
+      setSentTo(email.trim());
       setPasswordVisible(false);
       setPassword("");
       return;
@@ -185,14 +195,15 @@ function LoginPageInner() {
       <div className="relative w-full max-w-md z-10">
         <div className="mb-8 space-y-3">
           <h1 className="text-3xl font-semibold tracking-tight">{tab === 'login' ? tr('signIn') : tr('createAccount')}</h1>
-          <p className="text-sm leading-6 text-neutral-300">{tr('accountAccessBenefit')}</p>
+          <p className="text-sm leading-6 text-neutral-300">{tab === 'login' ? tr('accountAccessBenefit') : flowTr('registerSubtitle')}</p>
           <p className="text-sm leading-6 text-neutral-400">{tr('servicesWithoutAccount')}</p>
           <p className="text-xs leading-5 text-neutral-400">{workspaceTr('homeIntro')}</p>
         </div>
 
         <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5 sm:p-8">
-          {/* Terminal header */}
-          {/* Tabs */}
+          {sentTo ? (
+            <ConfirmationSent email={sentTo} onBack={() => { setSentTo(null); setTab("login"); }} />
+          ) : (<>
           <div className="flex rounded-lg overflow-hidden border border-neutral-800/50 mb-6 text-sm">
             {(["login", "register"] as const).map(t => (
               <button key={t} type="button" aria-pressed={tab === t} onClick={() => { setTab(t); setPasswordVisible(false); }}
@@ -201,7 +212,7 @@ function LoginPageInner() {
                     ? "bg-violet-500/10 text-violet-400 border-b-2 border-violet-400"
                     : "text-neutral-400 hover:text-neutral-300"
                 }`}>
-                {t === 'login' ? tr('signIn2') : tr('register')}
+                {t === 'login' ? flowTr('tabSignIn') : flowTr('tabRegister')}
               </button>
             ))}
           </div>
@@ -251,6 +262,13 @@ function LoginPageInner() {
               </div>
             )}
 
+            {unverified && (
+              <div className="bg-amber-950/20 border border-amber-800/30 rounded-lg px-4 py-3">
+                <p role="alert" className="text-amber-300 text-xs leading-5">{flowTr('unverifiedMessage')}</p>
+                <ResendVerification email={email} />
+              </div>
+            )}
+
             {loading && slowHint && (
               <div className="bg-amber-950/20 border border-amber-800/30 rounded-lg px-4 py-3">
                 <p className="text-amber-400/90 text-xs">
@@ -290,6 +308,7 @@ function LoginPageInner() {
               </div>
             </>
           )}
+          </>)}
         </div>
 
       </div>

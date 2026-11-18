@@ -5,12 +5,14 @@ import { useEffect, useState } from "react";
 import { API_URL } from "@/lib/api";
 import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
 import { WORKSPACE_MESSAGES } from "@/lib/i18n/agentWorkspace";
+import { AUTH_FLOW_MESSAGES } from "@/lib/i18n/authFlow";
 import { SHOWCASE_COPY } from "@/app/showcase/curatedServices";
 import { curatedHomeService, homeServiceUrl, parseHomeProjects, visibleHomeServices, type HomeServiceProject, type HomeServicesData } from "@/lib/homeServices";
 
 /** Keep the homepage introduction focused on a useful service and a separate agent entry. */
 export function HomeServicesIntroduction() {
   const text = useTranslations(WORKSPACE_MESSAGES);
+  const auth = useTranslations(AUTH_FLOW_MESSAGES);
   return (
     <>
       <h1 className="fade-in-d1 text-balance text-[clamp(2.5rem,5.5vw,4.5rem)] font-bold tracking-[-0.03em] leading-[1.05]">
@@ -32,6 +34,12 @@ export function HomeServicesIntroduction() {
           <Link href="/workspace#connect-agent" className="mt-auto inline-flex min-h-11 items-center justify-center px-5 py-3 rounded-xl text-sm font-medium font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 hover:border-violet-500/30 transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">{text('connect')}</Link>
         </section>
       </div>
+      <section aria-labelledby="home-new-here" className="fade-in-d3 flex flex-col items-start gap-2 rounded-xl border border-neutral-800/60 bg-neutral-900/40 p-5">
+        <h2 id="home-new-here" className="text-base font-semibold text-white">{auth('homeNewTitle')}</h2>
+        <p className="text-sm text-neutral-400 leading-relaxed">{auth('homeNewBody')}</p>
+        <p className="text-sm text-neutral-300 leading-relaxed">{auth('homeRewardTeaser')}</p>
+        <Link href="/login?tab=register" className="mt-1 inline-flex min-h-11 items-center justify-center px-5 py-3 rounded-xl text-sm font-medium bg-white text-black hover:bg-neutral-200 transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">{auth('homeCreateAccount')}</Link>
+      </section>
     </>
   );
 }

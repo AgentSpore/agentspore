@@ -5,6 +5,7 @@ import LoginPage from './page';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
 import { publicMessages, publicLabels, displayPublicLabel } from '@/lib/i18n/public';
 import { accountMessages, displayAccountLabel } from '@/lib/i18n/account';
+import { AUTH_FLOW_MESSAGES } from '@/lib/i18n/authFlow';
 import { WORKSPACE_MESSAGES } from '@/lib/i18n/agentWorkspace';
 
 const navigation = vi.hoisted(() => ({ query: '' }));
@@ -68,7 +69,7 @@ it.each(['en', 'ru'] as const)('associates login and registration fields with th
   render(<LocaleProvider initialLocale={locale}><LoginPage /></LocaleProvider>);
   expect(screen.getByLabelText(accountMessages[locale].email)).toHaveProperty('type', 'email');
   expect(screen.getByLabelText(accountMessages[locale].password)).toHaveProperty('type', 'password');
-  fireEvent.click(screen.getByRole('button', { name: accountMessages[locale].register }));
+  fireEvent.click(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES[locale].tabRegister }));
   expect(screen.getByLabelText(accountMessages[locale].name)).toHaveProperty('required', true);
   expect(screen.getByLabelText(accountMessages[locale].email)).toHaveProperty('type', 'email');
   expect(screen.getByLabelText(accountMessages[locale].password)).toHaveProperty('type', 'password');
@@ -152,8 +153,8 @@ it.each(['en', 'ru'] as const)('exposes authentication mode without submitting o
   const fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
   render(<LocaleProvider initialLocale={locale}><LoginPage /></LocaleProvider>);
-  const signIn = screen.getByRole('button', { name: accountMessages[locale].signIn2 });
-  const register = screen.getByRole('button', { name: accountMessages[locale].register });
+  const signIn = screen.getByRole('button', { name: AUTH_FLOW_MESSAGES[locale].tabSignIn });
+  const register = screen.getByRole('button', { name: AUTH_FLOW_MESSAGES[locale].tabRegister });
   const email = screen.getByLabelText(accountMessages[locale].email);
   const password = screen.getByLabelText(accountMessages[locale].password);
   fireEvent.change(email, { target: { value: 'synthetic@example.invalid' } });
@@ -166,9 +167,9 @@ it.each(['en', 'ru'] as const)('exposes authentication mode without submitting o
   expect(screen.getByLabelText(accountMessages[locale].name)).toBeTruthy();
   fireEvent.click(screen.getAllByRole('button', { name: locale === 'en' ? 'Русский' : 'English' })[0]);
   const switched = locale === 'en' ? 'ru' : 'en';
-  expect(screen.getByRole('button', { name: accountMessages[switched].register }).getAttribute('aria-pressed')).toBe('true');
-  fireEvent.click(screen.getByRole('button', { name: accountMessages[switched].signIn2 }));
-  expect(screen.getByRole('button', { name: accountMessages[switched].signIn2 }).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES[switched].tabRegister }).getAttribute('aria-pressed')).toBe('true');
+  fireEvent.click(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES[switched].tabSignIn }));
+  expect(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES[switched].tabSignIn }).getAttribute('aria-pressed')).toBe('true');
   expect(screen.queryByLabelText(accountMessages[switched].name)).toBeNull();
   expect(email).toHaveProperty('value', 'synthetic@example.invalid');
   expect(password).toHaveProperty('value', 'synthetic-password');
@@ -208,7 +209,7 @@ it.each(['en', 'ru'] as const)('explains account access with shared navigation a
   expect(screen.getByText(locale === 'en'
     ? 'You can use the services without an AgentSpore account.'
     : 'Сервисами можно пользоваться без аккаунта AgentSpore.')).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: accountMessages[locale].register }));
+  fireEvent.click(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES[locale].tabRegister }));
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(accountMessages[locale].createAccount);
 });
 
@@ -219,7 +220,7 @@ it.each(['en', 'ru'] as const)('supports password managers for each authenticati
   const password = screen.getByLabelText(accountMessages[locale].password);
   expect(email.getAttribute('autocomplete')).toBe('email');
   expect(password.getAttribute('autocomplete')).toBe('current-password');
-  fireEvent.click(screen.getByRole('button', { name: accountMessages[locale].register }));
+  fireEvent.click(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES[locale].tabRegister }));
   expect(screen.getByLabelText(accountMessages[locale].name).getAttribute('autocomplete')).toBe('name');
   expect(password.getAttribute('autocomplete')).toBe('new-password');
 });
@@ -243,7 +244,7 @@ it.each(['en', 'ru'] as const)('toggles password visibility without losing draft
   fireEvent.click(screen.getByRole('button', { name: locale === 'en' ? 'Hide password' : 'Скрыть пароль' }));
   expect(password).toHaveProperty('type', 'password');
   fireEvent.click(toggle);
-  fireEvent.click(screen.getByRole('button', { name: accountMessages[locale].register }));
+  fireEvent.click(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES[locale].tabRegister }));
   expect(password).toHaveProperty('type', 'password');
   expect(password).toHaveProperty('value', 'synthetic-password');
   expect(authCalls(fetchMock)).toHaveLength(0);
@@ -269,7 +270,7 @@ it('hides the next login password after registration requests email verification
     : new Response(JSON.stringify({ requires_verification: true }), { status: 202 }));
   vi.stubGlobal('fetch', fetchMock);
   render(<LocaleProvider initialLocale="en"><LoginPage /></LocaleProvider>);
-  fireEvent.click(screen.getByRole('button', { name: accountMessages.en.register }));
+  fireEvent.click(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES.en.tabRegister }));
   fireEvent.change(screen.getByLabelText(accountMessages.en.name), { target: { value: 'Synthetic name' } });
   fireEvent.change(screen.getByLabelText(accountMessages.en.email), { target: { value: 'synthetic@example.invalid' } });
   const password = screen.getByLabelText(accountMessages.en.password);
@@ -277,12 +278,14 @@ it('hides the next login password after registration requests email verification
   fireEvent.click(screen.getByRole('button', { name: 'Show password' }));
   expect(password).toHaveProperty('type', 'text');
   fireEvent.submit(screen.getByRole('button', { name: 'Create Account' }).closest('form')!);
-  await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Sign In'));
-  expect(password).toHaveProperty('type', 'password');
-  expect(password).toHaveProperty('value', '');
+  fireEvent.click(await screen.findByRole('button', { name: AUTH_FLOW_MESSAGES.en.backToSignIn }));
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Sign In');
+  const nextPassword = screen.getByLabelText(accountMessages.en.password);
+  expect(nextPassword).toHaveProperty('type', 'password');
+  expect(nextPassword).toHaveProperty('value', '');
   expect(screen.getByLabelText(accountMessages.en.email)).toHaveProperty('value', 'synthetic@example.invalid');
-  fireEvent.change(password, { target: { value: 'synthetic-next-password' } });
-  expect(password).toHaveProperty('type', 'password');
+  fireEvent.change(nextPassword, { target: { value: 'synthetic-next-password' } });
+  expect(nextPassword).toHaveProperty('type', 'password');
   expect(authCalls(fetchMock)).toHaveLength(1);
 });
 
@@ -292,4 +295,54 @@ it('keeps a visible focus ring on the fields and a text-only password placeholde
     expect(field.className).not.toContain('outline-none');
     expect(field.className).toContain('focus-visible:outline-2');
   }
+});
+
+const json = (status: number, body: unknown) => ({ ok: status < 300, status, json: async () => body }) as Response;
+const quiet = () => { vi.spyOn(console, 'log').mockImplementation(() => {}); vi.spyOn(console, 'error').mockImplementation(() => {}); };
+const fillAndSubmit = (email: string) => {
+  fireEvent.change(screen.getByPlaceholderText('you@example.com'), { target: { value: email } });
+  fireEvent.change(screen.getByPlaceholderText('Enter your password'), { target: { value: 'synthetic-password' } });
+  fireEvent.submit(screen.getByPlaceholderText('you@example.com').closest('form')!);
+};
+
+it.each(['en', 'ru'] as const)('gives registration its own subtitle in %s', locale => {
+  navigation.query = 'tab=register';
+  render(<LocaleProvider initialLocale={locale}><LoginPage /></LocaleProvider>);
+  expect(screen.getByText(AUTH_FLOW_MESSAGES[locale].registerSubtitle)).toBeTruthy();
+  expect(screen.queryByText(accountMessages[locale].accountAccessBenefit)).toBeNull();
+});
+
+it.each(['en', 'ru'] as const)('uses plain-word tab labels without terminal prefixes in %s', locale => {
+  render(<LocaleProvider initialLocale={locale}><LoginPage /></LocaleProvider>);
+  const labels = [AUTH_FLOW_MESSAGES[locale].tabSignIn, AUTH_FLOW_MESSAGES[locale].tabRegister];
+  for (const label of labels) expect(screen.getByRole('button', { name: label })).toBeTruthy();
+  expect(screen.getByRole('main').textContent).not.toMatch(/\$ |cd ~/);
+});
+
+it('offers to resend the verification email when sign-in is refused as unverified', async () => {
+  quiet();
+  const fetchMock = vi.fn<typeof fetch>(async url => String(url).includes('/auth/login')
+    ? json(403, { detail: 'Please verify your email before logging in.' }) : json(200, { ok: true }));
+  vi.stubGlobal('fetch', fetchMock);
+  render(<LocaleProvider initialLocale="en"><LoginPage /></LocaleProvider>);
+  fillAndSubmit('Synthetic@Example.invalid');
+  fireEvent.click(await screen.findByRole('button', { name: AUTH_FLOW_MESSAGES.en.resendAction }));
+  await waitFor(() => expect(screen.getByRole('status').textContent).toContain(AUTH_FLOW_MESSAGES.en.resendDone));
+  const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/auth/resend-verification'));
+  expect(JSON.parse(String(call?.[1]?.body))).toEqual({ email: 'synthetic@example.invalid' });
+});
+
+it('keeps a confirmation notice with the typed address after registration', async () => {
+  quiet();
+  navigation.query = 'tab=register';
+  const fetchMock = vi.fn(async (url: string) => String(url).includes('/auth/register')
+    ? json(202, { requires_verification: true }) : json(200, { ok: true }));
+  vi.stubGlobal('fetch', fetchMock);
+  render(<LocaleProvider initialLocale="en"><LoginPage /></LocaleProvider>);
+  fireEvent.change(screen.getByLabelText(accountMessages.en.name), { target: { value: 'Synthetic' } });
+  fillAndSubmit('synthetic@example.invalid');
+  expect(await screen.findByText('We sent a confirmation link to synthetic@example.invalid.')).toBeTruthy();
+  expect(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES.en.resendAction })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES.en.backToSignIn }));
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(accountMessages.en.signIn);
 });

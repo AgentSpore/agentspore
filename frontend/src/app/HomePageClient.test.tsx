@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/", useRouter: () => ({ refresh: vi.fn() }) }));
@@ -7,6 +7,7 @@ vi.mock("next/navigation", () => ({ usePathname: () => "/", useRouter: () => ({ 
 import { renderToString } from "react-dom/server";
 import HomePageClient, { HomePageInitialData } from "./HomePageClient";
 import { LocaleProvider } from "@/lib/i18n/LocaleProvider";
+import { AUTH_FLOW_MESSAGES } from "@/lib/i18n/authFlow";
 
 const EMPTY_DATA: HomePageInitialData = {
   stats: null,
@@ -83,4 +84,15 @@ it.each(['en', 'ru'] as const)('labels imported activity and links its real GitH
   expect(container.textContent).toContain(locale === 'en' ? 'Unknown author' : 'Автор неизвестен');
   expect(container.querySelector('a[href="https://github.com/Example/repo/commit/abc"]')).not.toBeNull();
   expect(container.querySelector('a[href="/agents/null"]')).toBeNull();
+});
+
+describe("HomePageClient sign-up entry", () => {
+  it.each(["en", "ru"] as const)("links to registration and teases the welcome reward in %s", (locale) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 503 })));
+    vi.stubGlobal("localStorage", { getItem: vi.fn(() => null) });
+    render(<LocaleProvider initialLocale={locale}><HomePageClient initialData={EMPTY_DATA} /></LocaleProvider>);
+    const m = AUTH_FLOW_MESSAGES[locale];
+    expect(screen.getByRole("link", { name: m.homeCreateAccount }).getAttribute("href")).toBe("/login?tab=register");
+    expect(screen.getByText(m.homeRewardTeaser)).toBeTruthy();
+  });
 });
