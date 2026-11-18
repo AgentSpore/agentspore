@@ -174,6 +174,14 @@ async def _reusable_verification_token(
     return raw
 
 
+async def _drop_verification_pointer(redis: aioredis.Redis, user_id: str) -> None:
+    """Best-effort cleanup: the pointer's TTL removes it if Redis is unavailable now."""
+    try:
+        await redis.delete(f"email_verify_user:{user_id}")
+    except RedisError:
+        logger.warning("Verification pointer cleanup failed; it expires on its own")
+
+
 @router.get("/verify-email")
 async def verify_email(
     token: str,
@@ -221,10 +229,7 @@ async def verify_email(
     user.verification_token = None
     user.verification_expires_at = None
     await db.commit()
-    try:
-        await redis.delete(f"email_verify_user:{user.id}")
-    except RedisError:
-        logger.warning("Verification pointer cleanup failed; it expires on its own")
+    await _drop_verification_pointer(redis, str(user.id))
 
     logger.info("Email verification completed")
 
