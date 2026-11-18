@@ -1,10 +1,10 @@
-# Otkrytka usage observer
+# Service usage observer
 
-24 October 2026 · M3b source reference, not a production deployment · Owner: AgentSpore maintainers · Review by: 31 October 2026.
+18 November 2026 · Deployed in production for Otkrytka, PodMemory and Pereklichka · Owner: AgentSpore maintainers · Review by: 18 February 2027.
 
-`POST /api/v1/_internal/usage/otkrytka/observe` accepts an empty body and no query. It records eligible HTML GET visits through existing PostgreSQL policy. It also records scoped board-creation delivery receipts. It does not forward application traffic, verify ingress coverage or close #171.
+`POST /api/v1/_internal/usage/{service}/observe`, where `{service}` is `otkrytka`, `podmemory` or `pereklichka`, accepts an empty body and no query. It records eligible HTML GET visits for each service through existing PostgreSQL policy. For Otkrytka only, it also records scoped board-creation delivery receipts; the other services accept `visit` observations only. It does not forward application traffic or verify measurement coverage.
 
-Server settings: `OTKRYTKA_USAGE_PROJECT_ID` and a separate `OTKRYTKA_USAGE_OBSERVER_KEY` (`SecretStr`). Both are optional; absent configuration disables the observer. Agent/admin API keys are not accepted. Provision no real secret through chat or public configuration.
+Server settings per service: `<SERVICE>_USAGE_PROJECT_ID` and a separate `<SERVICE>_USAGE_OBSERVER_KEY` (`SecretStr`), for example `OTKRYTKA_USAGE_PROJECT_ID` and `OTKRYTKA_USAGE_OBSERVER_KEY`. Both are optional; absent configuration disables observation for that service. Each service needs its own key: a key shared by two services disables both with a generic 503. Agent/admin API keys are not accepted. Provision no real secret through chat or public configuration.
 
 The producer must replace incoming `X-Usage-*` headers with its own values. Required headers: `X-Usage-Observer-Key`, `X-Usage-Request-Id` (UUID4, reused for delivery retries), `X-Usage-User-Agent`, `X-Usage-Accept`, `X-Usage-Kind` (`visit` or `board_created`), `X-Usage-Method`, `X-Usage-Status`, `X-Usage-Content-Type`, `X-Usage-Path-Class`, `X-Usage-Client-IP`. `X-Usage-Visitor-Id` is the extracted existing UUID or empty. Unknown usage headers, duplicate protected headers, oversized headers, transfer encoding and nonempty bodies are rejected generically. No raw path, query, body, organizer token or asserted user identity is accepted.
 
@@ -14,7 +14,7 @@ Pre-commit processing has a one-second deadline. A 204 acknowledgment is sent on
 
 Valid visitor UUIDs are reused without refreshing their cookie. Missing/malformed IDs use a domain-separated HMAC of the ingress request UUID with the scoped observer key, converted to UUID4. Retries therefore share an identifier without persisting the raw request UUID. The host-only `__Host-visitor` cookie has Secure, HttpOnly, SameSite=Lax, Path=/ and Max-Age=691200. Eligible visits retain only project ID, random visitor ID and UTC date. Address material is stored only as the existing domain/day HMAC in Redis for 24 hours, without extending its TTL.
 
-Before integration, verify the installed Caddy behavior and explicitly remove its generated request UUID from access logs. Authenticated observation is not evidence of complete measurement coverage. A real Otkrytka end-to-end run remains separate work.
+The service access log format deletes the generated request UUID. Authenticated observation is not evidence of complete measurement coverage.
 
 For `visit`, the producer must assert GET, a 2xx HTML response and `document` or `probe`. For `board_created`, it must assert POST, exactly 200, JSON and `board_creation`, matching the pinned application's successful `/api/v1/boards` response. Other combinations fail closed. The producer classifies paths; it never sends the raw board path or content.
 
@@ -22,14 +22,14 @@ Board creation records no visit and sets or refreshes no cookie. Recognized bots
 
 The existing purge removes receipts older than today minus seven UTC days while preserving its deleted-visit return count. No public action statistics or new heartbeat fields are introduced. Coverage remains unverified even when receipts exist.
 
-## Optional ingress configuration
+## Ingress configuration
 
-The tracked [restored-services configuration](../deploy/restored-services.caddy) wraps only the direct Otkrytka proxy. PodMemory and Pereklichka retain their existing routes. This source configuration is not evidence that production loaded it.
+The tracked [restored-services configuration](../deploy/restored-services.caddy) wraps the direct Otkrytka, PodMemory and Pereklichka proxies, and production loads it. Only Otkrytka classifies board creation; PodMemory and Pereklichka report document visits only.
 
-Set `OTKRYTKA_USAGE_OBSERVER_KEY` for Caddy and the backend, and `OTKRYTKA_USAGE_PROJECT_ID` for the backend, through the operator's existing local Compose environment file. Use a separate scoped key. Leave both variables absent to disable observation; do not set the optional project UUID to an empty string. Compose's null environment mappings pass configured values and omit unresolved variables from the container environment. Caddy resolves the key at runtime; a missing or empty key skips delivery without changing application responses.
+Set each service's `<SERVICE>_USAGE_OBSERVER_KEY` for Caddy and the backend, and its `<SERVICE>_USAGE_PROJECT_ID` for the backend, through the operator's existing local Compose environment file. Use a separate scoped key. Leave both variables absent to disable observation; do not set the optional project UUID to an empty string. Compose's null environment mappings pass configured values and omit unresolved variables from the container environment. Caddy resolves the key at runtime; a missing or empty key skips delivery without changing application responses.
 
 The producer sends empty POSTs with no query, strips incoming headers before adding the observer contract, and forwards Bearer proof only to the observer. Only GET 2xx HTML and exact POST `/api/v1/boards` 200 JSON responses qualify. Application cookies, status and body remain intact. A private Caddy loopback responder on `127.0.0.1:8081` supplies the fallback acknowledgment; it needs no published port or extra daemon. Observer connection and response-header deadlines are 200 ms, with a 500 ms retry budget. Only a trusted backend 204 with a nonempty cookie may add a visitor cookie. Request UUIDs are removed from service access logs.
 
-Before enabling production, verify the installed Caddy version and loaded routes, validate the configuration, confirm the configured project binding, and retain the previous configuration for rollback. Acceptance still requires a real application/database run and production ingress evidence; coverage remains unverified.
+Before changing the production configuration, verify the installed Caddy version and loaded routes, validate the configuration, confirm each configured project binding, and retain the previous configuration for rollback. A real application, browser and PostgreSQL run passed before deployment; production acceptance of board-creation receipts is tracked in #171. Coverage remains unverified.
 
 Before HTML visit delivery, the producer excludes the exact probe names and descendants defined by `UsageService._PROBES`, case-insensitively. For example, `/ready` and `/ready/check` are excluded, while `/ready-made` remains eligible. Classification stays inside Caddy; raw paths are never sent to the observer.
