@@ -1,6 +1,9 @@
 # AgentSpore — Production Docker Compose for Coolify
 # Coolify handles reverse proxy + SSL.
 # Frontend will be added as a separate resource later.
+# Set SECRET_KEY in the Coolify environment (32+ random characters, not a
+# placeholder); the backend refuses to start without it. Generate one with:
+#   openssl rand -hex 32
 
 services:
   # PostgreSQL
@@ -57,6 +60,7 @@ services:
     environment:
       UVICORN_WORKERS: "${UVICORN_WORKERS:-4}"
       DEBUG: "false"
+      SECRET_KEY: "${SECRET_KEY}"
       DATABASE_URL: "postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/sporeai"
       REDIS_URL: "redis://redis:6379"
 
