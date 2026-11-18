@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from loguru import logger
+from redis.exceptions import RedisError
 from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, DatabaseSession, EmailProofSession
@@ -126,10 +127,8 @@ async def register(
     await db.flush()
 
     # Persist token in Redis (authoritative TTL)
-    await redis.setex(
-        f"email_verify:{raw_token}",
-        cfg.email_verification_ttl_seconds,
-        str(user.id),
+    await _store_verification_token(
+        redis, raw_token, str(user.id), cfg.email_verification_ttl_seconds
     )
     # Send verification email without exposing its bearer link in logs.
     sent = await email_svc.send_verification_email(data.email, raw_token, site_base_url(request))
@@ -139,6 +138,48 @@ async def register(
     await FunnelRepository(db).count_event("user_register")
     await get_welcome_reward_service(db).apply_onboarding(user.id)
     return RegisterResponse()
+
+
+async def _store_verification_token(
+    redis: aioredis.Redis, raw_token: str, user_id: str, ttl: int
+) -> None:
+    """Persist a link token plus a per-user pointer so a resend can reuse it."""
+    await redis.setex(f"email_verify:{raw_token}", ttl, user_id)
+    await redis.setex(f"email_verify_user:{user_id}", ttl, raw_token)
+
+
+async def _reusable_verification_token(
+    redis: aioredis.Redis, user: User, ttl: int
+) -> str | None:
+    """Return the issued registration token if unconsumed with at least half of `ttl` left.
+
+    A link about to expire is not re-sent: the caller issues a fresh one instead.
+    """
+    raw = await redis.get(f"email_verify_user:{user.id}")
+    if not raw:
+        return None
+    raw = raw if isinstance(raw, str) else raw.decode()
+    expires_at = user.verification_expires_at
+    if (
+        user.verification_purpose != "registration"
+        or not user.verification_token
+        or not secrets.compare_digest(
+            user.verification_token, hashlib.sha256(raw.encode()).hexdigest()
+        )
+        or expires_at is None
+        or expires_at - datetime.now(timezone.utc) < timedelta(seconds=ttl / 2)
+        or not await redis.exists(f"email_verify:{raw}")
+    ):
+        return None
+    return raw
+
+
+async def _drop_verification_pointer(redis: aioredis.Redis, user_id: str) -> None:
+    """Best-effort cleanup: the pointer's TTL removes it if Redis is unavailable now."""
+    try:
+        await redis.delete(f"email_verify_user:{user_id}")
+    except RedisError:
+        logger.warning("Verification pointer cleanup failed; it expires on its own")
 
 
 @router.get("/verify-email")
@@ -188,6 +229,7 @@ async def verify_email(
     user.verification_token = None
     user.verification_expires_at = None
     await db.commit()
+    await _drop_verification_pointer(redis, str(user.id))
 
     logger.info("Email verification completed")
 
@@ -233,21 +275,22 @@ async def resend_verification(
     if current > 1:
         return generic  # silent — don't reveal the cooldown to scrapers
 
-    raw_token = secrets.token_urlsafe(32)
-    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=cfg.email_verification_ttl_seconds)
-
-    user.verification_token = token_hash
-    user.verification_email = user.email
-    user.verification_purpose = "registration"
-    user.verification_expires_at = expires_at
-    await db.commit()
-
-    await redis.setex(
-        f"email_verify:{raw_token}",
-        cfg.email_verification_ttl_seconds,
-        str(user.id),
+    # A resend re-sends the still-valid token, so a link from the first email keeps working.
+    raw_token = await _reusable_verification_token(
+        redis, user, cfg.email_verification_ttl_seconds
     )
+    if raw_token is None:
+        raw_token = secrets.token_urlsafe(32)
+        user.verification_token = hashlib.sha256(raw_token.encode()).hexdigest()
+        user.verification_email = user.email
+        user.verification_purpose = "registration"
+        user.verification_expires_at = datetime.now(timezone.utc) + timedelta(
+            seconds=cfg.email_verification_ttl_seconds
+        )
+        await db.commit()
+        await _store_verification_token(
+            redis, raw_token, str(user.id), cfg.email_verification_ttl_seconds
+        )
 
     await email_svc.send_verification_email(
         data.email, raw_token, site_base_url(request)
