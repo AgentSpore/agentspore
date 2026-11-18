@@ -12,6 +12,8 @@ import { decodeProfile, useProfileRead } from "../profile/useProfileRead";
 const REASON_TEXT = { expired: "linkReason", missing: "linkMissing", unavailable: "linkUnavailable" } as const;
 const TEXT_LINK = "inline-flex min-h-11 min-w-11 items-center justify-center text-sm text-neutral-300 underline underline-offset-4 hover:text-white";
 
+export type LinkReason = "expired" | "missing" | "unavailable";
+
 export interface ResendFormProps {
   email: string;
   onEmailChange: (value: string) => void;
@@ -39,9 +41,7 @@ function ResendForm({ email, onEmailChange, loading, onSubmit }: ResendFormProps
 }
 
 /** A confirmation link that cannot be used: tells the person why and offers the way forward that fits their session. */
-export type LinkReason = "expired" | "missing" | "unavailable";
-
-export function LinkProblem({ reason, ...form }: { reason: LinkReason } & ResendFormProps) {
+export function LinkProblem({ reason, onRetry, ...form }: { reason: LinkReason; onRetry?: () => void } & ResendFormProps) {
   const tr = useTranslations(AUTH_FLOW_MESSAGES);
   const auth = useSyncExternalStore(subscribeAuthChanges, getAuthSnapshot, getServerAuthSnapshot);
   const me = useProfileRead("auth/me", auth.accessToken, decodeProfile);
@@ -65,6 +65,7 @@ export function LinkProblem({ reason, ...form }: { reason: LinkReason } & Resend
       {me.state.kind === "loading" && !other ? <p role="status" className="text-sm text-neutral-300">{tr("linkChecking")}</p>
         : signedIn ? <div><p className="text-sm text-neutral-200 wrap-anywhere">{tr("linkSendTo", { email: signedIn.email })}</p><ResendVerification email={signedIn.email} /></div>
         : <ResendForm {...form} />}
+      {reason === "unavailable" && onRetry && <button type="button" onClick={onRetry} className={`${TEXT_LINK} text-left`}>{tr("linkCheckAgain")}</button>}
       <Link href="/login" className={TEXT_LINK}>{tr("linkSignIn")}</Link>
     </section>
   );

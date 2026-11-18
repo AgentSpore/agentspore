@@ -98,6 +98,25 @@ it.each([['en', 500], ['ru', 500], ['en', 429], ['ru', 429], ['en', 404], ['ru',
   expect(screen.queryByText(temporary ? m.linkReason : m.linkUnavailable)).toBeNull();
 });
 
+it.each(['en', 'ru'] as const)('checks the link again after a temporary failure without reloading (%s)', async locale => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(new Response('{}', { status: 503 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ [`access_${'token'}`]: 'synthetic-value' }), { status: 200 }));
+  vi.stubGlobal('fetch', fetchMock);
+  vi.stubGlobal('localStorage', { setItem: vi.fn(), getItem: vi.fn(() => null) });
+  render(<LocaleProvider initialLocale={locale}><VerifyEmailPage /></LocaleProvider>);
+  fireEvent.click(await screen.findByRole('button', { name: AUTH_FLOW_MESSAGES[locale].linkCheckAgain }));
+  await screen.findByTestId('state-success');
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+it('offers no re-check for a link that is simply expired', async () => {
+  vi.stubGlobal('fetch', failed());
+  render(<LocaleProvider initialLocale="en"><VerifyEmailPage /></LocaleProvider>);
+  await screen.findByTestId('state-link-problem');
+  expect(screen.queryByRole('button', { name: AUTH_FLOW_MESSAGES.en.linkCheckAgain })).toBeNull();
+});
+
 it('shows the link problem page for a failure response without a detail', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 500 })));
   render(<LocaleProvider initialLocale="en"><VerifyEmailPage /></LocaleProvider>);

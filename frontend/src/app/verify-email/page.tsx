@@ -65,12 +65,13 @@ function VerifyEmailInner() {
   const [resendEmail, setResendEmail] = useState("");
   const [resendLoading, setResendLoading] = useState(false);
   const [redirectCountdown, setRedirectCountdown] = useState(2);
-  const didVerify = useRef(false);
+  const [attempt, setAttempt] = useState(0);
+  const lastAttempt = useRef(-1);
 
-  // Verify on mount — single call via ref guard
+  // Verify once per attempt; the ref keeps a repeated effect run from sending the same attempt twice
   useEffect(() => {
-    if (!token || didVerify.current) return;
-    didVerify.current = true;
+    if (!token || lastAttempt.current === attempt) return;
+    lastAttempt.current = attempt;
 
     void (async () => {
       try {
@@ -105,7 +106,7 @@ function VerifyEmailInner() {
         });
       }
     })();
-  }, [token]);
+  }, [token, attempt]);
 
   // Auto-redirect after success
   useEffect(() => {
@@ -165,7 +166,7 @@ function VerifyEmailInner() {
           )}
 
           {state.status === "error" && state.expired && (
-            <LinkProblem reason={state.temporary ? "unavailable" : "expired"} email={resendEmail} onEmailChange={setResendEmail} loading={resendLoading} onSubmit={handleResend} />
+            <LinkProblem reason={state.temporary ? "unavailable" : "expired"} onRetry={() => { setState({ status: "verifying" }); setAttempt(n => n + 1); }} email={resendEmail} onEmailChange={setResendEmail} loading={resendLoading} onSubmit={handleResend} />
           )}
 
           {state.status === "error" && !state.expired && (
