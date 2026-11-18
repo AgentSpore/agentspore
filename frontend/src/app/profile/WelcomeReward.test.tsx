@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { afterEach, expect, it, vi } from 'vitest';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
 import { welcomeRewardMessages } from '@/lib/i18n/welcomeReward';
-import type { WelcomeRewardStatus } from '@/lib/welcome-reward';
+import { decodeWelcomeReward, type WelcomeRewardStatus } from '@/lib/welcome-reward';
 import { WelcomeReward } from './WelcomeReward';
 import type { ProfileRead } from './useProfileRead';
 
@@ -111,14 +111,15 @@ it('keeps application failure recoverable and suppresses a late result after log
   expect(read.replace).not.toHaveBeenCalled();
 });
 
-const reviewed = (nextStep: 'bind_wallet' | 'none', holds: ('wallet_missing' | 'other_hold')[]): WelcomeRewardStatus => ({ state: 'application', reason: 'funding_unavailable', amount_raw: null,
-  progress: { steps: [{ id: 'email', done: true }, { id: 'wallet', done: false }, { id: 'application', done: true }, { id: 'review', done: true }, { id: 'payout', done: false }],
-    holds, payout: null, waitUntil: null, nextStep, githubRelinkPath: null } });
+const rawDecided = (nextStep: string, holds: string[]) => ({ state: 'application', reason: 'funding_unavailable', amount_raw: null, decimals: 6, asset: 'ASPORE',
+  next_action: 'await_review', hold_reasons: holds, payout: null, wait_until: null, actions: [], next_step: nextStep,
+  steps: ['email', 'wallet', 'application', 'review', 'payout'].map(id => ({ id, done: id !== 'payout' && (id !== 'wallet' || !holds.includes('wallet_missing')) })) });
 it.each([
   ['en', 'bind_wallet', ['wallet_missing'], 'Action needed'], ['ru', 'bind_wallet', ['wallet_missing'], 'Нужно действие'],
-  ['en', 'none', ['other_hold'], 'Review finished'], ['ru', 'none', ['other_hold'], 'Проверка завершена'],
-] as const)('badge does not claim review is ongoing once the review step is done (%s, %s)', (locale, nextStep, holds, label) => {
-  mount(reviewed(nextStep, [...holds]), locale);
+  ['en', 'wait_payout', [], 'Approved'], ['ru', 'wait_payout', [], 'Заявка одобрена'],
+  ['en', 'a_future_step', [], 'Review finished'], ['ru', 'a_future_step', [], 'Проверка завершена'],
+] as const)('badge does not claim review is ongoing once the review step is done (%s, next_step %s)', (locale, nextStep, holds, label) => {
+  mount(decodeWelcomeReward(rawDecided(nextStep, [...holds])), locale);
   expect(screen.getByText(label)).toBeTruthy();
   expect(screen.queryByText(/Under review|На рассмотрении/)).toBeNull();
 });

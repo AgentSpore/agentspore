@@ -57,7 +57,7 @@ export function formatRewardAmount(raw: number, locale: Locale): string {
   return format.format(amount / scale) + (fraction ? separator + fraction : '');
 }
 
-const ACTION_STEPS = ['confirm_email', 'change_email', 'relink_github', 'bind_wallet', 'apply'];
+export const ACTION_STEPS: readonly string[] = ['confirm_email', 'change_email', 'relink_github', 'bind_wallet', 'apply'];
 const PAYOUT_BADGES = { pending: 'badge_approved', sent: 'badge_sending', confirmed: 'badge_sent' } as const;
 
 /** Message key for the status badge; follows payout and approval, not only the coarse state. */

@@ -4,20 +4,18 @@ import { FetchError } from '@/components/FetchError';
 import { SkeletonText } from '@/components/Skeleton';
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { welcomeRewardMessages } from '@/lib/i18n/welcomeReward';
-import { formatRewardAmount, rewardBadgeKey, showsRewardReason, type WelcomeRewardStatus } from '@/lib/welcome-reward';
+import { ACTION_STEPS, formatRewardAmount, rewardBadgeKey, showsRewardReason, type WelcomeRewardStatus } from '@/lib/welcome-reward';
 import type { ProfileRead } from './useProfileRead';
 import { WelcomeApplication } from './WelcomeApplication';
 import { WelcomeEmailProof } from './WelcomeEmailProof';
 import { WelcomeStepper } from './WelcomeStepper';
-
-const OWNER_ACTIONS: readonly string[] = ['confirm_email', 'change_email', 'relink_github', 'bind_wallet', 'apply'];
 
 /** Once the review step is done the badge must not say the review is ongoing: it names the owner action or the finished review. */
 function badgeKey(data: WelcomeRewardStatus) {
   const progress = data.progress;
   const key = rewardBadgeKey(data);
   if (key !== 'application' || !progress?.steps.some(step => step.id === 'review' && step.done)) return key;
-  return OWNER_ACTIONS.includes(progress.nextStep) ? 'badge_action' : 'badge_reviewed';
+  return ACTION_STEPS.includes(progress.nextStep) ? 'badge_action' : 'badge_reviewed';
 }
 
 function RewardDetails({ data }: { data: WelcomeRewardStatus }) {
