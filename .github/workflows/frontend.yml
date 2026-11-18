@@ -70,10 +70,37 @@ jobs:
 
       - run: npm test
         if: steps.scope.outputs.frontend == 'true'
-      # The isolated gate builds the app before running browser tests.
+      # Some runners resolve apt to a mirror serving ~130 kB/s; the browsers'
+      # 125 MB of system packages then took 15+ minutes and the job timed out.
+      # Cached .deb files make apt download only what changed since.
+      - name: Restore browser system packages
+        id: apt-cache
+        if: steps.scope.outputs.frontend == 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/playwright-apt
+          key: playwright-apt-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: playwright-apt-${{ runner.os }}-
       - name: Install browsers for connect focus tests
         if: steps.scope.outputs.frontend == 'true'
-        run: npx playwright install --with-deps chromium firefox webkit
+        timeout-minutes: 8
+        run: |
+          debs=~/.cache/playwright-apt
+          if compgen -G "$debs/*.deb" >/dev/null; then sudo cp "$debs"/*.deb /var/cache/apt/archives/; fi
+          npx playwright install --with-deps chromium firefox webkit
+          sudo apt-get autoclean -qq
+          rm -rf "$debs" && mkdir -p "$debs"
+          if compgen -G '/var/cache/apt/archives/*.deb' >/dev/null; then cp /var/cache/apt/archives/*.deb "$debs"/; fi
+          echo "System packages kept for cache: $(find "$debs" -name '*.deb' | wc -l)"
+      - name: Save browser system packages
+        if: steps.scope.outputs.frontend == 'true' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/playwright-apt
+          key: ${{ steps.apt-cache.outputs.cache-primary-key }}
+      # The isolated gate builds the app before running browser tests; its own
+      # limit is 14 minutes, this one only bounds the host-side checks around it.
       - name: Connect focus browser tests
         if: steps.scope.outputs.frontend == 'true'
+        timeout-minutes: 16
         run: bash scripts/connect-focus-isolation.sh
