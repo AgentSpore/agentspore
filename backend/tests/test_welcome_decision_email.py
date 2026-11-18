@@ -4,6 +4,7 @@ import json
 from io import StringIO
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from sqlalchemy import text
 from test_marketplace_tasks import marketplace_pg as marketplace_pg
@@ -100,7 +101,7 @@ async def test_only_verified_address_is_mailed(review, mailer, verified):
 async def test_provider_failure_keeps_decision_and_logs_without_address(review, mailer, failure):
     ledger, intent = review
     if failure == "raises":
-        mailer.side_effect = RuntimeError("boom " + OWNER_EMAIL)
+        mailer.side_effect = httpx.ConnectError("boom " + OWNER_EMAIL)
     else:
         mailer.return_value = False
     messages = []

@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+import httpx
 from loguru import logger
 
 from app.models.user import User
@@ -38,7 +39,7 @@ class WelcomeRewardDecisionService:
         for notice in notices:
             try:
                 sent = await mailer.send_welcome_decision_email(notice.email, notice.approved)
-            except Exception:
+            except (httpx.HTTPError, OSError):
                 logger.warning("Welcome decision email failed")
                 continue
             if not sent:
