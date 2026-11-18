@@ -7,13 +7,13 @@ import { docsMessages } from '@/lib/i18n/docs';
 import { accountMessages, displayAccountLabel } from '@/lib/i18n/account';
 
 import Link from "next/link";
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { API_URL } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 import { FetchError } from '@/components/FetchError';
 import { SkeletonText } from '@/components/Skeleton';
-import { decodeDepositBalance, decodePayouts, decodeProfile, useProfileRead } from './useProfileRead';
+import { decodeDepositBalance, decodePayouts, decodeProfile, fetchProfile, useProfileRead } from './useProfileRead';
 import { DepositBalance } from './DepositBalance';
 import { ProfilePayouts } from './ProfilePayouts';
 import { WelcomeReward } from './WelcomeReward';
@@ -51,6 +51,16 @@ function ProfileSession({ auth }: { auth: ReturnType<typeof getAuthSnapshot> }) 
   const welcome = useProfileRead('users/me/rewards/welcome', authToken, decodeWelcomeReward);
   const user = profile.state.kind === 'success' ? profile.state.data : null, setUser = profile.replace;
   const { ownsWallet: welcomeOwnsWallet, walletNote, earnNote } = welcomeWalletFlags(welcome.state);
+  // Read once; only rendered after the client-side profile fetch, so it cannot mismatch server markup.
+  const [verifiedNotice] = useState(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('email') === 'verified');
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('email') !== 'verified') return;
+    params.delete('email');
+    const rest = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${rest && `?${rest}`}${window.location.hash}`);
+  }, []);
+  const refreshWallet = () => { if (authToken) void fetchProfile(authToken).then(fresh => { if (fresh) setUser(fresh); }); };
   const [solanaInput, setSolanaInput] = useState("");
   const [solanaLoading, setSolanaLoading] = useState(false);
   const [solanaError, setSolanaError] = useState("");
@@ -125,8 +135,9 @@ function ProfileSession({ auth }: { auth: ReturnType<typeof getAuthSnapshot> }) 
           </div>
         )}
 
+        {user && verifiedNotice && <p role="status" className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-sm text-emerald-300 font-mono">{tr('profileEmailConfirmed')}</p>}
         {user && <DepositBalance read={deposit} />}
-        {user && authToken && <WelcomeReward read={welcome} token={authToken} hasPassword={user.has_password} />}
+        {user && authToken && <WelcomeReward read={welcome} token={authToken} hasPassword={user.has_password} onWalletSaved={refreshWallet} />}
 
         {/* My Hosted Agents */}
         {user && (
@@ -259,7 +270,7 @@ function ProfileSession({ auth }: { auth: ReturnType<typeof getAuthSnapshot> }) 
 
 
         {/* $ASPORE Payout History */}
-        {user && <ProfilePayouts read={payouts} />}
+        {user && <ProfilePayouts read={payouts} welcomePaid={welcome.state.kind === 'success' && !!welcome.state.data.progress?.payout} />}
 
         {/* How to earn */}
         {user && (

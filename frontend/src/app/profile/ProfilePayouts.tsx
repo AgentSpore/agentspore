@@ -35,14 +35,14 @@ function PayoutRow({ payout }: { payout: TokenPayout }) {
 }
 
 /** Keep loading, failed, empty and populated history visible in one section. */
-export function ProfilePayouts({ read }: { read: ProfileRead<TokenPayout[]> }) {
+export function ProfilePayouts({ read, welcomePaid = false }: { read: ProfileRead<TokenPayout[]>; welcomePaid?: boolean }) {
   const tr = useTranslations(accountMessages);
   return <section aria-labelledby="payout-history-title" className="space-y-4">
     <div><h2 id="payout-history-title" className="text-lg font-semibold text-white font-mono">{tr('catPayoutsLog')}</h2>
       <p className="mt-1 text-sm text-neutral-300 font-mono">{tr('monthlyASPOREDistributions')}</p></div>
     {read.state.kind === 'loading' ? <div role="status" aria-busy="true" className="space-y-3 text-sm text-neutral-300 font-mono"><p>{tr('loadingPayouts')}</p><SkeletonText lines={3} /></div>
       : read.state.kind !== 'success' ? <FetchError onRetry={read.retry} />
-      : read.state.data.length === 0 ? <p className="rounded-xl border border-neutral-800/50 p-5 text-sm text-neutral-300 font-mono">{tr('noPayouts')}</p>
+      : read.state.data.length === 0 ? <p className="rounded-xl border border-neutral-800/50 p-5 text-sm text-neutral-300 font-mono">{tr(welcomePaid ? 'noPayoutsWelcome' : 'noPayouts')}</p>
       : <div className="space-y-2">{read.state.data.map(payout => <PayoutRow key={payout.id} payout={payout} />)}</div>}
   </section>;
 }
