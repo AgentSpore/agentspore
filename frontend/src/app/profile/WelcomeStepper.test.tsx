@@ -123,7 +123,10 @@ it('offers wallet confirmation on 409 and refreshes the card after the claim', a
   const read = mount(wire({ next_step: 'bind_wallet' }));
   fireEvent.change(screen.getByLabelText(m.en.walletLabel), { target: { value: ADDRESS } });
   fireEvent.click(screen.getByRole('button', { name: m.en.walletSave }));
-  fireEvent.click(await screen.findByRole('button', { name: accountMessages.en.walletClaimButton }));
+  const claimButton = await screen.findByRole('button', { name: accountMessages.en.walletClaimButton });
+  expect(screen.getByLabelText(m.en.walletLabel).getAttribute('aria-describedby')).toContain('wallet-taken-notice');
+  fireEvent.click(claimButton);
+  expect((screen.getByLabelText(m.en.walletLabel) as HTMLInputElement).disabled).toBe(true);
   await vi.waitFor(() => expect(read.retry).toHaveBeenCalledOnce());
   expect(new TextDecoder().decode((signMessage.mock.calls[0] as unknown as [Uint8Array])[0])).toBe(MESSAGE);
   expect(screen.queryByRole('alert')).toBeNull();

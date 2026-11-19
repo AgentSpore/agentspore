@@ -16,7 +16,7 @@ import { SkeletonText } from '@/components/Skeleton';
 import { decodeDepositBalance, decodePayouts, decodeProfile, fetchProfile, useProfileRead } from './useProfileRead';
 import { DepositBalance } from './DepositBalance';
 import { ProfilePayouts } from './ProfilePayouts';
-import { WalletClaimOffer } from './WalletClaimOffer';
+import { WALLET_TAKEN_ID, WalletClaimOffer } from './WalletClaimOffer';
 import { WelcomeReward } from './WelcomeReward';
 import { decodeWelcomeReward, showsWalletSection, welcomeWalletFlags } from '@/lib/welcome-reward';
 
@@ -76,6 +76,7 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
   const [solanaError, setSolanaError] = useState("");
   const [takenAddress, setTakenAddress] = useState("");
   const [claimDone, setClaimDone] = useState(false);
+  const [claiming, setClaiming] = useState(false);
 
   const initials = user?.name
     ? user.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()
@@ -203,7 +204,7 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
                             method: "DELETE",
                             headers: { Authorization: `Bearer ${authToken}` },
                           });
-                          if (r.ok) setUser({ ...user, solana_wallet: null });
+                          if (r.ok) { setUser({ ...user, solana_wallet: null }); setClaimDone(false); }
                           else setSolanaError(accountMessages.en.failedToDisconnect);
                         } catch { setSolanaError(accountMessages.en.networkError); }
                         setSolanaLoading(false);
@@ -239,6 +240,7 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
                         body: JSON.stringify({ solana_wallet: solanaInput.trim() }),
                       });
                       if (r.ok) {
+                        setClaimDone(false);
                         setUser({ ...user, solana_wallet: solanaInput.trim() });
                         setSolanaInput("");
                       } else if (r.status === 409) {
@@ -256,6 +258,8 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
                       onChange={(e) => { setSolanaInput(e.target.value); setTakenAddress(""); }}
                       placeholder={tr('solanaWalletAddress')}
                       aria-label={tr('solanaWalletAddress')}
+                      aria-describedby={takenAddress ? WALLET_TAKEN_ID : undefined}
+                      disabled={claiming}
                       className="min-w-0 w-full flex-1 bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-600 focus:border-violet-500/50 focus:outline-none font-mono px-4 py-3 text-sm transition-colors"
                     />
                     <button
@@ -267,7 +271,7 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
                   </form>
                   <p className="text-neutral-600 text-xs">{tr('pasteYourPhantomSolflareWalletAddressToReceive')}</p>
                   {takenAddress && authToken && (
-                    <WalletClaimOffer address={takenAddress} token={authToken}
+                    <WalletClaimOffer address={takenAddress} onBusyChange={setClaiming}
                       onClaimed={address => { setTakenAddress(""); setSolanaInput(""); setClaimDone(true); refreshWallet(address); }} />
                   )}
                 </div>

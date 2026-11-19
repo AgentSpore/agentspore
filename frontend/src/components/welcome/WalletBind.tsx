@@ -4,7 +4,7 @@ import { API_URL } from '@/lib/api';
 import { fetchWithAuth } from '@/lib/auth';
 import { useTranslations } from '@/lib/i18n/LocaleProvider';
 import { welcomeRewardMessages } from '@/lib/i18n/welcomeReward';
-import { WalletClaimOffer } from '@/app/profile/WalletClaimOffer';
+import { WALLET_TAKEN_ID, WalletClaimOffer } from '@/app/profile/WalletClaimOffer';
 import { WELCOME_FOCUS } from './focus';
 
 type Failure = 'walletInvalid' | 'walletFailed' | 'signIn';
@@ -22,6 +22,7 @@ export function WalletBind({ token, onBound }: { token: string; onBound: (addres
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [taken, setTaken] = useState('');
+  const [claiming, setClaiming] = useState(false);
   const pending = useRef<AbortController | null>(null);
   useEffect(() => () => pending.current?.abort(), []);
 
@@ -49,15 +50,15 @@ export function WalletBind({ token, onBound }: { token: string; onBound: (addres
 
   return <form onSubmit={event => void submit(event)} className="space-y-3">
     <label htmlFor="welcome-wallet" className="block text-sm text-neutral-100">{tr('walletLabel')}</label>
-    <input id="welcome-wallet" value={address} onChange={event => { setAddress(event.target.value); setTaken(''); }} disabled={busy}
+    <input id="welcome-wallet" value={address} onChange={event => { setAddress(event.target.value); setTaken(''); }} disabled={busy || claiming}
       placeholder={tr('walletPlaceholder')} autoComplete="off" autoCapitalize="none" spellCheck={false} required aria-invalid={failure === 'walletInvalid' || !!taken}
-      aria-describedby={`welcome-wallet-hint${failure ? ' welcome-wallet-notice' : ''}`}
+      aria-describedby={`welcome-wallet-hint${failure ? ' welcome-wallet-notice' : ''}${taken ? ` ${WALLET_TAKEN_ID}` : ''}`}
       className={`min-h-11 w-full min-w-0 rounded-lg border border-neutral-600 bg-neutral-950 px-3 py-2 font-mono text-sm text-white ${WELCOME_FOCUS}`} />
     <p id="welcome-wallet-hint" className="text-xs text-neutral-300">{tr('walletHint')}</p>
     <button type="submit" disabled={busy} className={`min-h-11 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800 disabled:opacity-50 ${WELCOME_FOCUS}`}>
       {tr(busy ? 'walletSaving' : 'walletSave')}
     </button>
-    {taken && <WalletClaimOffer address={taken} token={token} onClaimed={onBound} />}
+    {taken && <WalletClaimOffer address={taken} onClaimed={onBound} onBusyChange={setClaiming} />}
     {failure && <p id="welcome-wallet-notice" role="alert" className="text-sm text-red-300">
       {failure === 'signIn' ? <Link href="/login?next=/profile" className="underline">{tr('signIn')}</Link> : tr(failure)}
     </p>}

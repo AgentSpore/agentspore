@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ProfilePage from './page';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
 import { accountMessages } from '@/lib/i18n/account';
+import type { SolanaProvider } from '@/lib/solanaWalletClaim';
 
 vi.mock('next/navigation', () => ({ usePathname: () => '/profile', useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }) }));
 const WALLET = '4Nd1mYQzvgvbUQvTzxWCvJGZaAF5bYhQ7pTvVxkXvQfM';
@@ -12,7 +13,9 @@ const SIGNATURE = Uint8Array.from({ length: 64 }, (_, i) => i);
 const SIGNATURE_B64 = btoa(String.fromCharCode(...SIGNATURE));
 const owner = (wallet: string | null) => ({ id: 'u1', name: 'Synthetic owner', email: 'owner@example.invalid', avatar_url: null, token_balance: 0, solana_wallet: wallet, is_admin: false, created_at: '2026-01-01' });
 
-let claimed: boolean;
+const OTHER = '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin';
+let meWallet: string | null;
+let patchOk: boolean;
 let claimResponse: () => Response;
 let challengeResponse: () => Response;
 let calls: string[];
@@ -21,25 +24,31 @@ beforeEach(() => {
   const values = new Map<string, string>();
   vi.stubGlobal('localStorage', { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); } });
   localStorage.setItem('access_token', 'synthetic-session');
-  claimed = false;
+  meWallet = null;
+  patchOk = false;
   calls = [];
   challengeResponse = () => Response.json({ message: MESSAGE, expires_at: '2026-01-01T00:05:00Z' });
-  claimResponse = () => { claimed = true; return Response.json({ solana_wallet: WALLET, status: 'connected' }); };
+  claimResponse = () => { meWallet = WALLET; return Response.json({ solana_wallet: WALLET, status: 'connected' }); };
   vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
     const path = String(url);
     calls.push(`${init?.method ?? 'GET'} ${path.split('/api/v1')[1]}`);
-    if (path.endsWith('/solana-wallet') && init?.method === 'PATCH') return Response.json({ detail: 'Solana wallet already connected to another account' }, { status: 409 });
+    if (path.endsWith('/solana-wallet') && init?.method === 'PATCH') {
+      if (!patchOk) return Response.json({ detail: 'Solana wallet already connected to another account' }, { status: 409 });
+      meWallet = OTHER;
+      return Response.json({ solana_wallet: OTHER, status: 'connected' });
+    }
+    if (path.endsWith('/solana-wallet') && init?.method === 'DELETE') { meWallet = null; return new Response(null, { status: 200 }); }
     if (path.endsWith('/solana-wallet/challenge')) return challengeResponse();
     if (path.endsWith('/solana-wallet/claim')) return claimResponse();
     if (path.endsWith('/rewards/welcome')) return Response.json({ state: 'disabled', reason: 'program_disabled', amount_raw: null, decimals: 6, asset: 'ASPORE', next_action: 'none', hold_reasons: [], payout: null, wait_until: null, actions: [] });
-    if (path.endsWith('/auth/me')) return Response.json(owner(claimed ? WALLET : null));
+    if (path.endsWith('/auth/me')) return Response.json(owner(meWallet));
     if (path.endsWith('/users/me/aspore')) return Response.json({ aspore_balance: 0 });
     return Response.json([]);
   }));
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); delete window.phantom; delete window.solana; });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); delete window.phantom; delete window.solflare; delete window.solana; });
 
-function installWallet(address = WALLET, signMessage = vi.fn(async () => ({ signature: SIGNATURE }))) {
+function installWallet(address = WALLET, signMessage: NonNullable<SolanaProvider['signMessage']> = vi.fn(async () => ({ signature: SIGNATURE }))) {
   const connect = vi.fn(async () => ({ publicKey: { toString: () => address } }));
   window.phantom = { solana: { connect, signMessage } };
   return { connect, signMessage };
@@ -67,7 +76,7 @@ it('signs the exact challenge message and claims with the base64 signature', asy
   await submitTakenAddress();
   clickClaim();
   expect(await screen.findByText('Connected wallet')).toBeTruthy();
-  const [bytes, display] = signMessage.mock.calls[0] as unknown as [Uint8Array, string];
+  const [bytes, display] = vi.mocked(signMessage).mock.calls[0] as unknown as [Uint8Array, string];
   expect(new TextDecoder().decode(bytes)).toBe(MESSAGE);
   expect(display).toBe('utf8');
   const claimCall = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith('/solana-wallet/claim'));
@@ -76,7 +85,7 @@ it('signs the exact challenge message and claims with the base64 signature', asy
 });
 
 it('refuses a connected wallet with another address and does not claim', async () => {
-  installWallet('9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin');
+  installWallet(OTHER);
   await submitTakenAddress();
   clickClaim();
   expect(await screen.findByText(accountMessages.en.walletClaimWrongWallet)).toBeTruthy();
@@ -116,4 +125,80 @@ it('renders the Russian texts', async () => {
   expect(screen.getByText(accountMessages.ru.walletTaken)).toBeTruthy();
   clickClaim('ru');
   expect(await screen.findByText(accountMessages.ru.walletClaimCancelled)).toBeTruthy();
+});
+
+it('accepts a signMessage that resolves a bare Uint8Array', async () => {
+  installWallet(WALLET, vi.fn(async () => SIGNATURE));
+  await submitTakenAddress();
+  clickClaim();
+  expect(await screen.findByText('Connected wallet')).toBeTruthy();
+  const claimCall = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith('/solana-wallet/claim'));
+  expect(JSON.parse(String(claimCall?.[1]?.body)).signature).toBe(SIGNATURE_B64);
+});
+
+it('falls back to provider.publicKey when connect resolves nothing', async () => {
+  const signMessage = vi.fn(async () => ({ signature: SIGNATURE }));
+  window.phantom = { solana: { connect: vi.fn(async () => undefined), publicKey: { toString: () => WALLET }, signMessage } };
+  await submitTakenAddress();
+  clickClaim();
+  expect(await screen.findByText('Connected wallet')).toBeTruthy();
+});
+
+it('uses window.solflare when Phantom is absent', async () => {
+  const signMessage = vi.fn(async () => ({ signature: SIGNATURE }));
+  window.solflare = { connect: vi.fn(async () => undefined), publicKey: { toString: () => WALLET }, signMessage };
+  await submitTakenAddress();
+  clickClaim();
+  expect(await screen.findByText('Connected wallet')).toBeTruthy();
+  expect(signMessage).toHaveBeenCalledOnce();
+});
+
+it('shows the signature mismatch message on a 400 from the server', async () => {
+  claimResponse = () => Response.json({ detail: 'Signature does not match this wallet.' }, { status: 400 });
+  installWallet();
+  await submitTakenAddress();
+  clickClaim();
+  expect(await screen.findByText(accountMessages.en.walletClaimBadSignature)).toBeTruthy();
+});
+
+it('shows the rate limit message on a 429 from the claim', async () => {
+  claimResponse = () => new Response('{}', { status: 429 });
+  installWallet();
+  await submitTakenAddress();
+  clickClaim();
+  expect(await screen.findByText(accountMessages.en.walletClaimRateLimited)).toBeTruthy();
+});
+
+it('announces the taken notice and links it to the address input', async () => {
+  installWallet();
+  await submitTakenAddress();
+  const notice = screen.getByText(accountMessages.en.walletTaken);
+  expect(notice.getAttribute('role')).toBe('status');
+  const input = screen.getByLabelText(accountMessages.en.solanaWalletAddress);
+  expect(input.getAttribute('aria-describedby')?.split(' ')).toContain(notice.id);
+});
+
+it('does not show the confirmed notice for a later address that was not confirmed', async () => {
+  installWallet();
+  await submitTakenAddress();
+  clickClaim();
+  expect(await screen.findByText(accountMessages.en.walletClaimDone)).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: accountMessages.en.disconnect }));
+  const input = await screen.findByLabelText(accountMessages.en.solanaWalletAddress);
+  patchOk = true;
+  fireEvent.change(input, { target: { value: OTHER } });
+  fireEvent.click(screen.getByRole('button', { name: accountMessages.en.connect }));
+  expect(await screen.findByText(OTHER)).toBeTruthy();
+  expect(screen.queryByText(accountMessages.en.walletClaimDone)).toBeNull();
+});
+
+it('locks the address input while the claim waits for the wallet', async () => {
+  let release: (value: { signature: Uint8Array }) => void = () => undefined;
+  installWallet(WALLET, vi.fn(() => new Promise<{ signature: Uint8Array }>(resolve => { release = resolve; })));
+  await submitTakenAddress();
+  clickClaim();
+  const input = screen.getByLabelText(accountMessages.en.solanaWalletAddress) as HTMLInputElement;
+  await waitFor(() => expect(input.disabled).toBe(true));
+  release({ signature: SIGNATURE });
+  expect(await screen.findByText('Connected wallet')).toBeTruthy();
 });

@@ -18,24 +18,28 @@ const NOTICE_KEY = {
   error: 'walletClaimError',
 } as const satisfies Record<Notice, keyof typeof accountMessages.en>;
 
+export const WALLET_TAKEN_ID = 'wallet-taken-notice';
+
 /** Shown when the pasted address belongs to another account: a wallet signature moves it here. */
-export function WalletClaimOffer({ address, token, onClaimed }: { address: string; token: string; onClaimed: (address: string) => void }) {
+export function WalletClaimOffer({ address, onClaimed, onBusyChange }: { address: string; onClaimed: (address: string) => void; onBusyChange?: (busy: boolean) => void }) {
   const tr = useTranslations(accountMessages);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
 
   const confirm = async () => {
     setBusy(true);
+    onBusyChange?.(true);
     setNotice(null);
-    const result = await claimWalletWithSignature({ apiUrl: API_URL, token, address });
+    const result = await claimWalletWithSignature({ apiUrl: API_URL, address });
     setBusy(false);
+    onBusyChange?.(false);
     if (result.kind === 'ok') onClaimed(address);
     else setNotice(result.kind);
   };
 
   return (
     <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-950/20 px-4 py-3 space-y-3">
-      <p className="text-amber-200 text-xs leading-5">{tr('walletTaken')}</p>
+      <p id={WALLET_TAKEN_ID} role="status" aria-live="polite" className="text-amber-200 text-xs leading-5">{tr('walletTaken')}</p>
       <button
         type="button"
         onClick={confirm}
