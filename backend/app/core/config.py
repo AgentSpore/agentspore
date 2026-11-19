@@ -126,6 +126,9 @@ class Settings(BaseSettings):
     login_fail_rate_limit: int = 5      # failed attempts per window
     login_fail_rate_window_seconds: int = 900  # 15 minutes
 
+    # Solana wallet claim: challenges a user may request per hour
+    solana_wallet_challenge_rate_limit: int = 10
+
     # OpenViking (shared agent memory)
     openviking_url: str = ""
     openviking_api_key: str = ""

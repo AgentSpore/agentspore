@@ -4,6 +4,8 @@ Ownership API — wallet, $ASPORE and contributor-share endpoints
 Endpoints:
   PATCH  /api/v1/users/wallet         — connect wallet (EIP-191 sig verify)
   PATCH  /api/v1/users/solana-wallet   — connect Solana wallet for $ASPORE payouts
+  POST   /api/v1/users/solana-wallet/challenge — request a message to sign with the wallet
+  POST   /api/v1/users/solana-wallet/claim     — claim a taken address with the signed message
   DELETE /api/v1/users/solana-wallet   — disconnect Solana wallet
   GET    /api/v1/users/me/payouts      — payout history
   POST   /api/v1/agents/link-owner     — link agent to human user (JWT + X-API-Key)
@@ -12,6 +14,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import base64
 import hashlib
 from uuid import UUID
 
@@ -29,12 +32,21 @@ from app.schemas.ownership import (
     ContributorShare,
     LinkOwnerRequest,
     ProjectOwnershipResponse,
+    SolanaWalletChallengeResponse,
+    SolanaWalletClaimRequest,
     SolanaWalletConnectRequest,
     WalletConnectRequest,
 )
 from app.services.agent_ownership_service import AgentOwnershipService, get_agent_ownership_service
 from app.services.agent_service import get_agent_by_api_key
 from app.services.payout_service import PayoutService, get_payout_service
+from app.services.solana_wallet_claim import (
+    ChallengeExpiredError,
+    InvalidSignatureError,
+    RateLimitedError,
+    SolanaWalletClaimService,
+    get_solana_wallet_claim_service,
+)
 
 router = APIRouter(tags=["ownership"])
 
@@ -95,6 +107,42 @@ async def connect_solana_wallet(
         await svc.connect_solana_wallet(str(current_user.id), body.solana_wallet)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+    await db.commit()
+    return {"solana_wallet": body.solana_wallet, "status": "connected"}
+
+
+@router.post("/users/solana-wallet/challenge", response_model=SolanaWalletChallengeResponse)
+async def solana_wallet_challenge(
+    body: SolanaWalletConnectRequest,
+    current_user: CurrentUser,
+    svc: SolanaWalletClaimService = Depends(get_solana_wallet_claim_service),
+) -> SolanaWalletChallengeResponse:
+    """Issue a one-time message to sign with the wallet that owns the address."""
+    try:
+        message, expires_at = await svc.issue_challenge(str(current_user.id), body.solana_wallet)
+    except RateLimitedError as e:
+        raise HTTPException(
+            status_code=429, detail="Too many requests. Please try again later."
+        ) from e
+    return SolanaWalletChallengeResponse(message=message, expires_at=expires_at)
+
+
+@router.post("/users/solana-wallet/claim")
+async def claim_solana_wallet(
+    body: SolanaWalletClaimRequest,
+    current_user: CurrentUser,
+    db: DatabaseSession,
+    svc: SolanaWalletClaimService = Depends(get_solana_wallet_claim_service),
+) -> dict[str, str]:
+    """Bind an address, taking it from another account if the signature proves ownership."""
+    try:
+        await svc.claim(str(current_user.id), body.solana_wallet, base64.b64decode(body.signature))
+    except ChallengeExpiredError as e:
+        raise HTTPException(
+            status_code=400, detail="Confirmation expired. Request a new one."
+        ) from e
+    except InvalidSignatureError as e:
+        raise HTTPException(status_code=400, detail="Signature does not match this wallet.") from e
     await db.commit()
     return {"solana_wallet": body.solana_wallet, "status": "connected"}
 
