@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
+import { accountMessages } from '@/lib/i18n/account';
 import { emailChangeMessages } from '@/lib/i18n/emailChange';
 import { welcomeRewardMessages as m } from '@/lib/i18n/welcomeReward';
 import { HOLD_REASONS } from '@/lib/welcome-progress';
@@ -99,12 +100,34 @@ it('binds the wallet inline and refreshes the card', async () => {
   expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/users/solana-wallet'), expect.objectContaining({ method: 'PATCH' }));
 });
 
-it.each([[409, 'walletTaken'], [503, 'walletFailed']] as const)('shows a plain wallet error for %s', async (status, key) => {
+it.each([[503, 'walletFailed']] as const)('shows a plain wallet error for %s', async (status, key) => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ detail: 'internal' }, { status })));
   mount(wire({ next_step: 'bind_wallet' }));
   fireEvent.change(screen.getByLabelText(m.en.walletLabel), { target: { value: 'So11111111111111111111111111111111111111112' } });
   fireEvent.click(screen.getByRole('button', { name: m.en.walletSave }));
   expect((await screen.findByRole('alert')).textContent).toBe(m.en[key]);
+});
+
+it('offers wallet confirmation on 409 and refreshes the card after the claim', async () => {
+  const ADDRESS = 'So11111111111111111111111111111111111111112';
+  const MESSAGE = 'AgentSpore wallet claim\nnonce: synthetic';
+  const signMessage = vi.fn(async () => ({ signature: new Uint8Array(64) }));
+  window.phantom = { solana: { connect: vi.fn(async () => ({ publicKey: { toString: () => ADDRESS } })), signMessage } };
+  const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(url);
+    if (path.endsWith('/solana-wallet/challenge')) return Response.json({ message: MESSAGE, expires_at: '2026-01-01T00:05:00Z' });
+    if (path.endsWith('/solana-wallet/claim')) return Response.json({ solana_wallet: ADDRESS, status: 'connected' });
+    return Response.json({ detail: 'taken' }, { status: init?.method === 'PATCH' ? 409 : 200 });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  const read = mount(wire({ next_step: 'bind_wallet' }));
+  fireEvent.change(screen.getByLabelText(m.en.walletLabel), { target: { value: ADDRESS } });
+  fireEvent.click(screen.getByRole('button', { name: m.en.walletSave }));
+  fireEvent.click(await screen.findByRole('button', { name: accountMessages.en.walletClaimButton }));
+  await vi.waitFor(() => expect(read.retry).toHaveBeenCalledOnce());
+  expect(new TextDecoder().decode((signMessage.mock.calls[0] as unknown as [Uint8Array])[0])).toBe(MESSAGE);
+  expect(screen.queryByRole('alert')).toBeNull();
+  delete window.phantom;
 });
 
 it('rejects a malformed wallet address without a request', () => {
