@@ -75,6 +75,36 @@ async def test_replay_and_same_outcome_again_do_not_resend(review, mailer):
     mailer.assert_awaited_once()
 
 
+async def chain(maker, intent, outcomes):
+    """Record outcomes one after another, each on top of the previous revision."""
+    for revision, outcome in enumerate(outcomes):
+        step = intent.model_copy(
+            update={
+                "outcome": outcome,
+                "expected_revision": revision,
+                "evidence_ref": f"synthetic-review-{revision}",
+            }
+        )
+        assert (await cli.execute(step, True, maker))["verdict"] == "recorded"
+
+
+@pytest.mark.parametrize(
+    "outcomes,sent",
+    [
+        (["allow", "hold", "allow"], [True]),
+        (["deny", "allow"], [False, True]),
+        (["hold", "allow"], [True]),
+        (["deny", "hold", "deny"], [False]),
+    ],
+)
+async def test_email_only_when_outcome_differs_from_last_decision_ignoring_holds(
+    review, mailer, outcomes, sent
+):
+    ledger, intent = review
+    await chain(ledger.maker, intent, outcomes)
+    assert [call.args[1] for call in mailer.await_args_list] == sent
+
+
 async def test_dry_run_sends_nothing(review, mailer):
     ledger, intent = review
     await cli.execute(intent, False, ledger.maker)

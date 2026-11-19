@@ -45,11 +45,11 @@ class WelcomeRewardDecisionService:
             if not sent:
                 logger.warning("Welcome decision email was not sent")
 
-    def _queue_notice(self, intent: WelcomeRewardDecision, user: User, latest: dict | None) -> None:
-        """Queue one email on the first write of an outcome, to a verified address only."""
-        if intent.outcome not in NOTIFIED_OUTCOMES or (
-            latest and latest["outcome"] == intent.outcome
-        ):
+    def _queue_notice(
+        self, intent: WelcomeRewardDecision, user: User, last_decided: str | None
+    ) -> None:
+        """Queue one email when the outcome differs from the last allow or deny decision."""
+        if intent.outcome not in NOTIFIED_OUTCOMES or last_decided == intent.outcome:
             return
         if not (user.is_verified and user.email):
             logger.info("Welcome decision email skipped: no verified address")
@@ -102,8 +102,9 @@ class WelcomeRewardDecisionService:
         rejection = await self._fresh_rejection(intent, user, program, grant)
         if rejection is not None:
             return rejection
+        last_decided = await self.repo.last_decided_outcome(grant["id"])
         row = await self.repo.insert_decision(intent.model_dump(exclude={"expected_revision"}))
-        self._queue_notice(intent, user, latest)
+        self._queue_notice(intent, user, last_decided)
         return WelcomeRewardDecisionResult.receipt("recorded", row)
 
     async def _fresh_rejection(

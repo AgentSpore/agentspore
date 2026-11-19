@@ -44,7 +44,7 @@ The trusted operator writer records reviewed attestations through a controlled C
 
 ### Decision email
 
-When an application is approved or rejected, by `auto-decide`, `approve-clean` or the manual writer, the owner receives one plain email with a link to their profile. It goes only to a verified address, only after the decision is committed, and only when the outcome is new for that application: a replay or a hold sends nothing. A failed send is logged without the address and never undoes the decision.
+When an application is approved or rejected, by `auto-decide`, `approve-clean` or the manual writer, the owner receives one plain email with a link to their profile. It goes only to a verified address, only after the decision is committed, and only when the outcome differs from the last approval or rejection of that application: a replay or a hold sends nothing, and a hold in between does not make a repeated outcome new. A failed send is logged without the address and never undoes the decision.
 
 ### Automatic decisions
 
