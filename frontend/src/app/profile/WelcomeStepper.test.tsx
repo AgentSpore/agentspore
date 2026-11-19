@@ -7,6 +7,7 @@ import { emailChangeMessages } from '@/lib/i18n/emailChange';
 import { welcomeRewardMessages as m } from '@/lib/i18n/welcomeReward';
 import { HOLD_REASONS } from '@/lib/welcome-progress';
 import { decodeWelcomeReward } from '@/lib/welcome-reward';
+import { WALLET_TAKEN_ID } from './WalletClaimOffer';
 import { WelcomeReward } from './WelcomeReward';
 import type { ProfileRead } from './useProfileRead';
 
@@ -130,7 +131,7 @@ it('offers wallet confirmation on 409 and refreshes the card after the claim', a
   expect((screen.getByRole('button', { name: m.en.walletSave }) as HTMLButtonElement).disabled).toBe(true);
   await vi.waitFor(() => expect(read.retry).toHaveBeenCalledOnce());
   expect(new TextDecoder().decode((signMessage.mock.calls[0] as unknown as [Uint8Array])[0])).toBe(MESSAGE);
-  expect(screen.queryByText(m.en.walletFailed)).toBeNull();
+  expect(screen.queryAllByRole('alert').map(alert => alert.id)).toEqual([WALLET_TAKEN_ID]);
   delete window.phantom;
 });
 

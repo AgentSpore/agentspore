@@ -235,3 +235,18 @@ it('treats a wallet that never answers as cancelled and frees the button', async
   expect(await screen.findByText(accountMessages.en.walletClaimCancelled)).toBeTruthy();
   expect((screen.getByRole('button', { name: 'Confirm with wallet' }) as HTMLButtonElement).disabled).toBe(false);
 });
+
+it('treats a wallet whose connect never answers as cancelled and frees the button', async () => {
+  const connect = vi.fn(() => new Promise<void>(() => undefined));
+  window.phantom = { solana: { connect, signMessage: vi.fn(async () => ({ signature: SIGNATURE })) } };
+  await submitTakenAddress();
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    clickClaim();
+    for (let i = 0; i < 50 && connect.mock.calls.length === 0; i++) await vi.advanceTimersByTimeAsync(10);
+    expect(connect).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(120_000);
+  } finally { vi.useRealTimers(); }
+  expect(await screen.findByText(accountMessages.en.walletClaimCancelled)).toBeTruthy();
+  expect((screen.getByRole('button', { name: 'Confirm with wallet' }) as HTMLButtonElement).disabled).toBe(false);
+});
