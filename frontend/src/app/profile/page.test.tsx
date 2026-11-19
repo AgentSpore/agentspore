@@ -121,16 +121,15 @@ it('renders a schema validation array as invalid address without losing the prof
   expect(screen.getByRole('main')).toBeTruthy();
 });
 
-it('localizes the wallet ownership conflict in Russian', async () => {
+it('offers wallet confirmation in Russian when the address belongs to another account', async () => {
   const detail = 'Solana wallet already connected to another account';
-  const translated = 'Кошелёк Solana уже подключён к другому аккаунту.';
   mountWallet(null, 'ru', Response.json({ detail }, { status: 409 }));
   const input = await screen.findByPlaceholderText(accountMessages.ru.solanaWalletAddress);
   fireEvent.change(input, { target: { value: '11111111111111111111111111111111' } });
   fireEvent.click(screen.getByRole('button', { name: accountMessages.ru.connect }));
-  await screen.findByText(text => text === detail || text === translated);
+  expect(await screen.findByText(accountMessages.ru.walletTaken)).toBeTruthy();
   expect(screen.queryByText(detail)).toBeNull();
-  expect(screen.getByText(translated)).toBeTruthy();
+  expect(screen.getByRole('button', { name: accountMessages.ru.walletClaimButton })).toBeTruthy();
 });
 
 const readPayouts = (['pending', 'sent', 'confirmed', 'failed'] as const).map((status, index) => ({

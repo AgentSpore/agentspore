@@ -16,6 +16,7 @@ import { SkeletonText } from '@/components/Skeleton';
 import { decodeDepositBalance, decodePayouts, decodeProfile, fetchProfile, useProfileRead } from './useProfileRead';
 import { DepositBalance } from './DepositBalance';
 import { ProfilePayouts } from './ProfilePayouts';
+import { WALLET_TAKEN_ID, WalletClaimOffer } from './WalletClaimOffer';
 import { WelcomeReward } from './WelcomeReward';
 import { decodeWelcomeReward, showsWalletSection, welcomeWalletFlags } from '@/lib/welcome-reward';
 
@@ -73,6 +74,9 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
   const [solanaInput, setSolanaInput] = useState("");
   const [solanaLoading, setSolanaLoading] = useState(false);
   const [solanaError, setSolanaError] = useState("");
+  const [takenAddress, setTakenAddress] = useState("");
+  const [claimDone, setClaimDone] = useState(false);
+  const [claiming, setClaiming] = useState(false);
 
   const initials = user?.name
     ? user.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()
@@ -200,7 +204,7 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
                             method: "DELETE",
                             headers: { Authorization: `Bearer ${authToken}` },
                           });
-                          if (r.ok) setUser({ ...user, solana_wallet: null });
+                          if (r.ok) { setUser({ ...user, solana_wallet: null }); setClaimDone(false); }
                           else setSolanaError(accountMessages.en.failedToDisconnect);
                         } catch { setSolanaError(accountMessages.en.networkError); }
                         setSolanaLoading(false);
@@ -210,6 +214,7 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
                     >
                       {tr('disconnect')}</button>
                   </div>
+                  {claimDone && <p role="status" className="text-emerald-400 text-xs">{tr('walletClaimDone')}</p>}
                   <a href={`https://solscan.io/account/${user.solana_wallet}`}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -224,6 +229,7 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
                     if (!solanaInput.trim()) return;
                     setSolanaLoading(true);
                     setSolanaError("");
+                    setTakenAddress("");
                     try {
                       const r = await fetch(`${API_URL}/api/v1/users/solana-wallet`, {
                         method: "PATCH",
@@ -234,8 +240,11 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
                         body: JSON.stringify({ solana_wallet: solanaInput.trim() }),
                       });
                       if (r.ok) {
+                        setClaimDone(false);
                         setUser({ ...user, solana_wallet: solanaInput.trim() });
                         setSolanaInput("");
+                      } else if (r.status === 409) {
+                        setTakenAddress(solanaInput.trim());
                       } else {
                         const d = await r.json().catch(() => ({}));
                         setSolanaError((typeof d.detail === "string" && d.detail) || accountMessages.en.invalidAddress);
@@ -246,19 +255,25 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
                     <input
                       type="text"
                       value={solanaInput}
-                      onChange={(e) => setSolanaInput(e.target.value)}
+                      onChange={(e) => { setSolanaInput(e.target.value); setTakenAddress(""); }}
                       placeholder={tr('solanaWalletAddress')}
                       aria-label={tr('solanaWalletAddress')}
+                      aria-describedby={takenAddress ? WALLET_TAKEN_ID : undefined}
+                      disabled={claiming}
                       className="min-w-0 w-full flex-1 bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-600 focus:border-violet-500/50 focus:outline-none font-mono px-4 py-3 text-sm transition-colors"
                     />
                     <button
                       type="submit"
-                      disabled={solanaLoading || !solanaInput.trim()}
+                      disabled={solanaLoading || claiming || !solanaInput.trim()}
                       className="px-5 py-3 rounded-lg text-sm font-medium bg-white text-black hover:bg-neutral-200 transition-all disabled:opacity-50"
                     >
                       {tr('connect')}</button>
                   </form>
                   <p className="text-neutral-600 text-xs">{tr('pasteYourPhantomSolflareWalletAddressToReceive')}</p>
+                  {takenAddress && authToken && (
+                    <WalletClaimOffer address={takenAddress} onBusyChange={setClaiming}
+                      onClaimed={address => { setTakenAddress(""); setSolanaInput(""); setClaimDone(true); refreshWallet(address); }} />
+                  )}
                 </div>
               )}
               {solanaError && (
