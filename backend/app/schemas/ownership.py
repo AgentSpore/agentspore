@@ -1,5 +1,7 @@
 """Ownership schemas."""
 
+import base64
+import binascii
 import re
 from datetime import datetime
 from typing import Literal
@@ -26,6 +28,28 @@ class SolanaWalletConnectRequest(BaseModel):
         if not re.match(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$", v):
             raise ValueError("Invalid Solana address (base58, 32-44 chars)")
         return v
+
+
+class SolanaWalletChallengeResponse(BaseModel):
+    message: str
+    expires_at: datetime
+
+
+class SolanaWalletClaimRequest(SolanaWalletConnectRequest):
+    """Wallet address plus base64 of the 64-byte ed25519 signature over the challenge message."""
+
+    signature: str = Field(max_length=100)
+
+    @field_validator("signature")
+    @classmethod
+    def validate_signature(cls, v: str) -> str:
+        try:
+            raw = base64.b64decode(v.strip(), validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("Signature must be base64") from exc
+        if len(raw) != 64:
+            raise ValueError("Signature must be 64 bytes")
+        return v.strip()
 
 
 class LinkOwnerRequest(BaseModel):

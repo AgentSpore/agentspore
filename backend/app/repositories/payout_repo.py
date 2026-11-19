@@ -25,6 +25,21 @@ class PayoutRepository:
             {"w": solana_wallet, "uid": user_id},
         )
 
+    async def move_solana_wallet(self, user_id: str, solana_wallet: str) -> None:
+        """Bind the address to the user and clear it from any other holder (caller commits)."""
+        await self.db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:w, 0))"), {"w": solana_wallet}
+        )
+        await self.db.execute(
+            text(
+                "UPDATE users SET solana_wallet = NULL, updated_at = NOW() "
+                "WHERE id = (SELECT id FROM users "
+                "WHERE solana_wallet = :w AND id != :uid FOR UPDATE)"
+            ),
+            {"w": solana_wallet, "uid": user_id},
+        )
+        await self.update_solana_wallet(user_id, solana_wallet)
+
     async def get_user_solana_wallet(self, user_id: str) -> str | None:
         row = await self.db.execute(
             text("SELECT solana_wallet FROM users WHERE id = :uid"),
