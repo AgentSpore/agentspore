@@ -118,9 +118,11 @@ async def execute(
     """Report success only after transaction completion and engine disposal."""
 
     async def record(db: AsyncSession) -> dict:
-        result = await WelcomeRewardDecisionService(WelcomeRewardRepository(db)).record(intent)
+        service = WelcomeRewardDecisionService(WelcomeRewardRepository(db))
+        result = await service.record(intent)
         if apply and result.verdict in {"recorded", "replayed"}:
             await db.commit()
+            await WelcomeRewardDecisionService.deliver(service.notices)
         else:
             await db.rollback()
         output = result.model_dump(exclude_none=True) | {
@@ -176,9 +178,11 @@ async def approve_in_transaction(
     db: AsyncSession, application: dict, rules: tuple[int, int], apply: bool
 ) -> dict:
     """One approval per short transaction; dry-run rolls back each."""
-    outcome = await auto_service(db, *rules).approve(application)
+    service = auto_service(db, *rules)
+    outcome = await service.approve(application)
     if apply and outcome == "approved":
         await db.commit()
+        await WelcomeRewardDecisionService.deliver(service.decisions.notices)
     else:
         await db.rollback()
     return {"outcome": outcome}
@@ -354,9 +358,11 @@ async def run_pending_signal(
 
 async def approve_clean_one(db: AsyncSession, grant_id: UUID, apply: bool) -> dict:
     """One approval per short transaction; a dry run rolls each back."""
-    outcome = await review_service(db).approve(grant_id)
+    service = review_service(db)
+    outcome = await service.approve(grant_id)
     if apply and outcome == "approved":
         await db.commit()
+        await WelcomeRewardDecisionService.deliver(service.decisions.notices)
     else:
         await db.rollback()
     return {"outcome": outcome}

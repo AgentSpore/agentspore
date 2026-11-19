@@ -1,14 +1,28 @@
 """Append trusted operator reviews without changing reward entitlements."""
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+
+import httpx
+from loguru import logger
 
 from app.models.user import User
 from app.repositories.welcome_reward_repo import WelcomeRewardRepository
 from app.schemas.welcome_reward_decisions import WelcomeRewardDecision, WelcomeRewardDecisionResult
 from app.services.email_proof_service import EmailProofService
+from app.services.email_service import EmailService, get_email_service
 from app.services.welcome_beneficiary_service import WelcomeBeneficiaryService
 
 DECISION_TTL = timedelta(days=1)
+NOTIFIED_OUTCOMES = {"allow": True, "deny": False}
+
+
+@dataclass(frozen=True)
+class DecisionNotice:
+    """One owner to tell about a decision; held until the decision transaction commits."""
+
+    email: str
+    approved: bool
 
 
 class WelcomeRewardDecisionService:
@@ -16,6 +30,31 @@ class WelcomeRewardDecisionService:
 
     def __init__(self, repo: WelcomeRewardRepository):
         self.repo = repo
+        self.notices: list[DecisionNotice] = []
+
+    @staticmethod
+    async def deliver(notices: list[DecisionNotice], mailer: EmailService | None = None) -> None:
+        """Send queued notices after commit; a failure is logged and never undoes a decision."""
+        mailer = mailer or get_email_service()
+        for notice in notices:
+            try:
+                sent = await mailer.send_welcome_decision_email(notice.email, notice.approved)
+            except (httpx.HTTPError, OSError):
+                logger.warning("Welcome decision email failed")
+                continue
+            if not sent:
+                logger.warning("Welcome decision email was not sent")
+
+    def _queue_notice(
+        self, intent: WelcomeRewardDecision, user: User, last_decided: str | None
+    ) -> None:
+        """Queue one email when the outcome differs from the last allow or deny decision."""
+        if intent.outcome not in NOTIFIED_OUTCOMES or last_decided == intent.outcome:
+            return
+        if not (user.is_verified and user.email):
+            logger.info("Welcome decision email skipped: no verified address")
+            return
+        self.notices.append(DecisionNotice(user.email, NOTIFIED_OUTCOMES[intent.outcome]))
 
     @staticmethod
     def allow_intent(
@@ -63,7 +102,9 @@ class WelcomeRewardDecisionService:
         rejection = await self._fresh_rejection(intent, user, program, grant)
         if rejection is not None:
             return rejection
+        last_decided = await self.repo.last_decided_outcome(grant["id"])
         row = await self.repo.insert_decision(intent.model_dump(exclude={"expected_revision"}))
+        self._queue_notice(intent, user, last_decided)
         return WelcomeRewardDecisionResult.receipt("recorded", row)
 
     async def _fresh_rejection(

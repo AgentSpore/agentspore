@@ -36,6 +36,7 @@ class WelcomeReviewService:
         self.review_repo = review_repo
         self.auto_repo = auto_repo
         self.min_account_age_days = min_account_age_days
+        self.decisions = WelcomeRewardDecisionService(repo)
 
     async def total(self) -> int:
         """All applications waiting for a decision, expired allows included."""
@@ -93,5 +94,5 @@ class WelcomeReviewService:
             return "left"
         grant = grant | {"revision": found[0].revision}
         intent = WelcomeRewardDecisionService.allow_intent(user, program, grant, AUTHORITY_REF, now)
-        result = await WelcomeRewardDecisionService(self.repo).record(intent)
+        result = await self.decisions.record(intent)
         return "approved" if result.verdict in {"recorded", "replayed"} else "left"

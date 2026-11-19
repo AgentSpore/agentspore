@@ -83,6 +83,24 @@ class EmailService:
             "<p>If this was not you, reset your password or contact support at once.</p>",
         )
 
+    async def send_welcome_decision_email(self, to: str, approved: bool) -> bool:
+        """Tell an owner that the welcome reward application has been decided."""
+        profile_url = f"{self.settings.frontend_url}/profile"
+        if approved:
+            subject = "Your welcome reward application was approved"
+            body = (
+                "Your welcome reward application was approved. "
+                "The payout appears on your profile when it is sent."
+            )
+        else:
+            subject = "Your welcome reward application was not approved"
+            body = "Your welcome reward application was not approved."
+        return await self.send_email(
+            to, subject,
+            f"<p>{body}</p>"
+            f'<p><a href="{profile_url}">Open your profile</a></p>',
+        )
+
     async def send_verification_email(
         self, to: str, token: str, base_url: str | None = None
     ) -> bool:

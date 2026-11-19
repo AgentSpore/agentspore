@@ -184,6 +184,16 @@ class WelcomeRewardRepository:
             raise ValueError("Reward mutations require READ COMMITTED")
         return row[1]
 
+    async def last_decided_outcome(self, grant_id: UUID) -> str | None:
+        """Outcome of the newest allow or deny decision of a grant; holds are skipped."""
+        return await self.db.scalar(
+            text("""
+            SELECT outcome FROM reward_eligibility_decisions
+            WHERE grant_id=:id AND outcome IN ('allow','deny') ORDER BY revision DESC LIMIT 1
+        """),
+            {"id": grant_id},
+        )
+
     async def decision_evidence(self, evidence_ref: str) -> dict | None:
         """Look up the global evidence identity after acquiring shared locks."""
         row = (
