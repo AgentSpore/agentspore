@@ -51,7 +51,13 @@ async def api(ledger, a3_redis, monkeypatch):
     app.dependency_overrides[get_redis] = lambda: a3_redis
     async with ledger.maker.begin() as db:
         await db.execute(
-            text("CREATE UNIQUE INDEX users_solana_wallet_key ON users(solana_wallet)")
+            text("CREATE UNIQUE INDEX idx_users_solana_wallet ON users(solana_wallet)")
+        )
+        await db.execute(
+            text(
+                "ALTER TABLE users ADD CONSTRAINT users_wallet_not_system "
+                f"CHECK (solana_wallet <> '{'1' * 32}')"
+            )
         )
     async with AsyncClient(
         transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
@@ -281,3 +287,9 @@ async def test_rate_counter_always_has_an_expiry(api):
     await _challenge(api, api.owner, str(Keypair().pubkey()))
     (key,) = await api.redis.keys("solana_claim_rate:*")
     assert 0 < await api.redis.ttl(key) <= 3600
+
+
+async def test_other_integrity_errors_are_not_reported_as_taken(api):
+    reply = await api.client.patch(BASE, json={"solana_wallet": "1" * 32}, headers=api.owner)
+    assert reply.status_code == 500
+    assert await _wallet_of(api, api.ledger.owner) is None

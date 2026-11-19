@@ -35,6 +35,8 @@ class SolanaWalletConnectRequest(BaseModel):
 
 
 class SolanaWalletChallengeResponse(BaseModel):
+    """The message to sign verbatim with the wallet, and when it stops being valid."""
+
     message: str
     expires_at: datetime
 

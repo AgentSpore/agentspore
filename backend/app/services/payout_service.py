@@ -29,6 +29,7 @@ ASPORE_TOKEN_MINT = os.getenv("ASPORE_TOKEN_MINT", "5ZkjEjfDAPuSg7pRxCRJsJuZ8FBy
 TREASURY_WALLET = os.getenv("TREASURY_WALLET", "GsEqxS6g9Vj7FpnbT5pYspjyU9CYu93BsBeseYmiH8hm")
 SOLANA_RPC_URL = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
 ASPORE_DECIMALS = 6
+WALLET_UNIQUE_INDEX = "idx_users_solana_wallet"
 
 
 class PayoutService:
@@ -41,6 +42,7 @@ class PayoutService:
     # ── Solana Wallet ───────────────────────────────────────────────────
 
     async def connect_solana_wallet(self, user_id: str, solana_wallet: str) -> None:
+        """Bind under the per-address lock; ValueError if taken by another; caller commits."""
         taken = ValueError("Solana wallet already connected to another account")
         await self.repo.lock_solana_wallet(solana_wallet)
         if await self.repo.check_solana_wallet_uniqueness(solana_wallet, user_id):
@@ -48,7 +50,14 @@ class PayoutService:
         try:
             await self.repo.update_solana_wallet(user_id, solana_wallet)
         except IntegrityError as exc:
+            if self._violated_constraint(exc) != WALLET_UNIQUE_INDEX:
+                raise
             raise taken from exc
+
+    @staticmethod
+    def _violated_constraint(exc: IntegrityError) -> str | None:
+        cause = getattr(exc.orig, "__cause__", None)
+        return getattr(cause, "constraint_name", None)
 
     async def disconnect_solana_wallet(self, user_id: str) -> None:
         await self.repo.update_solana_wallet(user_id, None)
