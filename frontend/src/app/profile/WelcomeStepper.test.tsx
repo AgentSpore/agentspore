@@ -228,9 +228,25 @@ it.each(['en', 'ru'] as const)('words every badge in %s', locale => {
   for (const key of ['badge_approved', 'badge_sending', 'badge_sent'] as const) expect(m[locale][key]).toBeTruthy();
 });
 
-it('keeps the application badge while waiting for review', () => {
-  mount(wire({ next_step: 'bind_wallet' }, 1));
+it('keeps the application badge only while waiting for review', () => {
+  mount(wire({ next_step: 'wait_review' }, 3));
   expect(screen.getByText(m.en.application)).toBeTruthy();
+});
+
+it.each(['en', 'ru'] as const)('badge names the owner action instead of "under review" in %s', locale => {
+  expect(m[locale].badge_next_bind_wallet).not.toBe(m[locale].application);
+  for (const step of ['confirm_email', 'change_email', 'relink_github', 'bind_wallet'] as const) expect(m[locale][`badge_next_${step}`]).toBeTruthy();
+});
+
+it.each(['en', 'ru'] as const)('badge for every action step is not "under review" in %s', locale => {
+  const steps = { bind_wallet: 'badge_next_bind_wallet', confirm_email: 'badge_next_confirm_email', change_email: 'badge_next_change_email', relink_github: 'badge_next_relink_github' } as const;
+  for (const [step, key] of Object.entries(steps)) {
+    cleanup();
+    const actions = step === 'relink_github' ? [{ id: 'github_relink', method: 'GET', path: '/api/v1/oauth/github' }] : [];
+    mount(wire({ next_step: step, actions }, 1), locale);
+    expect(screen.getByText(m[locale][key])).toBeTruthy();
+    expect(screen.queryByText(m[locale].application)).toBeNull();
+  }
 });
 
 it('gives the wallet field a format hint without internal limits', () => {
