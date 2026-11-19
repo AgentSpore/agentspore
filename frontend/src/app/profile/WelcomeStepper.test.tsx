@@ -228,9 +228,22 @@ it.each(['en', 'ru'] as const)('words every badge in %s', locale => {
   for (const key of ['badge_approved', 'badge_sending', 'badge_sent'] as const) expect(m[locale][key]).toBeTruthy();
 });
 
-it('keeps the application badge while waiting for review', () => {
-  mount(wire({ next_step: 'bind_wallet' }, 1));
+it('keeps the application badge only while waiting for review', () => {
+  mount(wire({ next_step: 'wait_review' }, 3));
   expect(screen.getByText(m.en.application)).toBeTruthy();
+});
+
+it.each(['en', 'ru'] as const)('badge names the owner action instead of "under review" in %s', locale => {
+  expect(m[locale].badge_next_bind_wallet).not.toBe(m[locale].application);
+  for (const step of ['confirm_email', 'change_email', 'relink_github', 'apply', 'bind_wallet'] as const) expect(m[locale][`badge_next_${step}`]).toBeTruthy();
+});
+
+it.each([
+  ['bind_wallet', 'badge_next_bind_wallet'], ['confirm_email', 'badge_next_confirm_email'],
+] as const)('badge for next step %s is not "under review"', (step, key) => {
+  mount(wire({ next_step: step }, 1));
+  expect(screen.getByText(m.en[key])).toBeTruthy();
+  expect(screen.queryByText(m.en.application)).toBeNull();
 });
 
 it('gives the wallet field a format hint without internal limits', () => {

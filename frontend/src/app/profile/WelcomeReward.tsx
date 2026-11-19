@@ -10,11 +10,17 @@ import { WelcomeApplication } from './WelcomeApplication';
 import { WelcomeEmailProof } from './WelcomeEmailProof';
 import { WelcomeStepper } from './WelcomeStepper';
 
-/** Once the review step is done the badge must not say the review is ongoing: it names the owner action or the finished review. */
+const NEXT_STEP_BADGES: Partial<Record<string, keyof (typeof welcomeRewardMessages)['en']>> = {
+  bind_wallet: 'badge_next_bind_wallet', confirm_email: 'badge_next_confirm_email', change_email: 'badge_next_change_email',
+  relink_github: 'badge_next_relink_github', apply: 'badge_next_apply',
+};
+
+/** The badge never says "Under review" while an owner action comes next; once review is done it names the finished review or the action. */
 function badgeKey(data: WelcomeRewardStatus) {
   const progress = data.progress;
   const key = rewardBadgeKey(data);
-  if (key !== 'application' || !progress?.steps.some(step => step.id === 'review' && step.done)) return key;
+  if (key !== 'application' || !progress) return key;
+  if (!progress.steps.some(step => step.id === 'review' && step.done)) return NEXT_STEP_BADGES[progress.nextStep] ?? key;
   return ACTION_STEPS.includes(progress.nextStep) ? 'badge_action' : 'badge_reviewed';
 }
 
