@@ -42,9 +42,13 @@ An authenticated user can explicitly retry with `POST /api/v1/users/me/rewards/w
 
 The trusted operator writer records reviewed attestations through a controlled CLI, never a user's approval flag. A unique economic beneficiary is established by the verified email address (one reward per mailbox) and by the payout wallet (one reward per wallet); a GitHub account is not required. Every grant is still decided manually by the operator; a trusted anti-abuse source remains a launch prerequisite.
 
+### Decision email
+
+When an application is approved or rejected, by `auto-decide`, `approve-clean` or the manual writer, the owner receives one plain email with a link to their profile. It goes only to a verified address, only after the decision is committed, and only when the outcome is new for that application: a replay or a hold sends nothing. A failed send is logged without the address and never undoes the decision.
+
 ### Automatic decisions
 
-`python -m app.cli.welcome_reward_decisions auto-decide [--apply]` approves undecided applications that satisfy every rule and leaves all others untouched for manual review; it never rejects, funds, enables the program, signs or sends. Rules: the current-email proof is valid, the beneficiary assessment has no holds, the account is at least the configured number of days old (the GitHub account when one is bound, judged at application time; otherwise the platform account, judged at decision time), the beneficiary is not already approved on another grant, and the rolling 24-hour count of automatic approvals is below the configured cap. Applications that already carry any decision (including manual hold or deny) are never considered.
+`python -m app.cli.welcome_reward_decisions auto-decide [--apply]` approves undecided applications that satisfy every rule and leaves all others untouched for manual review; it never rejects, funds, enables the program, signs or sends funds. Rules: the current-email proof is valid, the beneficiary assessment has no holds, the account is at least the configured number of days old (the GitHub account when one is bound, judged at application time; otherwise the platform account, judged at decision time), the beneficiary is not already approved on another grant, and the rolling 24-hour count of automatic approvals is below the configured cap. Applications that already carry any decision (including manual hold or deny) are never considered.
 
 Settings `WELCOME_AUTO_MIN_ACCOUNT_AGE_DAYS` and `WELCOME_AUTO_DAILY_LIMIT` have no effective default: unset or zero (negative values fail settings validation) makes the command do nothing and print `{"verdict": "disabled"}` with exit code 13 (fail closed). Values live only in server configuration.
 
