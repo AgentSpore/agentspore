@@ -116,7 +116,7 @@ async def solana_wallet_challenge(
     body: SolanaWalletConnectRequest,
     current_user: CurrentUser,
     svc: SolanaWalletClaimService = Depends(get_solana_wallet_claim_service),
-):
+) -> SolanaWalletChallengeResponse:
     """Issue a one-time message to sign with the wallet that owns the address."""
     try:
         message, expires_at = await svc.issue_challenge(str(current_user.id), body.solana_wallet)
@@ -133,7 +133,7 @@ async def claim_solana_wallet(
     current_user: CurrentUser,
     db: DatabaseSession,
     svc: SolanaWalletClaimService = Depends(get_solana_wallet_claim_service),
-):
+) -> dict[str, str]:
     """Bind an address, taking it from another account if the signature proves ownership."""
     try:
         await svc.claim(str(current_user.id), body.solana_wallet, base64.b64decode(body.signature))

@@ -32,7 +32,7 @@ class RateLimitedError(Exception):
 
 
 class SolanaWalletClaimService:
-    def __init__(self, db: AsyncSession, redis: Redis, rate_limit: int):
+    def __init__(self, db: AsyncSession, redis: Redis, rate_limit: int) -> None:
         self.repo = PayoutRepository(db)
         self.redis = redis
         self.rate_limit = rate_limit
