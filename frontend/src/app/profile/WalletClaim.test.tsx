@@ -173,7 +173,7 @@ it('announces the taken notice and links it to the address input', async () => {
   installWallet();
   await submitTakenAddress();
   const notice = screen.getByText(accountMessages.en.walletTaken);
-  expect(notice.getAttribute('role')).toBe('status');
+  expect(notice.getAttribute('role')).toBe('alert');
   const input = screen.getByLabelText(accountMessages.en.solanaWalletAddress);
   expect(input.getAttribute('aria-describedby')?.split(' ')).toContain(notice.id);
 });
@@ -199,6 +199,39 @@ it('locks the address input while the claim waits for the wallet', async () => {
   clickClaim();
   const input = screen.getByLabelText(accountMessages.en.solanaWalletAddress) as HTMLInputElement;
   await waitFor(() => expect(input.disabled).toBe(true));
+  expect((screen.getByRole('button', { name: accountMessages.en.connect }) as HTMLButtonElement).disabled).toBe(true);
   release({ signature: SIGNATURE });
   expect(await screen.findByText('Connected wallet')).toBeTruthy();
+});
+
+it('resets the confirmed notice on a plain save even when no disconnect happened', async () => {
+  installWallet();
+  await submitTakenAddress();
+  claimResponse = () => Response.json({ solana_wallet: WALLET, status: 'connected' });
+  clickClaim();
+  await waitFor(() => {
+    expect(screen.queryByText(accountMessages.en.walletTaken)).toBeNull();
+    expect(screen.queryByText('Connected wallet')).toBeNull();
+    expect(screen.queryByLabelText(accountMessages.en.solanaWalletAddress)).not.toBeNull();
+  });
+  patchOk = true;
+  fireEvent.change(screen.getByLabelText(accountMessages.en.solanaWalletAddress), { target: { value: OTHER } });
+  fireEvent.click(screen.getByRole('button', { name: accountMessages.en.connect }));
+  expect(await screen.findByText(OTHER)).toBeTruthy();
+  expect(screen.queryByText(accountMessages.en.walletClaimDone)).toBeNull();
+});
+
+it('treats a wallet that never answers as cancelled and frees the button', async () => {
+  const signMessage = vi.fn(() => new Promise<{ signature: Uint8Array }>(() => undefined));
+  installWallet(WALLET, signMessage);
+  await submitTakenAddress();
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    clickClaim();
+    for (let i = 0; i < 50 && signMessage.mock.calls.length === 0; i++) await vi.advanceTimersByTimeAsync(10);
+    expect(signMessage).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(120_000);
+  } finally { vi.useRealTimers(); }
+  expect(await screen.findByText(accountMessages.en.walletClaimCancelled)).toBeTruthy();
+  expect((screen.getByRole('button', { name: 'Confirm with wallet' }) as HTMLButtonElement).disabled).toBe(false);
 });

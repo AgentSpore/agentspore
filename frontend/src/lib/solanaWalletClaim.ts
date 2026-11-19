@@ -26,6 +26,16 @@ export function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+const WALLET_TIMEOUT_MS = 120_000;
+const WALLET_TIMEOUT = Symbol('wallet-timeout');
+
+/** A wallet popup nobody answers must not keep the page busy forever. */
+async function withinWalletTimeout<T>(pending: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(WALLET_TIMEOUT), WALLET_TIMEOUT_MS); });
+  try { return await Promise.race([pending, expiry]); } finally { clearTimeout(timer); }
+}
+
 const isUserRejection = (e: unknown) =>
   typeof e === 'object' && e !== null && ((e as { code?: unknown }).code === 4001 || /reject|denied|cancel/i.test(String((e as { message?: unknown }).message)));
 
@@ -53,8 +63,8 @@ export async function claimWalletWithSignature(args: { apiUrl: string; address: 
     if (challenge.status === 429) return { kind: 'rate_limited' };
     const { message } = await challenge.json().catch(() => ({}));
     if (!challenge.ok || typeof message !== 'string') return { kind: 'error' };
-    if (await connectedAddress(provider) !== args.address) return { kind: 'wrong_wallet' };
-    const signed = await provider.signMessage(new TextEncoder().encode(message), 'utf8');
+    if (await withinWalletTimeout(connectedAddress(provider)) !== args.address) return { kind: 'wrong_wallet' };
+    const signed = await withinWalletTimeout(provider.signMessage(new TextEncoder().encode(message), 'utf8'));
     const signature = bytesToBase64(signed instanceof Uint8Array ? signed : signed.signature);
     const claim = await post(`${base}/claim`, { solana_wallet: args.address, signature });
     if (claim.ok) return { kind: 'ok' };
@@ -63,6 +73,6 @@ export async function claimWalletWithSignature(args: { apiUrl: string; address: 
     const { detail } = await claim.json().catch(() => ({}));
     return { kind: typeof detail === 'string' && /expired/i.test(detail) ? 'expired' : 'bad_signature' };
   } catch (e) {
-    return { kind: isUserRejection(e) ? 'cancelled' : 'error' };
+    return { kind: e === WALLET_TIMEOUT || isUserRejection(e) ? 'cancelled' : 'error' };
   }
 }

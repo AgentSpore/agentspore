@@ -55,7 +55,7 @@ export function WalletBind({ token, onBound }: { token: string; onBound: (addres
       aria-describedby={`welcome-wallet-hint${failure ? ' welcome-wallet-notice' : ''}${taken ? ` ${WALLET_TAKEN_ID}` : ''}`}
       className={`min-h-11 w-full min-w-0 rounded-lg border border-neutral-600 bg-neutral-950 px-3 py-2 font-mono text-sm text-white ${WELCOME_FOCUS}`} />
     <p id="welcome-wallet-hint" className="text-xs text-neutral-300">{tr('walletHint')}</p>
-    <button type="submit" disabled={busy} className={`min-h-11 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800 disabled:opacity-50 ${WELCOME_FOCUS}`}>
+    <button type="submit" disabled={busy || claiming} className={`min-h-11 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800 disabled:opacity-50 ${WELCOME_FOCUS}`}>
       {tr(busy ? 'walletSaving' : 'walletSave')}
     </button>
     {taken && <WalletClaimOffer address={taken} onClaimed={onBound} onBusyChange={setClaiming} />}

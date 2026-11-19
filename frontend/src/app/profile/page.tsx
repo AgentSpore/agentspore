@@ -264,7 +264,7 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
                     />
                     <button
                       type="submit"
-                      disabled={solanaLoading || !solanaInput.trim()}
+                      disabled={solanaLoading || claiming || !solanaInput.trim()}
                       className="px-5 py-3 rounded-lg text-sm font-medium bg-white text-black hover:bg-neutral-200 transition-all disabled:opacity-50"
                     >
                       {tr('connect')}</button>

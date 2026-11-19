@@ -127,9 +127,10 @@ it('offers wallet confirmation on 409 and refreshes the card after the claim', a
   expect(screen.getByLabelText(m.en.walletLabel).getAttribute('aria-describedby')).toContain('wallet-taken-notice');
   fireEvent.click(claimButton);
   expect((screen.getByLabelText(m.en.walletLabel) as HTMLInputElement).disabled).toBe(true);
+  expect((screen.getByRole('button', { name: m.en.walletSave }) as HTMLButtonElement).disabled).toBe(true);
   await vi.waitFor(() => expect(read.retry).toHaveBeenCalledOnce());
   expect(new TextDecoder().decode((signMessage.mock.calls[0] as unknown as [Uint8Array])[0])).toBe(MESSAGE);
-  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.queryByText(m.en.walletFailed)).toBeNull();
   delete window.phantom;
 });
 

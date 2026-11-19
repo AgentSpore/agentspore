@@ -39,7 +39,7 @@ export function WalletClaimOffer({ address, onClaimed, onBusyChange }: { address
 
   return (
     <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-950/20 px-4 py-3 space-y-3">
-      <p id={WALLET_TAKEN_ID} role="status" aria-live="polite" className="text-amber-200 text-xs leading-5">{tr('walletTaken')}</p>
+      <p id={WALLET_TAKEN_ID} role="alert" className="text-amber-200 text-xs leading-5">{tr('walletTaken')}</p>
       <button
         type="button"
         onClick={confirm}
