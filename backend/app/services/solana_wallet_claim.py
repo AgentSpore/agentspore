@@ -32,8 +32,11 @@ class RateLimitedError(Exception):
 
 
 class SolanaWalletClaimService:
-    def __init__(self, db: AsyncSession, redis: Redis, rate_limit: int) -> None:
+    """Issues wallet-ownership challenges and applies a verified claim."""
+
+    def __init__(self, db: AsyncSession, redis: Redis, rate_limit: int, site_url: str) -> None:
         self.repo = PayoutRepository(db)
+        self.site_url = site_url
         self.redis = redis
         self.rate_limit = rate_limit
 
@@ -42,10 +45,12 @@ class SolanaWalletClaimService:
         return f"solana_claim:{user_id}:{wallet}"
 
     async def issue_challenge(self, user_id: str, wallet: str) -> tuple[str, datetime]:
+        """Return a one-time message for the wallet to sign, with its expiry; rate limited."""
         rate_key = f"solana_claim_rate:{user_id}"
-        count = await self.redis.incr(rate_key)
-        if count == 1:
-            await self.redis.expire(rate_key, RATE_WINDOW_SECONDS)
+        async with self.redis.pipeline(transaction=True) as pipe:
+            pipe.incr(rate_key)
+            pipe.expire(rate_key, RATE_WINDOW_SECONDS, nx=True)
+            count, _ = await pipe.execute()
         if count > self.rate_limit:
             raise RateLimitedError
         issued = datetime.now(UTC)
@@ -53,8 +58,9 @@ class SolanaWalletClaimService:
             "AgentSpore: confirm this wallet belongs to you\n"
             f"Wallet: {wallet}\n"
             f"Account: {user_id}\n"
+            f"URI: {self.site_url}\n"
             f"Nonce: {secrets.token_urlsafe(16)}\n"
-            f"Issued: {issued.isoformat()}"
+            f"Issued At: {issued.isoformat()}"
         )
         await self.redis.set(
             self._challenge_key(user_id, wallet), message, ex=CHALLENGE_TTL_SECONDS
@@ -77,4 +83,8 @@ class SolanaWalletClaimService:
 def get_solana_wallet_claim_service(
     db: AsyncSession = Depends(get_db), redis: Redis = Depends(get_redis)
 ) -> SolanaWalletClaimService:
-    return SolanaWalletClaimService(db, redis, get_settings().solana_wallet_challenge_rate_limit)
+    """Build the claim service with the per-user limit and public site URL from settings."""
+    settings = get_settings()
+    return SolanaWalletClaimService(
+        db, redis, settings.solana_wallet_challenge_rate_limit, settings.frontend_url
+    )

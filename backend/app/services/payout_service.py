@@ -8,6 +8,7 @@ from fastapi import Depends
 from loguru import logger
 from solders.pubkey import Pubkey
 from solders.signature import Signature
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -40,9 +41,14 @@ class PayoutService:
     # ── Solana Wallet ───────────────────────────────────────────────────
 
     async def connect_solana_wallet(self, user_id: str, solana_wallet: str) -> None:
+        taken = ValueError("Solana wallet already connected to another account")
+        await self.repo.lock_solana_wallet(solana_wallet)
         if await self.repo.check_solana_wallet_uniqueness(solana_wallet, user_id):
-            raise ValueError("Solana wallet already connected to another account")
-        await self.repo.update_solana_wallet(user_id, solana_wallet)
+            raise taken
+        try:
+            await self.repo.update_solana_wallet(user_id, solana_wallet)
+        except IntegrityError as exc:
+            raise taken from exc
 
     async def disconnect_solana_wallet(self, user_id: str) -> None:
         await self.repo.update_solana_wallet(user_id, None)

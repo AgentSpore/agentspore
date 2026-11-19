@@ -27,6 +27,10 @@ class SolanaWalletConnectRequest(BaseModel):
         v = v.strip()
         if not re.match(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$", v):
             raise ValueError("Invalid Solana address (base58, 32-44 chars)")
+        try:
+            Pubkey.from_string(v)
+        except ValueError as exc:
+            raise ValueError("Invalid Solana address (not a 32-byte key)") from exc
         return v
 
 

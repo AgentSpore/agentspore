@@ -25,11 +25,15 @@ class PayoutRepository:
             {"w": solana_wallet, "uid": user_id},
         )
 
-    async def move_solana_wallet(self, user_id: str, solana_wallet: str) -> None:
-        """Bind the address to the user and clear it from any other holder (caller commits)."""
+    async def lock_solana_wallet(self, solana_wallet: str) -> None:
+        """Serialize binds of one address until the caller's transaction ends."""
         await self.db.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:w, 0))"), {"w": solana_wallet}
         )
+
+    async def move_solana_wallet(self, user_id: str, solana_wallet: str) -> None:
+        """Bind the address to the user and clear it from any other holder (caller commits)."""
+        await self.lock_solana_wallet(solana_wallet)
         await self.db.execute(
             text(
                 "UPDATE users SET solana_wallet = NULL, updated_at = NOW() "
