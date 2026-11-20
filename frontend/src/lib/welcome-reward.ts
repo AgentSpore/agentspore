@@ -95,14 +95,18 @@ function stepperOffersWallet(progress: WelcomeProgress): boolean {
   return WALLET_OWNING_STEPS.includes(progress.nextStep) || (progress.nextStep === 'relink_github' && !!progress.githubRelinkPath);
 }
 
-/** The wallet step is parked behind the email change, so the profile has no wallet field yet. */
-function stepperWaitsForEmail(data: WelcomeRewardStatus | undefined): boolean {
-  return !!data?.progress && data.progress.nextStep === 'change_email' && stepperOffersWallet(data.progress);
-}
+const WALLET_PLAIN_NOTE = '3ConnectYourSolanaWalletAbove';
+const WALLET_PARKED_NOTES: ReadonlyMap<string, 'earnStepEmailFirst' | 'earnStepConfirmEmailFirst' | 'earnStepRelinkFirst'> = new Map([
+  ['change_email', 'earnStepEmailFirst'],
+  ['confirm_email', 'earnStepConfirmEmailFirst'],
+  ['relink_github', 'earnStepRelinkFirst'],
+]);
 
-/** Same, while the address still has to be confirmed. */
-function stepperWaitsForConfirmation(data: WelcomeRewardStatus | undefined): boolean {
-  return !!data?.progress && data.progress.nextStep === 'confirm_email' && stepperOffersWallet(data.progress);
+/** The earn-list wallet line: while the stepper owns the wallet behind an earlier step, name that step instead. */
+function walletStepNote(data: WelcomeRewardStatus | undefined) {
+  const progress = data?.progress;
+  if (!progress || !stepperOffersWallet(progress)) return WALLET_PLAIN_NOTE;
+  return WALLET_PARKED_NOTES.get(progress.nextStep) ?? WALLET_PLAIN_NOTE;
 }
 
 /** Which wallet notes to show, and whether the stepper owns the wallet field. */
@@ -112,8 +116,7 @@ export function welcomeWalletFlags(state: { kind: string; data?: WelcomeRewardSt
   return {
     ownsWallet: !!data?.progress && stepperOffersWallet(data.progress),
     walletNote: active ? 'walletNoteWelcomeActive' : 'connectYourSolanaWalletToReceiveMonthlyASPORE',
-    walletStepNote: stepperWaitsForEmail(data) ? 'earnStepEmailFirst'
-      : stepperWaitsForConfirmation(data) ? 'earnStepConfirmEmailFirst' : '3ConnectYourSolanaWalletAbove',
+    walletStepNote: walletStepNote(data),
     earnNote: active ? 'earnNoteWelcomeActive' : '5MonthlyPayoutsDistributeASPOREProportionalToYour',
   } as const;
 }

@@ -55,3 +55,16 @@ it('points the earn list at the email change while the wallet waits for it', () 
   expect(note('confirm_email')).toBe('earnStepConfirmEmailFirst');
   expect(note('bind_wallet')).toBe('3ConnectYourSolanaWalletAbove');
 });
+
+const relinkAction = { actions: [{ id: 'github_relink', path: '/api/v1/relink' }] };
+const noteOf = (state: Parameters<typeof welcomeWalletFlags>[0]) => welcomeWalletFlags(state).walletStepNote;
+const walletDone = { steps: stepIds.map(id => ({ id, done: id === 'wallet' })) };
+it('points the earn list at the GitHub relink while the wallet waits for it', () => {
+  expect(noteOf({ kind: 'success', data: withSteps(live, 'relink_github', relinkAction) })).toBe('earnStepRelinkFirst');
+});
+it.each(['change_email', 'confirm_email'])('keeps the plain wallet line at %s once the wallet step is done', nextStep => {
+  expect(noteOf({ kind: 'success', data: withSteps(live, nextStep, walletDone) })).toBe('3ConnectYourSolanaWalletAbove');
+});
+it('keeps the plain wallet line when the status is not loaded', () => {
+  expect(noteOf({ kind: 'loading' })).toBe('3ConnectYourSolanaWalletAbove');
+});
