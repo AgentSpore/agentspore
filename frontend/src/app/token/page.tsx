@@ -17,7 +17,7 @@ export default async function TokenPage() {
         <section aria-labelledby="token-what" className={CARD}>
           <h2 id="token-what" className="text-base font-semibold text-white">{copy.whatTitle}</h2>
           <p className="mt-2">{copy.whatBody}</p>
-          <ul className="mt-2 list-disc space-y-1 pl-5"><li>{copy.whatToday}</li><li>{copy.whatPlanned}</li></ul>
+          <p className="mt-2">{copy.whatToken}</p>
           <p className="mt-3 text-xs text-neutral-400">{copy.mintLabel}</p>
           <code className="block break-all font-mono text-xs text-neutral-200">{ASPORE_MINT}</code>
         </section>

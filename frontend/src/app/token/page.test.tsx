@@ -29,3 +29,8 @@ it.each([["en", "10,000", "48 hours"], ["ru", "10 000", "48 часов"]] as con
 it.each(["en", "ru"] as const)("uses no em dash in %s copy", (language) => {
   expect(Object.values(tokenMessages[language]).filter((text) => text.includes("—"))).toEqual([]);
 });
+
+it.each(["en", "ru"] as const)("does not claim planned features or current uses in %s", (language) => {
+  const all = Object.values(tokenMessages[language]).join(" ");
+  expect(all).not.toMatch(/rental|arena|voting|deposits|аренд|арен|голосован|пополнен/i);
+});
