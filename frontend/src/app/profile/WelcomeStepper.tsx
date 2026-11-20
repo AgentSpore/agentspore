@@ -13,6 +13,14 @@ import { WELCOME_FOCUS } from '@/components/welcome/focus';
 const BUTTON_LINK = `inline-flex min-h-11 items-center rounded-lg border border-neutral-600 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800 ${WELCOME_FOCUS}`;
 interface Props { progress: WelcomeProgress; token: string; hasPassword?: boolean; onApplied: (value: WelcomeRewardStatus) => void; onChanged: (kind: 'confirmed' | 'walletSaved', address?: string) => void }
 
+type StepKey = 'stepSubmitted' | 'stepWaitsWallet' | 'stepDone' | 'stepCurrent' | 'stepLater';
+/** The application exists from sign-up, but it counts as submitted only once the wallet it needs is saved. */
+function stepLabel(step: WelcomeProgress['steps'][number], progress: WelcomeProgress, current: string | undefined): StepKey {
+  if (!step.done) return step.id === current ? 'stepCurrent' : 'stepLater';
+  if (step.id !== 'application') return 'stepDone';
+  return progress.steps.some(other => other.id === 'wallet' && !other.done) ? 'stepWaitsWallet' : 'stepSubmitted';
+}
+
 function Steps({ progress }: { progress: WelcomeProgress }) {
   const tr = useTranslations(welcomeRewardMessages);
   // With no next step the card text above states the outcome; marking a step current would promise an action that does not exist.
@@ -22,7 +30,7 @@ function Steps({ progress }: { progress: WelcomeProgress }) {
       className={`min-w-0 rounded-lg border px-3 py-2 text-sm ${step.id === current ? 'border-violet-400 text-white' : 'border-neutral-700 text-neutral-200'}`}>
       <span className="block break-words">{tr(`step_${step.id}`)}</span>
       {(step.done || progress.nextStep !== 'none') &&
-        <span className="block text-xs text-neutral-300">{tr(step.done ? (step.id === 'application' ? 'stepSubmitted' : 'stepDone') : step.id === current ? 'stepCurrent' : 'stepLater')}</span>}
+        <span className="block text-xs text-neutral-300">{tr(stepLabel(step, progress, current))}</span>}
     </li>)}
   </ol>;
 }

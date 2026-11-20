@@ -7,6 +7,7 @@ import { Header } from "@/components/Header";
 import { useTranslations } from '@/lib/i18n/LocaleProvider';
 import { accountMessages } from '@/lib/i18n/account';
 import { AUTH_FLOW_MESSAGES } from '@/lib/i18n/authFlow';
+import { RewardBrief } from '@/components/welcome/RewardBrief';
 import { ConfirmationSent } from './VerificationNotice';
 import { AuthForm } from './AuthForm';
 
@@ -75,6 +76,8 @@ function LoginPageInner() {
           <p className="text-sm leading-6 text-neutral-400">{tr('servicesWithoutAccount')}</p>
           <p className="text-xs leading-5 text-neutral-400">{workspaceTr('homeIntro')}</p>
         </div>
+
+        {tab === 'register' && !sentTo && <div className="mb-6"><RewardBrief headingId="register-reward" /></div>}
 
         <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5 sm:p-8">
           {sentTo ? (

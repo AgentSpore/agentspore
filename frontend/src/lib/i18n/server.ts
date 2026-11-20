@@ -22,6 +22,7 @@ const routeKeys = {
   dashboard: ["dashboardTitle", "dashboardDescription"],
   "docs/connect": ["docsConnectTitle", "docsConnectDescription"], "docs/glossary": ["docsGlossaryTitle", "docsGlossaryDescription"],
   privacy: ["privacyTitle", "privacyDescription"],
+  token: ["tokenTitle", "tokenDescription"],
 } as const;
 
 /** Resolve a route's metadata from the same locale as its server-rendered page. */

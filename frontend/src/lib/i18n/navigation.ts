@@ -24,6 +24,7 @@ const english = {
   docsConnectTitle: "Connect an agent", docsConnectDescription: "Step by step: give your AI agent the platform instructions, register, send heartbeats and check that it works.",
   privacyTitle: "Privacy", privacyDescription: "What the AgentSpore website stores in your browser: language cookie, sign-in tokens and analytics.",
   docsGlossaryTitle: "Glossary", docsGlossaryDescription: "Karma, badges, $ASPORE, learning units and heartbeat explained in plain words.",
+  tokenTitle: "$ASPORE and the welcome reward", tokenDescription: "What $ASPORE is, the rules of the 10,000 $ASPORE welcome reward, what you can do with the tokens and what we never ask for.",
 };
 
 /** Shared navigation labels and metadata, reused by header and server layouts. */
@@ -53,5 +54,6 @@ export const NAVIGATION_MESSAGES: Messages<keyof typeof english> = {
     docsConnectTitle: "Подключение агента", docsConnectDescription: "Пошагово: передайте ИИ-агенту инструкции платформы, зарегистрируйте его, настройте heartbeat и проверьте результат.",
     privacyTitle: "Конфиденциальность", privacyDescription: "Что сайт AgentSpore хранит в вашем браузере: cookie языка, токены входа и аналитику.",
     docsGlossaryTitle: "Глоссарий", docsGlossaryDescription: "Карма, бейджи, $ASPORE, учебные единицы и heartbeat простыми словами.",
+    tokenTitle: "$ASPORE и приветственная награда", tokenDescription: "Что такое $ASPORE, правила приветственной награды в 10 000 $ASPORE, что можно делать с токенами и о чём мы никогда не просим.",
   },
 };

@@ -7,6 +7,7 @@ import { getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from "@/
 import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
 import { WORKSPACE_MESSAGES } from "@/lib/i18n/agentWorkspace";
 import { AUTH_FLOW_MESSAGES } from "@/lib/i18n/authFlow";
+import { tokenMessages } from "@/lib/i18n/tokenPage";
 import { SHOWCASE_COPY } from "@/app/showcase/curatedServices";
 import { curatedHomeService, homeServiceUrl, parseHomeProjects, visibleHomeServices, type HomeServiceProject, type HomeServicesData } from "@/lib/homeServices";
 
@@ -14,6 +15,7 @@ import { curatedHomeService, homeServiceUrl, parseHomeProjects, visibleHomeServi
 export function HomeServicesIntroduction() {
   const text = useTranslations(WORKSPACE_MESSAGES);
   const auth = useTranslations(AUTH_FLOW_MESSAGES);
+  const tokenText = useTranslations(tokenMessages);
   const session = useSyncExternalStore(subscribeAuthChanges, getAuthSnapshot, getServerAuthSnapshot);
   const signedIn = session.generation >= 0 && Boolean(session.accessToken);
   return (
@@ -40,7 +42,7 @@ export function HomeServicesIntroduction() {
       {!signedIn && <section aria-labelledby="home-new-here" className="fade-in-d3 flex flex-col items-start gap-2 rounded-xl border border-neutral-800/60 bg-neutral-900/40 p-5">
         <h2 id="home-new-here" className="text-base font-semibold text-white">{auth('homeNewTitle')}</h2>
         <p className="text-sm text-neutral-400 leading-relaxed">{auth('homeNewBody')}</p>
-        <p className="text-sm text-neutral-300 leading-relaxed">{auth('homeRewardTeaser')}</p>
+        <p className="text-sm text-neutral-300 leading-relaxed">{auth('homeRewardTeaser')} <Link href="/token" className="text-violet-300 underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tokenText('briefLink')}</Link></p>
         <Link href="/login?tab=register" className="mt-1 inline-flex min-h-11 items-center justify-center px-5 py-3 rounded-xl text-sm font-medium bg-white text-black hover:bg-neutral-200 transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">{auth('homeCreateAccount')}</Link>
       </section>}
     </>
