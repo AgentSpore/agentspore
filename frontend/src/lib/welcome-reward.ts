@@ -84,7 +84,8 @@ export function showsRewardReason(data: WelcomeRewardStatus): boolean {
 export function showsRewardPromise(data: WelcomeRewardStatus): boolean {
   if (['program_disabled', 'not_eligible', 'reserved'].includes(data.reason)) return false;
   if (data.state === 'disabled' || data.state === 'denied' || data.state === 'available') return false;
-  return !data.progress?.payout && data.progress?.nextStep !== 'wait_payout';
+  const progress = data.progress;
+  return !progress?.payout && progress?.nextStep !== 'wait_payout' && !progress?.steps.some(step => step.id === 'review' && step.done);
 }
 
 const WALLET_OWNING_STEPS: readonly string[] = ['bind_wallet', 'confirm_email', 'change_email'];

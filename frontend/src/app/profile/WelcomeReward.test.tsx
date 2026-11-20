@@ -144,3 +144,14 @@ it.each([
   mount(data);
   expect(screen.getByRole('heading', { level: 3, name: tokenMessages.en.briefTitle })).toBeTruthy();
 });
+
+const STEPS = ['email', 'wallet', 'application', 'review', 'payout'];
+const decided = (nextStep: string) => decodeWelcomeReward({
+  state: 'frozen', reason: 'email_required', amount_raw: 10000000000, decimals: 6, asset: 'ASPORE', next_action: 'verify_email',
+  steps: STEPS.map(id => ({ id, done: id !== 'payout' && !(nextStep === 'bind_wallet' && id === 'wallet') })),
+  hold_reasons: [], payout: null, wait_until: null, next_step: nextStep, actions: [],
+});
+it.each(['wait_payout', 'bind_wallet'])('hides the reward promise for an approved user whose next step is %s', nextStep => {
+  mount(decided(nextStep));
+  expect(screen.queryByText(tokenMessages.en.briefTitle)).toBeNull();
+});
