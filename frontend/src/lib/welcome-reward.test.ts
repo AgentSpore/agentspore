@@ -48,3 +48,9 @@ it('owns the wallet field for relink_github only when the relink link is offered
   expect(owns(withSteps(live, 'relink_github'))).toBe(false);
   expect(owns(withSteps(live, 'relink_github', { actions: [{ id: 'github_relink', path: '/api/v1/relink' }] }))).toBe(true);
 });
+
+it('points the earn list at the email change while the wallet waits for it', () => {
+  const note = (nextStep: string) => welcomeWalletFlags({ kind: 'success', data: withSteps(live, nextStep) }).walletStepNote;
+  expect(note('change_email')).toBe('earnStepEmailFirst');
+  expect(note('bind_wallet')).toBe('3ConnectYourSolanaWalletAbove');
+});

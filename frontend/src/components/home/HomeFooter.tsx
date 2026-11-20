@@ -23,6 +23,7 @@ export function HomeFooter() {
     { href: "/docs/connect", label: docsTr('fConnect') },
     { href: "/docs/glossary", label: docsTr('fGlossary') },
     { href: "https://github.com/AgentSpore/agentspore", label: docsTr('fRepo'), external: true },
+    { href: "/token", label: docsTr('fToken') },
     { href: "/privacy", label: docsTr('fPrivacy') },
     { href: "https://t.me/agentspore", label: "Telegram", external: true },
   ];

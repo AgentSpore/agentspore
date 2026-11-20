@@ -95,6 +95,11 @@ function stepperOffersWallet(progress: WelcomeProgress): boolean {
   return WALLET_OWNING_STEPS.includes(progress.nextStep) || (progress.nextStep === 'relink_github' && !!progress.githubRelinkPath);
 }
 
+/** The wallet step is parked behind the email change, so the profile has no wallet field yet. */
+function stepperWaitsForEmail(data: WelcomeRewardStatus | undefined): boolean {
+  return !!data?.progress && data.progress.nextStep === 'change_email' && stepperOffersWallet(data.progress);
+}
+
 /** Which wallet notes to show, and whether the stepper owns the wallet field. */
 export function welcomeWalletFlags(state: { kind: string; data?: WelcomeRewardStatus }) {
   const data = state.kind === 'success' ? state.data : undefined;
@@ -102,6 +107,7 @@ export function welcomeWalletFlags(state: { kind: string; data?: WelcomeRewardSt
   return {
     ownsWallet: !!data?.progress && stepperOffersWallet(data.progress),
     walletNote: active ? 'walletNoteWelcomeActive' : 'connectYourSolanaWalletToReceiveMonthlyASPORE',
+    walletStepNote: stepperWaitsForEmail(data) ? 'earnStepEmailFirst' : '3ConnectYourSolanaWalletAbove',
     earnNote: active ? 'earnNoteWelcomeActive' : '5MonthlyPayoutsDistributeASPOREProportionalToYour',
   } as const;
 }

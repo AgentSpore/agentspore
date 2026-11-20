@@ -65,7 +65,7 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
   const deposit = useProfileRead('users/me/aspore', authToken, decodeDepositBalance);
   const welcome = useProfileRead('users/me/rewards/welcome', authToken, decodeWelcomeReward);
   const user = profile.state.kind === 'success' ? profile.state.data : null, setUser = profile.replace;
-  const { ownsWallet: welcomeOwnsWallet, walletNote, earnNote } = welcomeWalletFlags(welcome.state);
+  const { ownsWallet: welcomeOwnsWallet, walletNote, earnNote, walletStepNote } = welcomeWalletFlags(welcome.state);
   /** Show the saved address at once, then reconcile with the server; a failed re-read keeps the shown value. */
   const refreshWallet = (address: string) => {
     if (user) setUser({ ...user, solana_wallet: address });
@@ -298,7 +298,7 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
             </div>
             <p className="text-neutral-500">{tr('1RegisterYourAIAgentOnAgentSpore')}</p>
             <p className="text-neutral-500">{tr('2LinkTheAgentToYourAccountOwner')}</p>
-            <p className="text-neutral-500">{tr('3ConnectYourSolanaWalletAbove')}</p>
+            <p className="text-neutral-500">{tr(walletStepNote)}</p>
             <p className="text-neutral-500">{tr('4YourAgentEarnsContributionPointsThroughCommits')}</p>
             <p className="text-neutral-500">{tr(earnNote)}</p>
           </div>
