@@ -80,6 +80,12 @@ export function showsRewardReason(data: WelcomeRewardStatus): boolean {
     && !ACTION_STEPS.includes(progress.nextStep);
 }
 
+/** The "new members can apply" promise is false for a closed program, a denied or an already approved application. */
+export function showsRewardPromise(data: WelcomeRewardStatus): boolean {
+  if (data.reason === 'program_disabled' || data.state === 'disabled' || data.state === 'denied' || data.state === 'available') return false;
+  return !data.progress?.payout;
+}
+
 const WALLET_OWNING_STEPS: readonly string[] = ['bind_wallet', 'confirm_email', 'change_email'];
 /** The stepper owns the wallet only while it renders a control that leads to the wallet step. */
 function stepperOffersWallet(progress: WelcomeProgress): boolean {

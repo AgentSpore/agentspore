@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
+import { tokenMessages } from '@/lib/i18n/tokenPage';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
 import { welcomeRewardMessages } from '@/lib/i18n/welcomeReward';
 import { decodeWelcomeReward, type WelcomeRewardStatus } from '@/lib/welcome-reward';
@@ -122,4 +123,22 @@ it.each([
   mount(decodeWelcomeReward(rawDecided(nextStep, [...holds])), locale);
   expect(screen.getByText(label)).toBeTruthy();
   expect(screen.queryByText(/Under review|На рассмотрении/)).toBeNull();
+});
+
+it.each([
+  ['disabled', { state: 'disabled', reason: 'program_disabled', amount_raw: null }],
+  ['frozen with program_disabled', { state: 'frozen', reason: 'program_disabled', amount_raw: 10000000000 }],
+  ['denied', { state: 'denied', reason: 'denied', amount_raw: null }],
+] as const)('hides the reward promise when the program is %s', (_name, data) => {
+  mount(data);
+  expect(screen.queryByText(tokenMessages.en.briefTitle)).toBeNull();
+});
+
+it.each([
+  ['not_applied', { state: 'not_applied', reason: 'not_applied', amount_raw: null }],
+  ['application', { state: 'application', reason: 'risk_review', amount_raw: null }],
+  ['frozen', funded],
+] as const)('shows the reward promise as an h3 inside the active %s card', (_name, data) => {
+  mount(data);
+  expect(screen.getByRole('heading', { level: 3, name: tokenMessages.en.briefTitle })).toBeTruthy();
 });

@@ -6,6 +6,7 @@ import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
 import { publicMessages, publicLabels, displayPublicLabel } from '@/lib/i18n/public';
 import { accountMessages, displayAccountLabel } from '@/lib/i18n/account';
 import { AUTH_FLOW_MESSAGES } from '@/lib/i18n/authFlow';
+import { tokenMessages } from '@/lib/i18n/tokenPage';
 import { WORKSPACE_MESSAGES } from '@/lib/i18n/agentWorkspace';
 
 const navigation = vi.hoisted(() => ({ query: '' }));
@@ -398,4 +399,16 @@ it('keeps resend disabled for a minute after a request, with a visible hint', as
   } finally {
     vi.useRealTimers();
   }
+});
+
+it.each(['en', 'ru'] as const)('shows the reward promise only on the register tab in %s', locale => {
+  vi.stubGlobal('fetch', providersFetch({ github: false, google: false }));
+  navigation.query = 'tab=register';
+  render(<LocaleProvider initialLocale={locale}><LoginPage /></LocaleProvider>);
+  expect(screen.getByRole('heading', { name: tokenMessages[locale].briefTitle })).toBeTruthy();
+  expect(screen.getByRole('link', { name: tokenMessages[locale].briefLink }).getAttribute('href')).toBe('/token');
+  cleanup();
+  navigation.query = '';
+  render(<LocaleProvider initialLocale={locale}><LoginPage /></LocaleProvider>);
+  expect(screen.queryByText(tokenMessages[locale].briefTitle)).toBeNull();
 });
