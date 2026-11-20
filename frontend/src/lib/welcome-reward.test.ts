@@ -52,5 +52,6 @@ it('owns the wallet field for relink_github only when the relink link is offered
 it('points the earn list at the email change while the wallet waits for it', () => {
   const note = (nextStep: string) => welcomeWalletFlags({ kind: 'success', data: withSteps(live, nextStep) }).walletStepNote;
   expect(note('change_email')).toBe('earnStepEmailFirst');
+  expect(note('confirm_email')).toBe('earnStepConfirmEmailFirst');
   expect(note('bind_wallet')).toBe('3ConnectYourSolanaWalletAbove');
 });

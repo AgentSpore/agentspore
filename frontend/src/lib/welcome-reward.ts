@@ -100,6 +100,11 @@ function stepperWaitsForEmail(data: WelcomeRewardStatus | undefined): boolean {
   return !!data?.progress && data.progress.nextStep === 'change_email' && stepperOffersWallet(data.progress);
 }
 
+/** Same, while the address still has to be confirmed. */
+function stepperWaitsForConfirmation(data: WelcomeRewardStatus | undefined): boolean {
+  return !!data?.progress && data.progress.nextStep === 'confirm_email' && stepperOffersWallet(data.progress);
+}
+
 /** Which wallet notes to show, and whether the stepper owns the wallet field. */
 export function welcomeWalletFlags(state: { kind: string; data?: WelcomeRewardStatus }) {
   const data = state.kind === 'success' ? state.data : undefined;
@@ -107,7 +112,8 @@ export function welcomeWalletFlags(state: { kind: string; data?: WelcomeRewardSt
   return {
     ownsWallet: !!data?.progress && stepperOffersWallet(data.progress),
     walletNote: active ? 'walletNoteWelcomeActive' : 'connectYourSolanaWalletToReceiveMonthlyASPORE',
-    walletStepNote: stepperWaitsForEmail(data) ? 'earnStepEmailFirst' : '3ConnectYourSolanaWalletAbove',
+    walletStepNote: stepperWaitsForEmail(data) ? 'earnStepEmailFirst'
+      : stepperWaitsForConfirmation(data) ? 'earnStepConfirmEmailFirst' : '3ConnectYourSolanaWalletAbove',
     earnNote: active ? 'earnNoteWelcomeActive' : '5MonthlyPayoutsDistributeASPOREProportionalToYour',
   } as const;
 }
