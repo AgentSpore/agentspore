@@ -12,6 +12,7 @@ from test_welcome_rewards import ledger as _ledger
 
 from app.repositories.welcome_reward_repo import WelcomeRewardRepository
 from app.schemas.welcome_reward_decisions import WelcomeRewardDecision
+from app.services import disposable_email
 from app.services.welcome_beneficiary_service import WelcomeBeneficiaryService
 from app.services.welcome_reward_decision_service import WelcomeRewardDecisionService
 from app.services.welcome_reward_service import WelcomeRewardService
@@ -25,7 +26,17 @@ OTHER_KEY = WelcomeBeneficiaryService.email_key("other@example.com")
 
 
 @pytest.fixture
-async def review(ledger):
+def no_dns(monkeypatch):
+    """Review looks up MX records; tests never reach a real resolver."""
+
+    async def no_mx(domain):
+        return []
+
+    monkeypatch.setattr(disposable_email, "resolve_mx", no_mx)
+
+
+@pytest.fixture
+async def review(ledger, no_dns):
     async with ledger.maker.begin() as db:
         await db.execute(
             text("UPDATE reward_programs SET enabled=true,admission_start='2020-01-01'")

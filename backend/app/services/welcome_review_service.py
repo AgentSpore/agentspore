@@ -9,6 +9,7 @@ from app.repositories.welcome_auto_decision_repo import WelcomeAutoDecisionRepos
 from app.repositories.welcome_review_repo import WelcomeReviewRepository
 from app.repositories.welcome_reward_repo import WelcomeRewardRepository
 from app.schemas.welcome_rewards import WelcomeReviewRow
+from app.services.disposable_email import mx_holds
 from app.services.welcome_beneficiary_service import WelcomeBeneficiaryService
 from app.services.welcome_progress import hold_reasons
 from app.services.welcome_reward_decision_service import WelcomeRewardDecisionService
@@ -57,11 +58,15 @@ class WelcomeReviewService:
         paid = await self.repo.welcome_intent_wallets(wallets)
         seen = Counter(keys[g["owner_user_id"]] for g in grants)
         now = now or datetime.now(UTC)
+        mx = await mx_holds({user.email.rpartition("@")[2].lower() for user in users.values()})
         found = []
         for grant in grants:
             user = users[grant["owner_user_id"]]
             key = keys[user.id]
             holds = hold_reasons(user, now, user.solana_wallet in paid)
+            mx_reason = mx[user.email.rpartition("@")[2].lower()]
+            if mx_reason and mx_reason not in holds:
+                holds.append(mx_reason)
             if not WelcomeBeneficiaryService.old_enough(
                 user, grant["created_at"], now, self.min_account_age_days
             ):

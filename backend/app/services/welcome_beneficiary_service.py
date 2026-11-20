@@ -6,11 +6,10 @@ from contextlib import suppress
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from disposable_email_domains import blocklist
-
 from app.models.user import User
 from app.repositories.welcome_reward_repo import WelcomeRewardRepository
 from app.schemas.welcome_reward_decisions import BeneficiaryAssessment
+from app.services.disposable_email import is_listed_domain
 from app.services.email_proof_service import EmailProofService
 
 
@@ -96,13 +95,5 @@ class WelcomeBeneficiaryService:
 
     @staticmethod
     def is_disposable_domain(domain: str) -> bool:
-        """Match the domain, its IDNA form and every parent suffix against the blocklist."""
-        domain = domain.strip().strip(".").lower()
-        forms = {domain}
-        with suppress(UnicodeError):
-            forms.add(domain.encode("idna").decode("ascii"))
-        for form in forms:
-            labels = form.split(".")
-            if any(".".join(labels[i:]) in blocklist for i in range(len(labels) - 1)):
-                return True
-        return False
+        """Static lists only; rotating providers are caught by the MX check at review."""
+        return is_listed_domain(domain)

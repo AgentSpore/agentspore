@@ -39,7 +39,7 @@ from app.schemas.auth import (
     UserResponse,
 )
 from app.services.email_proof_service import EmailProofService
-from app.services.email_service import EmailService, get_email_service
+from app.services.email_service import EmailService, email_locale, get_email_service
 from app.services.welcome_reward_service import get_welcome_reward_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -132,7 +132,13 @@ async def register(
         redis, nonce, str(user.id), cfg.email_verification_ttl_seconds
     )
     # Send verification email without exposing its bearer link in logs.
-    sent = await email_svc.send_verification_email(data.email, raw_token, site_base_url(request))
+    base_url = site_base_url(request)
+    sent = await email_svc.send_verification_email(
+        data.email,
+        raw_token,
+        base_url,
+        email_locale(base_url, request.headers.get("accept-language")),
+    )
     if not sent:
         logger.warning("Verification email was not sent")
 
@@ -309,8 +315,12 @@ async def resend_verification(
             redis, nonce, str(user.id), cfg.email_verification_ttl_seconds
         )
 
+    base_url = site_base_url(request)
     await email_svc.send_verification_email(
-        data.email, raw_token, site_base_url(request)
+        data.email,
+        raw_token,
+        base_url,
+        email_locale(base_url, request.headers.get("accept-language")),
     )
     return generic
 

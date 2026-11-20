@@ -6,6 +6,7 @@ from typing import Literal
 from app.models.user import User
 from app.repositories.welcome_auto_decision_repo import WelcomeAutoDecisionRepository
 from app.repositories.welcome_reward_repo import WelcomeRewardRepository
+from app.services.disposable_email import mx_hold
 from app.services.welcome_beneficiary_service import WelcomeBeneficiaryService
 from app.services.welcome_reward_decision_service import WelcomeRewardDecisionService
 
@@ -56,6 +57,8 @@ class WelcomeAutoDecisionService:
         assessment = WelcomeBeneficiaryService.evaluate(user, now)
         key = assessment.beneficiary_key
         if assessment.holds or not self._old_enough(user, grant, now):
+            return False
+        if await mx_hold(user.email.rpartition("@")[2].lower()):
             return False
         if await self.auto_repo.beneficiary_approved_elsewhere(key, grant["id"]):
             return False
