@@ -1,18 +1,23 @@
 """Rotating disposable providers: MX verdict, review holds, approve-clean and RU emails."""
 
+import asyncio
 import json
 from io import StringIO
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import dns.exception
 import pytest
 from solders.keypair import Keypair
 from sqlalchemy import text
+from starlette.requests import Request
 from test_marketplace_tasks import marketplace_pg as marketplace_pg
 from test_welcome_reward_decisions import review as _review
 from test_welcome_rewards import ledger as _ledger
 
+from app.api.v1.auth import _send_verification
 from app.cli import welcome_reward_decisions as cli
+from app.core import domains
 from app.services import disposable_email
 from app.services.email_service import EmailService, email_locale
 
@@ -158,3 +163,45 @@ async def test_decision_email_is_bilingual_one_message(approved):
     assert html.index("Your welcome reward") < html.index("Ваша заявка")
     assert ("sent to your wallet automatically" in html) == approved
     assert ("Токены поступят на ваш кошелёк автоматически" in html) == approved
+
+
+async def test_lookups_never_exceed_the_concurrency_cap(monkeypatch):
+    running = peak = 0
+
+    async def slow(domain):
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        await asyncio.sleep(0.01)
+        running -= 1
+        return []
+
+    monkeypatch.setattr(disposable_email, "resolve_mx", slow)
+    domains = {f"d{n}.example" for n in range(60)}
+    assert set((await disposable_email.mx_holds(domains)).values()) == {None}
+    assert peak == disposable_email.MAX_CONCURRENT_LOOKUPS
+
+
+def request_with(host, accept_language=None):
+    headers = [(b"host", host.encode())]
+    if accept_language:
+        headers.append((b"accept-language", accept_language.encode()))
+    return Request({"type": "http", "headers": headers})
+
+
+@pytest.mark.parametrize(
+    ("host", "accept", "subject"),
+    [
+        ("agentspore.ru", None, "Подтвердите учётную запись AgentSpore"),
+        ("agentspore.com", "ru-RU,ru;q=0.9", "Подтвердите учётную запись AgentSpore"),
+        ("agentspore.com", "en-US,en;q=0.9", "Verify your AgentSpore account"),
+        ("agentspore.com", None, "Verify your AgentSpore account"),
+    ],
+)
+async def test_verification_email_language_follows_the_request(monkeypatch, host, accept, subject):
+    mirrors = SimpleNamespace(domains=["agentspore.com", "agentspore.ru"])
+    monkeypatch.setattr(domains, "get_settings", lambda: mirrors)
+    service = EmailService()
+    service.send_email = AsyncMock(return_value=True)
+    assert await _send_verification(service, "a@b.example", "tok", request_with(host, accept))
+    assert service.send_email.await_args.args[1] == subject

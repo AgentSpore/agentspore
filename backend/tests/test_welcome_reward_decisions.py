@@ -25,18 +25,14 @@ OWNER_KEY = WelcomeBeneficiaryService.email_key("synthetic@example.com")
 OTHER_KEY = WelcomeBeneficiaryService.email_key("other@example.com")
 
 
-@pytest.fixture
-def no_dns(monkeypatch):
+async def no_mx(domain):
     """Review looks up MX records; tests never reach a real resolver."""
-
-    async def no_mx(domain):
-        return []
-
-    monkeypatch.setattr(disposable_email, "resolve_mx", no_mx)
+    return []
 
 
 @pytest.fixture
-async def review(ledger, no_dns):
+async def review(ledger, monkeypatch):
+    monkeypatch.setattr(disposable_email, "resolve_mx", no_mx)
     async with ledger.maker.begin() as db:
         await db.execute(
             text("UPDATE reward_programs SET enabled=true,admission_start='2020-01-01'")

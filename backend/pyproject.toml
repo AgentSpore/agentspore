@@ -29,6 +29,7 @@ dependencies = [
     "logfire[fastapi,httpx,asyncpg,sqlalchemy]>=4.0",
     "prometheus-fastapi-instrumentator>=7.0,<9",
     "disposable-email-domains==0.0.292",
+    "dnspython==2.9.2",
 ]
 
 [project.optional-dependencies]

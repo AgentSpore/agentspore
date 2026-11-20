@@ -12,6 +12,7 @@ from loguru import logger
 DISPOSABLE = "disposable_email"
 DNS_UNAVAILABLE = "dns_unavailable"
 DNS_TIMEOUT_SECONDS = 3.0
+MAX_CONCURRENT_LOOKUPS = 20
 
 # Providers that rotate throw-away domains faster than the blocklist is updated.
 EXTRA_DOMAINS = frozenset({"euploading.com", "mailinator.com", "mailinator.net", "mailinator2.com"})
@@ -62,6 +63,12 @@ async def mx_hold(domain: str) -> str | None:
 
 
 async def mx_holds(domains: set[str]) -> dict[str, str | None]:
-    """`mx_hold` for each distinct domain, looked up concurrently."""
+    """`mx_hold` for each distinct domain, at most `MAX_CONCURRENT_LOOKUPS` at a time."""
+    gate = asyncio.Semaphore(MAX_CONCURRENT_LOOKUPS)
+
+    async def limited(domain: str) -> str | None:
+        async with gate:
+            return await mx_hold(domain)
+
     ordered = sorted(domains)
-    return dict(zip(ordered, await asyncio.gather(*map(mx_hold, ordered)), strict=True))
+    return dict(zip(ordered, await asyncio.gather(*map(limited, ordered)), strict=True))
