@@ -9,6 +9,14 @@ from loguru import logger
 from app.core.config import get_settings
 
 
+def email_locale(base_url: str | None, accept_language: str | None) -> str:
+    """`ru` for the .ru site or a browser that prefers Russian, else `en`."""
+    if base_url and base_url.endswith(".ru"):
+        return "ru"
+    preferred = (accept_language or "").split(",")[0].strip().lower()
+    return "ru" if preferred.split("-")[0].split(";")[0] == "ru" else "en"
+
+
 class EmailService:
     """Send transactional emails via Resend (https://resend.com/docs/api-reference)."""
 
@@ -87,25 +95,39 @@ class EmailService:
         """Tell an owner that the welcome reward application has been decided."""
         profile_url = f"{self.settings.frontend_url}/profile"
         if approved:
-            subject = "Your welcome reward application was approved"
-            body = (
+            subject = "Your welcome reward application was approved / Заявка на награду одобрена"
+            paragraphs = (
                 "Your welcome reward application was approved. "
-                "The payout appears on your profile when it is sent."
+                "The payout appears on your profile when it is sent. "
+                "The tokens are sent to your wallet automatically.",
+                "Ваша заявка на приветственную награду одобрена. "
+                "Выплата появится в вашем профиле, когда будет отправлена. "
+                "Токены поступят на ваш кошелёк автоматически.",
             )
         else:
-            subject = "Your welcome reward application was not approved"
-            body = "Your welcome reward application was not approved."
+            subject = (
+                "Your welcome reward application was not approved / "
+                "Заявка на награду не одобрена"
+            )
+            paragraphs = (
+                "Your welcome reward application was not approved.",
+                "Ваша заявка на приветственную награду не одобрена.",
+            )
         return await self.send_email(
             to, subject,
-            f"<p>{body}</p>"
-            f'<p><a href="{profile_url}">Open your profile</a></p>',
+            "".join(f"<p>{text}</p>" for text in paragraphs)
+            + f'<p><a href="{profile_url}">Open your profile / Открыть профиль</a></p>',
         )
 
     async def send_verification_email(
-        self, to: str, token: str, base_url: str | None = None
+        self, to: str, token: str, base_url: str | None = None, locale: str = "en"
     ) -> bool:
         """Send account verification email with a single-use token link."""
         verify_url = f"{base_url or self.settings.frontend_url}/verify-email?token={token}"
+        if locale == "ru":
+            return await self.send_email(
+                to, "Подтвердите учётную запись AgentSpore", self._verification_html_ru(verify_url)
+            )
 
         html = f"""
         <div style="font-family: -apple-system, system-ui, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
@@ -126,6 +148,26 @@ class EmailService:
         """
 
         return await self.send_email(to, "Verify your AgentSpore account", html)
+
+    @staticmethod
+    def _verification_html_ru(verify_url: str) -> str:
+        return f"""
+        <div style="font-family: -apple-system, system-ui, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
+            <h2 style="color: #fff; font-size: 20px; margin-bottom: 8px;">Подтвердите адрес почты</h2>
+            <p style="color: #a3a3a3; font-size: 14px; line-height: 1.6;">
+                Нажмите кнопку ниже, чтобы активировать учётную запись AgentSpore.
+                Ссылка действует 24 часа и срабатывает только один раз.
+            </p>
+            <a href="{verify_url}"
+               style="display: inline-block; margin: 24px 0; padding: 12px 32px; background: #fff; color: #000; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600;">
+                Подтвердить почту
+            </a>
+            <p style="color: #525252; font-size: 12px; line-height: 1.5;">
+                Если вы не создавали учётную запись, просто проигнорируйте это письмо.<br>
+                Ссылка: <a href="{verify_url}" style="color: #737373;">{verify_url}</a>
+            </p>
+        </div>
+        """
 
     async def send_password_reset(
         self, to: str, token: str, base_url: str | None = None

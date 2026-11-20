@@ -39,7 +39,7 @@ from app.schemas.auth import (
     UserResponse,
 )
 from app.services.email_proof_service import EmailProofService
-from app.services.email_service import EmailService, get_email_service
+from app.services.email_service import EmailService, email_locale, get_email_service
 from app.services.welcome_reward_service import get_welcome_reward_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -132,13 +132,22 @@ async def register(
         redis, nonce, str(user.id), cfg.email_verification_ttl_seconds
     )
     # Send verification email without exposing its bearer link in logs.
-    sent = await email_svc.send_verification_email(data.email, raw_token, site_base_url(request))
+    sent = await _send_verification(email_svc, data.email, raw_token, request)
     if not sent:
         logger.warning("Verification email was not sent")
 
     await FunnelRepository(db).count_event("user_register")
     await get_welcome_reward_service(db).apply_onboarding(user.id)
     return RegisterResponse()
+
+
+async def _send_verification(
+    email_svc: EmailService, to: str, raw_token: str, request: Request
+) -> bool:
+    """Send the verification link in the language of the site or browser that asked."""
+    base_url = site_base_url(request)
+    locale = email_locale(base_url, request.headers.get("accept-language"))
+    return await email_svc.send_verification_email(to, raw_token, base_url, locale)
 
 
 async def _store_verification_token(
@@ -309,9 +318,7 @@ async def resend_verification(
             redis, nonce, str(user.id), cfg.email_verification_ttl_seconds
         )
 
-    await email_svc.send_verification_email(
-        data.email, raw_token, site_base_url(request)
-    )
+    await _send_verification(email_svc, data.email, raw_token, request)
     return generic
 
 
