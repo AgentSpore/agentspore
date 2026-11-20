@@ -80,6 +80,14 @@ export function showsRewardReason(data: WelcomeRewardStatus): boolean {
     && !ACTION_STEPS.includes(progress.nextStep);
 }
 
+/** The "new members can apply" promise is false for a closed program, an ineligible account, a denied or an already approved application (backend: welcome_reward_service._state / _funded_view). */
+export function showsRewardPromise(data: WelcomeRewardStatus): boolean {
+  if (['program_disabled', 'not_eligible', 'reserved'].includes(data.reason)) return false;
+  if (data.state === 'disabled' || data.state === 'denied' || data.state === 'available') return false;
+  const progress = data.progress;
+  return !progress?.payout && progress?.nextStep !== 'wait_payout' && !progress?.steps.some(step => step.id === 'review' && step.done);
+}
+
 const WALLET_OWNING_STEPS: readonly string[] = ['bind_wallet', 'confirm_email', 'change_email'];
 /** The stepper owns the wallet only while it renders a control that leads to the wallet step. */
 function stepperOffersWallet(progress: WelcomeProgress): boolean {

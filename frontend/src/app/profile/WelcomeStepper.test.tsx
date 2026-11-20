@@ -288,16 +288,31 @@ it('says "Sending payout" for the sending badge', () => {
   expect(m.en.badge_sending).toBe('Sending payout');
 });
 
-it.each(['en', 'ru'] as const)('reads a sent application as a fact while the wallet is the current step in %s', locale => {
+it.each(['en', 'ru'] as const)('says the application waits for the wallet while the wallet is the current step in %s', locale => {
   const steps = STEP_IDS.map(id => ({ id, done: id === 'email' || id === 'application' }));
   mount(wire({ steps, hold_reasons: ['wallet_missing'], next_step: 'bind_wallet' }), locale);
   const items = within(screen.getByRole('list', { name: m[locale].stepsLabel })).getAllByRole('listitem');
   expect(items[0]?.textContent).toContain(m[locale].stepDone);
-  expect(items[2]?.textContent).toContain(m[locale].stepSubmitted);
+  expect(items[2]?.textContent).toContain(m[locale].stepWaitsWallet);
   expect(items[2]?.textContent).not.toContain(m[locale].stepDone);
   expect(items[1]?.textContent).toContain(m[locale].stepCurrent);
   expect(m.en.stepSubmitted).toBe('submitted');
   expect(m.ru.stepSubmitted).toBe('заявка подана');
+});
+
+it.each(['en', 'ru'] as const)('does not call Apply submitted before the wallet is saved (%s)', locale => {
+  const steps = STEP_IDS.map(id => ({ id, done: id === 'email' || id === 'application' }));
+  mount(wire({ steps, next_step: 'bind_wallet' }), locale);
+  const application = within(screen.getByRole('list', { name: m[locale].stepsLabel })).getAllByRole('listitem')[2]!;
+  expect(application.textContent).not.toContain(m[locale].stepSubmitted);
+  expect(application.textContent).toContain(m[locale].stepWaitsWallet);
+});
+
+it('keeps "submitted" once the wallet is saved', () => {
+  const steps = STEP_IDS.map(id => ({ id, done: id !== 'review' && id !== 'payout' }));
+  mount(wire({ steps, next_step: 'wait_review' }));
+  const application = within(screen.getByRole('list', { name: m.en.stepsLabel })).getAllByRole('listitem')[2]!;
+  expect(application.textContent).toContain(m.en.stepSubmitted);
 });
 
 it('reserves the loaded card height while the reward status loads', () => {

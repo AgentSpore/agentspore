@@ -13,6 +13,7 @@ export async function SiteFooter() {
         <Link href="/docs/connect" className={LINK}>{copy.fConnect}</Link>
         <Link href="/docs/glossary" className={LINK}>{copy.fGlossary}</Link>
         <a href="https://github.com/AgentSpore/agentspore" className={LINK}>{copy.fRepo}</a>
+        <Link href="/token" className={LINK}>{copy.fToken}</Link>
         <Link href="/privacy" className={LINK}>{copy.fPrivacy}</Link>
       </nav>
     </footer>

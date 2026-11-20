@@ -4,10 +4,11 @@ import { FetchError } from '@/components/FetchError';
 import { SkeletonText } from '@/components/Skeleton';
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { welcomeRewardMessages } from '@/lib/i18n/welcomeReward';
-import { ACTION_STEPS, formatRewardAmount, rewardBadgeKey, showsRewardReason, type WelcomeRewardStatus } from '@/lib/welcome-reward';
+import { ACTION_STEPS, formatRewardAmount, rewardBadgeKey, showsRewardPromise, showsRewardReason, type WelcomeRewardStatus } from '@/lib/welcome-reward';
 import type { ProfileRead } from './useProfileRead';
 import { WelcomeApplication } from './WelcomeApplication';
 import { WelcomeEmailProof } from './WelcomeEmailProof';
+import { RewardBrief } from '@/components/welcome/RewardBrief';
 import { WelcomeStepper } from './WelcomeStepper';
 
 const NEXT_STEP_BADGES = {
@@ -55,6 +56,7 @@ export function WelcomeReward({ read, token, hasPassword, onWalletSaved }: { rea
     {read.state.kind === 'auth' && <Link href="/login" className="mt-3 inline-flex min-h-11 items-center text-sm text-violet-300 underline">{tr('signIn')}</Link>}
     {data && <div className="mt-4 space-y-3">
       <RewardDetails data={data} />
+      {showsRewardPromise(data) && <RewardBrief headingId="welcome-reward-rules" level={3} />}
       {data.progress && <WelcomeStepper progress={data.progress} token={token} hasPassword={hasPassword}
         onApplied={value => { read.replace(value); done('applied'); }} onChanged={(kind, address) => { done(kind); read.retry(); if (kind === 'walletSaved' && address) onWalletSaved?.(address); }} />}
       {!data.progress && data.reason === 'not_applied' && <WelcomeApplication token={token} onApplied={value => { read.replace(value); done('applied'); }} />}
