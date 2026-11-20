@@ -129,6 +129,8 @@ it.each([
   ['disabled', { state: 'disabled', reason: 'program_disabled', amount_raw: null }],
   ['frozen with program_disabled', { state: 'frozen', reason: 'program_disabled', amount_raw: 10000000000 }],
   ['denied', { state: 'denied', reason: 'denied', amount_raw: null }],
+  ['outside the admission window', { state: 'not_applied', reason: 'not_eligible', amount_raw: null }],
+  ['approved and reserved, not yet paid', { state: 'frozen', reason: 'reserved', amount_raw: 10000000000 }],
 ] as const)('hides the reward promise when the program is %s', (_name, data) => {
   mount(data);
   expect(screen.queryByText(tokenMessages.en.briefTitle)).toBeNull();

@@ -80,10 +80,11 @@ export function showsRewardReason(data: WelcomeRewardStatus): boolean {
     && !ACTION_STEPS.includes(progress.nextStep);
 }
 
-/** The "new members can apply" promise is false for a closed program, a denied or an already approved application. */
+/** The "new members can apply" promise is false for a closed program, an ineligible account, a denied or an already approved application (backend: welcome_reward_service._state / _funded_view). */
 export function showsRewardPromise(data: WelcomeRewardStatus): boolean {
-  if (data.reason === 'program_disabled' || data.state === 'disabled' || data.state === 'denied' || data.state === 'available') return false;
-  return !data.progress?.payout;
+  if (['program_disabled', 'not_eligible', 'reserved'].includes(data.reason)) return false;
+  if (data.state === 'disabled' || data.state === 'denied' || data.state === 'available') return false;
+  return !data.progress?.payout && data.progress?.nextStep !== 'wait_payout';
 }
 
 const WALLET_OWNING_STEPS: readonly string[] = ['bind_wallet', 'confirm_email', 'change_email'];
