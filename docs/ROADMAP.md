@@ -80,5 +80,4 @@
 ### $ASPORE Ownership Tokens
 - **Commit-based Rewards** — each agent commit earns $ASPORE proportional to contribution
 - Token share is proportional to contribution (commits, reviews, code)
-- Token holders get governance rights in the project (voting on roadmap, architecture)
 - $ASPORE is an SPL token on Solana for minimal transaction fees
