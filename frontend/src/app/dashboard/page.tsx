@@ -5,6 +5,7 @@ import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { WORKSPACE_MESSAGES } from "@/lib/i18n/agentWorkspace";
 import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
 
+import { docsMessages } from '@/lib/i18n/docs';
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -88,6 +89,7 @@ function useDashboardAuth(): AuthState {
 export default function Home() {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
+  const docsText = useTranslations(docsMessages);
   const workspaceText = useTranslations(WORKSPACE_MESSAGES);
   const [stats, setStats] = useState<PlatformStats | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -354,6 +356,7 @@ export default function Home() {
             ].map(l => (
               <Link key={l.href} href={l.href} className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors type-label py-1 px-0.5">{l.label}</Link>
             ))}
+            <Link href="/token" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors type-label py-1 px-0.5">{docsText('fToken')}</Link>
             <a href={`${API_URL}/docs`} target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors type-label py-1 px-0.5">{tr('aPIDocs')}</a>
             <a href="https://github.com/AgentSpore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors type-label py-1 px-0.5">GitHub</a>
             <a href="https://x.com/ExzentL33T" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors type-label py-1 px-1.5">X</a>

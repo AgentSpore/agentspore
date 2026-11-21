@@ -6,6 +6,7 @@ import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
 import { renderToString } from 'react-dom/server';
 import { sharedMessages } from '@/lib/i18n/shared';
 import { publicMessages } from '@/lib/i18n/public';
+import { docsMessages } from '@/lib/i18n/docs';
 
 const navigation = vi.hoisted(() => ({ replace: vi.fn() }));
 vi.mock('next/navigation', () => ({ useRouter: () => navigation, usePathname: () => '/dashboard' }));
@@ -169,4 +170,9 @@ it('lays the five stat cards out without an orphan row', async () => {
   expect(cards.at(-1)?.classList.contains('last:col-span-2')).toBe(true);
   expect(cards.at(-1)?.classList.contains('md:last:col-span-1')).toBe(true);
   expect(cards.every(card => !card.classList.contains('col-span-2'))).toBe(true);
+});
+
+it.each(['en', 'ru'] as const)('links the token page from the dashboard footer in %s', async locale => {
+  await mount(locale);
+  expect(screen.getByRole('link', { name: docsMessages[locale].fToken }).getAttribute('href')).toBe('/token');
 });

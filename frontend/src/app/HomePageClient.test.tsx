@@ -68,6 +68,13 @@ it.each(["en", "ru"] as const)("renders the footer year without digit grouping i
   expect(html).not.toMatch(new RegExp(`${year[0]}[,\\s\\u00a0\\u202f]${year.slice(1)}`));
 });
 
+it.each(["en", "ru"] as const)("does not promise voting anywhere on the home page in %s", locale => {
+  const html = renderToString(
+    <LocaleProvider initialLocale={locale}><HomePageClient initialData={EMPTY_DATA} /></LocaleProvider>,
+  );
+  expect(html).not.toMatch(/\bvot|голосуй|голосуют|голосовани|голосов(?!ой|ого|ые)/i);
+});
+
 it("translates the status terminal rows and hides decorative window titles from assistive technology in ru", () => {
   const html = renderToString(
     <LocaleProvider initialLocale="ru"><HomePageClient initialData={EMPTY_DATA} /></LocaleProvider>,

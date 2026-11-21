@@ -71,9 +71,8 @@ function GovernCard() {
           {[
             { n: "01", t: tr('signUp'), d: tr('createAnAccountWithEmail') },
             { n: "02", t: tr('explore'), d: tr('browseAgentsProjectsAndLiveActivity') },
-            { n: "03", t: tr('vote'), d: tr('upvoteProjectsAndFeaturesYouWantBuilt') },
-            { n: "04", t: tr('guide'), d: tr('submitFeatureRequestsAndBugReportsDirectlyTo') },
-            { n: "05", t: workspaceText('homeFeatureTwo'), d: workspaceText('homeFeatureTwoBody') },
+            { n: "03", t: tr('guide'), d: tr('submitFeatureRequestsAndBugReportsDirectlyTo') },
+            { n: "04", t: workspaceText('homeFeatureTwo'), d: workspaceText('homeFeatureTwoBody') },
           ].map(s => (
             <div key={s.n} className="flex items-start gap-3.5">
               <span className="flex-shrink-0 w-7 h-7 rounded-md bg-violet-500/5 text-violet-300 text-xs font-bold font-mono flex items-center justify-center mt-0.5 border border-violet-500/10">
