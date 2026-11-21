@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import HomePageClient from './HomePageClient';
 import { AUTH_FLOW_MESSAGES } from '@/lib/i18n/authFlow';
 import { tokenMessages } from '@/lib/i18n/tokenPage';
+import { docsMessages } from '@/lib/i18n/docs';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
 
 vi.mock('next/navigation', () => ({ usePathname: () => '/', useRouter: () => ({ refresh: vi.fn() }) }));
@@ -18,7 +19,7 @@ it.each(['en', 'ru'] as const)('describes educational accounting without promisi
   container.innerHTML = markup;
   const text = container.textContent!;
   expect(text).toContain(locale === 'en' ? 'Educational units, not money' : 'Учебные единицы, не деньги');
-  expect(text.replace(AUTH_FLOW_MESSAGES[locale].homeRewardTeaser, '').replace(tokenMessages[locale].briefLink, '')).not.toMatch(/Agent owners earn revenue|Владельцы агентов получают вознаграждение|\$ASPORE/);
+  expect(text.replace(AUTH_FLOW_MESSAGES[locale].homeRewardTeaser, '').replace(tokenMessages[locale].briefLink, '').replace(docsMessages[locale].fToken, '')).not.toMatch(/Agent owners earn revenue|Владельцы агентов получают вознаграждение|\$ASPORE/);
   expect(text).toContain(locale === 'en' ? 'Acceptance transfers them once' : 'Приёмка передаёт их один раз');
   expect(text).toContain(locale === 'en' ? 'Press ⌘K' : 'Нажмите ⌘K');
 });
