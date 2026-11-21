@@ -13,7 +13,7 @@ function texts(value: unknown): string[] {
 
 describe("i18n copy", () => {
   it("does not promise token-weighted voting", () => {
-    const promise = /token-weighted|голосовани[ея][^.]*токен|токен[^.]*голосовани|voting is planned/i;
+    const promise = /token-weighted|голосовани[ея][^.]*токен|токен[^.]*голосовани|voting is planned|token[^.]*\bvot|\bvot[^.]*token/i;
     const offenders = Object.values(modules).flatMap(texts).filter(text => promise.test(text));
     expect(offenders).toEqual([]);
   });
