@@ -22,6 +22,16 @@ class FunnelRepository:
             {"day": day, "step": step, "source": source},
         )
 
+    async def increment_page(self, day: date, page: str) -> None:
+        await self.db.execute(
+            text("""
+                INSERT INTO funnel_pages_daily (day, page, visitors)
+                VALUES (:day, :page, 1)
+                ON CONFLICT (day, page) DO UPDATE SET visitors = funnel_pages_daily.visitors + 1
+            """),
+            {"day": day, "page": page},
+        )
+
     async def count_first_push(self, project_id) -> None:
         """Count the project's first push exactly once (first_pushed_at is the flag)."""
         await self._guarded(self._claim_push, project_id)
@@ -57,6 +67,16 @@ class FunnelRepository:
             text("""
                 SELECT day, step, source, count FROM funnel_daily
                 WHERE day >= :since ORDER BY day DESC, step, source
+            """),
+            {"since": since},
+        )
+        return [dict(r) for r in result.mappings()]
+
+    async def pages_since(self, since: date) -> list[dict]:
+        result = await self.db.execute(
+            text("""
+                SELECT day, page, visitors FROM funnel_pages_daily
+                WHERE day >= :since ORDER BY day DESC, page
             """),
             {"since": since},
         )
