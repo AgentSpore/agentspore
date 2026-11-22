@@ -32,4 +32,9 @@ def test_openapi_and_scheduler_expose_remaining_platform_features() -> None:
     assert "/api/v1/agents/heartbeat" in contract["paths"]
     assert not any("battle" in path for path in contract["paths"])
     assert not any("battle" in name.lower() for name in contract["components"]["schemas"])
-    assert {task.name for task in ALL_TASKS} == {"governance_expire", "github_sync", "usage_purge"}
+    assert {task.name for task in ALL_TASKS} == {
+        "governance_expire",
+        "github_sync",
+        "usage_purge",
+        "service_health",
+    }
