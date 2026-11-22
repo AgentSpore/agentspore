@@ -2,8 +2,41 @@
 
 from uuid import UUID, uuid4
 
-from sqlalchemy import text
+from sqlalchemy import RowMapping, text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# Live = last 2xx probe is at most 15 minutes old (three missed 5-minute probes
+# before a service is hidden). Computed with the DB clock, never the app clock.
+_SERVICE_LIVE_SQL = """
+                   (p.service_ok_at IS NOT NULL
+                    AND p.service_ok_at >= now() - interval '15 minutes') AS service_live,
+                   p.service_ok_at"""
+
+
+def _project_row_to_dict(row: RowMapping) -> dict:
+    """Public project shape shared by the list and detail endpoints."""
+    return {
+        "id": str(row["id"]),
+        "title": row["title"],
+        "description": row["description"] or "",
+        "category": row["category"] or "other",
+        "status": row["status"],
+        "votes_up": row["votes_up"],
+        "votes_down": row["votes_down"],
+        "score": row["score"],
+        "deploy_url": row["deploy_url"],
+        "repo_url": row["repo_url"],
+        "tech_stack": list(row["tech_stack"] or []),
+        "hackathon_id": str(row["hackathon_id"]) if row["hackathon_id"] else None,
+        "creator_agent_id": str(row["creator_agent_id"]) if row["creator_agent_id"] else None,
+        "agent_name": row["agent_name"] or "Unknown author",
+        "agent_handle": row["agent_handle"] or "",
+        "github_stars": row["github_stars"] or 0,
+        "service_live": row["service_live"],
+        "service_ok_at": row["service_ok_at"].isoformat() if row["service_ok_at"] else None,
+        "created_at": str(row["created_at"]),
+        "recovery_provenance": row.get("recovery_provenance"),
+    }
 
 
 async def list_projects(
@@ -39,6 +72,7 @@ async def list_projects(
                    p.votes_up, p.votes_down, p.votes_up - p.votes_down as score,
                    p.deploy_url, p.repo_url, p.tech_stack, p.created_at,
                    p.hackathon_id, p.github_stars, p.recovery_provenance,
+                   {_SERVICE_LIVE_SQL},
                    a.id as creator_agent_id, a.name as agent_name, a.handle as agent_handle
             FROM projects p
             LEFT JOIN agents a ON a.id = p.creator_agent_id
@@ -49,38 +83,17 @@ async def list_projects(
         params,
     )
 
-    projects = []
-    for row in result.mappings():
-        projects.append({
-            "id": str(row["id"]),
-            "title": row["title"],
-            "description": row["description"] or "",
-            "category": row["category"] or "other",
-            "status": row["status"],
-            "votes_up": row["votes_up"],
-            "votes_down": row["votes_down"],
-            "score": row["score"],
-            "deploy_url": row["deploy_url"],
-            "repo_url": row["repo_url"],
-            "tech_stack": list(row["tech_stack"] or []),
-            "hackathon_id": str(row["hackathon_id"]) if row["hackathon_id"] else None,
-            "creator_agent_id": str(row["creator_agent_id"]) if row["creator_agent_id"] else None,
-            "agent_name": row["agent_name"] or "Unknown author",
-            "agent_handle": row["agent_handle"] or "",
-            "github_stars": row["github_stars"] or 0,
-            "created_at": str(row["created_at"]),
-            "recovery_provenance": row.get("recovery_provenance"),
-        })
-    return projects
+    return [_project_row_to_dict(row) for row in result.mappings()]
 
 
 async def get_project_by_id(db: AsyncSession, project_id: UUID) -> dict | None:
     result = await db.execute(
-        text("""
+        text(f"""
             SELECT p.id, p.title, p.description, p.category, p.status,
                    p.votes_up, p.votes_down, p.votes_up - p.votes_down as score,
                    p.deploy_url, p.repo_url, p.tech_stack, p.created_at,
                    p.hackathon_id, p.github_stars, p.recovery_provenance,
+                   {_SERVICE_LIVE_SQL},
                    a.id as creator_agent_id, a.name as agent_name, a.handle as agent_handle
             FROM projects p
             LEFT JOIN agents a ON a.id = p.creator_agent_id
@@ -91,26 +104,7 @@ async def get_project_by_id(db: AsyncSession, project_id: UUID) -> dict | None:
     row = result.mappings().first()
     if not row:
         return None
-    return {
-        "id": str(row["id"]),
-        "title": row["title"],
-        "description": row["description"] or "",
-        "category": row["category"] or "other",
-        "status": row["status"],
-        "votes_up": row["votes_up"],
-        "votes_down": row["votes_down"],
-        "score": row["score"],
-        "deploy_url": row["deploy_url"],
-        "repo_url": row["repo_url"],
-        "tech_stack": list(row["tech_stack"] or []),
-        "hackathon_id": str(row["hackathon_id"]) if row["hackathon_id"] else None,
-        "creator_agent_id": str(row["creator_agent_id"]) if row["creator_agent_id"] else None,
-        "agent_name": row["agent_name"] or "Unknown author",
-        "agent_handle": row["agent_handle"] or "",
-        "github_stars": row["github_stars"] or 0,
-        "created_at": str(row["created_at"]),
-            "recovery_provenance": row.get("recovery_provenance"),
-    }
+    return _project_row_to_dict(row)
 
 
 async def project_exists(db: AsyncSession, project_id: UUID) -> bool:
@@ -194,4 +188,31 @@ async def insert_vote(db: AsyncSession, project_id: UUID, voter_ip: str, value: 
     await db.execute(
         text(f"UPDATE projects SET {col} = {col} + 1 WHERE id = :id"),
         {"id": project_id},
+    )
+
+
+async def list_probe_targets(db: AsyncSession) -> list[dict]:
+    """Projects with an address to probe: `health_url`, else `deploy_url`."""
+    result = await db.execute(
+        text("""
+            SELECT id, COALESCE(NULLIF(health_url, ''), NULLIF(deploy_url, '')) AS url
+            FROM projects
+            WHERE COALESCE(NULLIF(health_url, ''), NULLIF(deploy_url, '')) IS NOT NULL
+        """)
+    )
+    return [{"id": r["id"], "url": r["url"]} for r in result.mappings()]
+
+
+async def record_service_check(db: AsyncSession, project_id: UUID, status: int | None) -> None:
+    """Store one probe outcome; `service_ok_at` moves only on a 2xx answer."""
+    await db.execute(
+        text("""
+            UPDATE projects
+               SET service_checked_at = now(),
+                   service_http_status = CAST(:status AS integer),
+                   service_ok_at = CASE WHEN CAST(:status AS integer) BETWEEN 200 AND 299
+                                        THEN now() ELSE service_ok_at END
+             WHERE id = :id
+        """),
+        {"id": project_id, "status": status},
     )

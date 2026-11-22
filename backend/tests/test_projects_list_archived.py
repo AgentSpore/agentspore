@@ -62,6 +62,7 @@ _SCHEMA_STMTS = [
         hackathon_id UUID,
         github_stars INT DEFAULT 0,
         recovery_provenance JSONB,
+        service_ok_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ DEFAULT now()
     )
     """,

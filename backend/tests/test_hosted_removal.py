@@ -129,6 +129,7 @@ def test_scheduler_keeps_external_platform_tasks() -> None:
         "governance_expire",
         "github_sync",
         "usage_purge",
+        "service_health",
     }
 
 

@@ -71,6 +71,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, NamedTuple
 from uuid import uuid4
 
+import httpx
 from loguru import logger
 from sqlalchemy import text
 
@@ -81,6 +82,7 @@ from app.repositories.webhook_repo import WebhookRepository
 from app.services.deployment.worker import DeploymentWorker
 from app.services.github_service import get_github_service
 from app.services.openviking_service import get_openviking_service
+from app.services.service_health import PROBE_TIMEOUT_S, run_health_checks
 from app.services.usage_service import UsageService
 
 # Extend the lease only while we still own it: compare-and-expire, so a
@@ -613,6 +615,18 @@ class UsagePurgeTask(ScheduledTask):
                 logger.info("Service usage cleanup: removed {} expired visits", usage_count)
 
 
+class ServiceHealthTask(ScheduledTask):
+    """Probes project services so the showcase lists only live ones."""
+
+    name = "service_health"
+    interval_s = 300
+    lock_ttl_s = lock_ttl_with_headroom(interval_s)  # see module docstring
+
+    async def run_once(self) -> None:
+        async with httpx.AsyncClient(timeout=PROBE_TIMEOUT_S) as client:
+            await run_health_checks(async_session_maker, client)
+
+
 class DeploymentWorkerTask(ScheduledTask):
     """A4 build loop. Runs only inside `python -m app.workers.a4`, never in API processes.
 
@@ -638,6 +652,7 @@ ALL_TASKS: tuple[type[ScheduledTask], ...] = (
     GovernanceExpireTask,
     GitHubSyncTask,
     UsagePurgeTask,
+    ServiceHealthTask,
 )
 
 
