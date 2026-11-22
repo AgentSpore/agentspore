@@ -29,6 +29,7 @@ PROBES = """() => {
     document.body.append(holder);
 }"""
 ROOT = Path(__file__).resolve().parents[1]
+FUNNEL_PATH = "/api/v1/funnel/visit"
 PUBLIC_PAGES = ("/", "/projects", "/showcase", "/agents", "/blog", "/login")
 PUBLIC_API = {
     "/api/v1/agents/stats": {
@@ -36,6 +37,7 @@ PUBLIC_API = {
         "total_reviews": 12, "projects_deployed": 3, "total_repos_created": 5, "total_prs_merged": 8,
     },
     "/api/v1/blog/posts": {"posts": []},
+    "/api/v1/projects": [],
     "/api/v1/activity": [{
         "id": "e1", "agent_id": "a1", "agent_name": "Synthetic", "action_type": "code_commit",
         "description": "Synthetic commit", "project_id": None, "metadata": {},
@@ -104,7 +106,7 @@ class TypographyTests(unittest.TestCase):
         """Serve known public reads and fail closed for any unknown request."""
         parsed = urlparse(route.request.url)
         if parsed.netloc != urlparse(self.options.base_url).netloc:
-            self.unexpected.append("external request")
+            self.unexpected.append({"method": route.request.method, "url": route.request.url})
             route.abort()
         elif route.request.method == "GET" and parsed.path == "/api/v1/projects":
             # The public list endpoint returns an array; this scenario is explicitly empty.
@@ -233,25 +235,35 @@ class TypographyTests(unittest.TestCase):
                                 self.assert_fonts(fonts)
                             with self.subTest(property="geometry"):
                                 self.assert_geometry(page, tag)
-                            surprises = [r for r in self.unexpected if r["url"].split("?")[0] != "/api/v1/funnel/visit"]
-                            self.assertEqual(surprises, [])
+                            self.assertEqual(self.surprises(self.unexpected), [])
                         finally:
                             page.context.close()
+
+    @staticmethod
+    def surprises(requests):
+        """Everything except the visit beacon: POST to exactly /api/v1/funnel/visit."""
+        return [
+            r for r in requests
+            if not (r["method"] == "POST" and r["url"].split("?")[0] == FUNNEL_PATH)
+        ]
 
     def open_public(self, path, locale, width):
         """Open a public page with held synthetic reads; the visit beacon and prefetches pass."""
         origin = urlparse(self.options.base_url).netloc
+        self.rejected = []
 
         def handle(route):
             request, target = route.request, urlparse(route.request.url)
             if target.netloc == origin and not target.path.startswith("/api/"):
                 route.continue_()
-            elif request.method == "POST" and target.path == "/api/v1/funnel/visit":
+            elif request.method == "POST" and target.path == FUNNEL_PATH:
                 route.fulfill(status=204, headers={"access-control-allow-origin": "*"})
-            elif request.method == "GET" and target.path.startswith("/api/"):
-                body = live_agents() if target.path.endswith("/leaderboard") else PUBLIC_API.get(target.path, [])
-                route.fulfill(json=body, headers={"access-control-allow-origin": "*"})
+            elif request.method == "GET" and target.path.endswith("/leaderboard"):
+                route.fulfill(json=live_agents(), headers={"access-control-allow-origin": "*"})
+            elif request.method == "GET" and target.path in PUBLIC_API:
+                route.fulfill(json=PUBLIC_API[target.path], headers={"access-control-allow-origin": "*"})
             else:
+                self.rejected.append({"method": request.method, "url": request.url})
                 route.abort()
 
         context = self.browser.new_context(
@@ -267,7 +279,7 @@ class TypographyTests(unittest.TestCase):
         page.goto(self.options.base_url + path)
         expect(page.locator("main h1").first).to_be_visible()
         page.evaluate("document.fonts.ready")
-        page.wait_for_timeout(1500)
+        page.wait_for_load_state("networkidle")
         return page
 
     def check_each_public_page(self, widths, check):
@@ -275,12 +287,55 @@ class TypographyTests(unittest.TestCase):
             for locale in ("en", "ru"):
                 for width in widths:
                     with self.subTest(path=path, locale=locale, width=width):
-                        check(self.open_public(path, locale, width), width)
+                        page = self.open_public(path, locale, width)
+                        check(page, width)
+                        self.assertEqual(self.surprises(self.rejected), [])
 
     def test_interactive_labels_are_sans_and_at_least_14px(self):
         self.check_each_public_page(
             (1280, 390), lambda page, width: self.assertEqual(page.evaluate(UI_AUDIT), [])
         )
+
+    def test_identifiers_and_inputs_keep_their_mono_face_and_size(self):
+        probes = (
+            ("input", "font-mono text-sm", "14px"),
+            ("input", "font-mono text-xs", "12px"),
+            ("a", "font-mono text-xs", "12px"),
+            ("a data-mono", "font-mono text-xs", "12px"),
+        )
+        for locale in ("en", "ru"):
+            page = self.open_public("/login", locale, 1280)
+            for index, (tag, classes, size) in enumerate(probes):
+                with self.subTest(locale=locale, tag=tag, classes=classes):
+                    got = page.evaluate(
+                        """([tag, classes, index]) => {
+                            const [name, attr] = tag.split(' ');
+                            const el = document.createElement(name); if (attr) el.setAttribute(attr, '');
+                            el.className = classes; el.textContent = 'Zz0O1lI'; el.id = 'probe-' + index;
+                            if (name === 'a') el.href = '/x';
+                            document.querySelector('main').append(el);
+                            const s = getComputedStyle(el);
+                            return {family: s.fontFamily, size: s.fontSize};
+                        }""",
+                        [tag, classes, index],
+                    )
+                    self.assertRegex(got["family"], "(?i)mono")
+                    self.assertEqual(got["size"], size)
+
+    def test_filter_empty_text_is_centred_under_its_icon(self):
+        for locale in ("en", "ru"):
+            with self.subTest(locale=locale):
+                page = self.open_public("/agents", locale, 1280)
+                page.locator("main input[type=text]").fill("zzzz-no-such-agent")
+                box = page.locator("main .text-center:has(> p)")
+                expect(box).to_be_visible()
+                centres = box.evaluate(
+                    """el => {
+                        const mid = n => { const b = n.getBoundingClientRect(); return b.x + b.width / 2; };
+                        return {icon: mid(el.querySelector('.text-4xl')), text: mid(el.querySelector('p'))};
+                    }"""
+                )
+                self.assertLessEqual(abs(centres["text"] - centres["icon"]), 4, centres)
 
     def test_no_horizontal_overflow_at_phone_widths(self):
         self.check_each_public_page(

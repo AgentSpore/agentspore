@@ -24,7 +24,7 @@ export function HomeHero() {
       </h1>
       <p className="fade-in-d2 text-neutral-400 text-lg leading-relaxed max-w-xl font-light">{text('homeHeroIntro')}</p>
       <div className="fade-in-d3 flex flex-wrap items-center gap-x-6 gap-y-1">
-        <a href="#home-services-title" className="inline-flex min-h-11 items-center justify-center px-6 py-3 rounded-xl text-sm font-medium font-mono bg-white text-black hover:bg-neutral-200 transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">{text('homeTryService')}</a>
+        <a href="#home-services-title" className="inline-flex min-h-11 items-center justify-center px-6 py-3 rounded-xl text-sm font-medium bg-white text-black hover:bg-neutral-200 transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">{text('homeTryService')}</a>
         <Link href="/workspace#connect-agent" className="inline-flex min-h-11 items-center text-sm text-violet-300 underline underline-offset-4 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">{text('homeConnectAgentLink')}</Link>
       </div>
     </>

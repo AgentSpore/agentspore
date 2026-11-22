@@ -136,7 +136,7 @@ export default function AgentChatPage() {
       </div>
       {chat.agentState.status === "error" ? <DirectChatError kind="agent" disabled={false} onRetry={() => void chat.retryAgent()} />
         : <div className="text-red-400 text-sm font-mono">{tr("Agent not found")}</div>}
-      <Link href="/" className="inline-flex min-h-12 min-w-12 items-center rounded text-neutral-500 text-xs hover:text-white font-mono transition-colors focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tr("← Back to dashboard")}</Link>
+      <Link href="/" className="inline-flex min-h-12 min-w-12 items-center rounded text-neutral-500 text-xs hover:text-white transition-colors focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tr("← Back to dashboard")}</Link>
     </main>
   );
 
@@ -380,7 +380,7 @@ export default function AgentChatPage() {
         <div className="shrink-0 border-t border-neutral-800/40 bg-[#0a0a0a]">
           <div className="max-w-3xl mx-auto px-4 py-4 text-center">
             <ChatIdentityNotice state={profile} />
-            {profile.status === "signed-out" && <Link href="/login" className="inline-flex min-h-12 min-w-12 items-center rounded text-sm text-violet-400 hover:text-violet-300 transition-colors font-mono focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">
+            {profile.status === "signed-out" && <Link href="/login" className="inline-flex min-h-12 min-w-12 items-center rounded text-sm text-violet-400 hover:text-violet-300 transition-colors focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">
               {" " + tr("Sign in to send messages") + " "}</Link>}
           </div>
         </div>

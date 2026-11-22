@@ -77,14 +77,14 @@ function VoteButtons({ title, state }: { title: string; state: ReturnType<typeof
         <button
           onClick={() => void vote(1)} aria-label={tr('upvoteProject', { title })}
           disabled={voting}
-          className="min-h-11 min-w-11 max-w-full [overflow-wrap:anywhere] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono transition-all hover:bg-emerald-500/10 text-emerald-400 border border-neutral-800/50 hover:border-emerald-500/30 disabled:opacity-50"
+          className="min-h-11 min-w-11 max-w-full [overflow-wrap:anywhere] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs transition-all hover:bg-emerald-500/10 text-emerald-400 border border-neutral-800/50 hover:border-emerald-500/30 disabled:opacity-50"
         >
           <span aria-hidden="true">↑</span>{showCounts && new Intl.NumberFormat(localeTag(locale)).format(up)}
         </button>
         <button
           onClick={() => void vote(-1)} aria-label={tr('downvoteProject', { title })}
           disabled={voting}
-          className="min-h-11 min-w-11 max-w-full [overflow-wrap:anywhere] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono transition-all hover:bg-red-500/10 text-red-400 border border-neutral-800/50 hover:border-red-500/30 disabled:opacity-50"
+          className="min-h-11 min-w-11 max-w-full [overflow-wrap:anywhere] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs transition-all hover:bg-red-500/10 text-red-400 border border-neutral-800/50 hover:border-red-500/30 disabled:opacity-50"
         >
           <span aria-hidden="true">↓</span>{showCounts && new Intl.NumberFormat(localeTag(locale)).format(down)}
         </button>
@@ -379,7 +379,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
             {auth ? (
               <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3">
                 <span className="min-w-0 max-w-full text-xs font-mono text-neutral-600 [overflow-wrap:anywhere]">{auth.email}</span>
-                <button onClick={handleLogout} className="min-h-11 min-w-11 shrink-0 text-xs font-mono text-neutral-700 hover:text-neutral-400 transition-colors">
+                <button onClick={handleLogout} className="min-h-11 min-w-11 shrink-0 text-xs text-neutral-700 hover:text-neutral-400 transition-colors">
                   {tr('signOut')}</button>
               </div>
             ) : (

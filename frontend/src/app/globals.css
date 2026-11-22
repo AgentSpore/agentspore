@@ -176,30 +176,37 @@ main {
 .type-heading { font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif; font-weight: 600; letter-spacing: -0.01em; }
 .type-label { font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif; font-weight: 500; }
 
-/* === WP5 type system. Unlayered on purpose: it must win over Tailwind utilities on legacy markup. ===
-   Scale 12 (captions) / 14 / 16 / 20 / 28 / 40, interactive labels from 14px; sans for navigation,
-   buttons, labels and stat numbers; mono stays on <code>, <pre> and anything marked data-mono. */
-:is(a, button, label, summary, legend, th, input, select, textarea, [role="tab"]):not([data-mono]),
+/* === WP5 type system. Scale 12 (captions) / 14 / 16 / 20 / 28 / 40, interactive labels from 14px; sans for
+   navigation, buttons, labels and stat numbers. Mono stays on <code>, <pre>, form fields and anything that
+   is .font-mono or marked data-mono (addresses, IDs): no size floor applies to them or their descendants. ===
+   Plain interactive elements get sans in @layer base so an explicit font-mono utility still wins. */
+@layer base {
+  :is(a, button, label, summary, legend, th, [role="tab"]):not([data-mono]) {
+    font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  }
+}
+/* Mono nested inside a plain interactive element (a caption in a link) must still follow the element: unlayered. */
 :is(a, button, label, summary, [role="tab"]):not(:has(p, h1, h2, h3, h4, h5, h6, div, ul, ol, li, article, pre, code)) .font-mono:not([data-mono]),
 .font-mono:is(.uppercase, .tabular-nums):not([data-mono]) {
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }
-:is(a, button, label, summary, [role="tab"]):not(:is(p, td, time) a):is(.text-xs, [class*="text-[10px]"], [class*="text-[11px]"], [class*="text-[12px]"], [class*="text-[13px]"]),
-:is(a, button, label, summary, [role="tab"]):not(:is(p, td, time) a):not(:has(p, h1, h2, h3, h4, h5, h6, div, ul, ol, li, article, pre, code)) :is(.text-xs, [class*="text-[10px]"], [class*="text-[11px]"], [class*="text-[12px]"], [class*="text-[13px]"]) {
+:is(a, button, label, summary, [role="tab"]):not(:is(p, td, time) a):is(.text-xs, [class*="text-[10px]"], [class*="text-[11px]"], [class*="text-[12px]"], [class*="text-[13px]"]):not(.font-mono, [data-mono], :is(.font-mono, [data-mono]) *),
+:is(a, button, label, summary, [role="tab"]):not(:is(p, td, time) a):not(:has(p, h1, h2, h3, h4, h5, h6, div, ul, ol, li, article, pre, code)) :is(.text-xs, [class*="text-[10px]"], [class*="text-[11px]"], [class*="text-[12px]"], [class*="text-[13px]"]):not(.font-mono, [data-mono], :is(.font-mono, [data-mono]) *) {
   font-size: 0.875rem;
   line-height: 1.25rem;
 }
-:is(a, button, label, summary, [role="tab"]):not(:is(p, td, time) a):is(.text-xs, [class*="text-[10px]"], [class*="text-[11px]"], [class*="text-[12px]"], [class*="text-[13px]"]):not([class*="font-medium"], [class*="font-semibold"], [class*="font-bold"]) {
+:is(a, button, label, summary, [role="tab"]):not(:is(p, td, time) a):is(.text-xs, [class*="text-[10px]"], [class*="text-[11px]"], [class*="text-[12px]"], [class*="text-[13px]"]):not([class*="font-medium"], [class*="font-semibold"], [class*="font-bold"]):not(.font-mono, [data-mono], :is(.font-mono, [data-mono]) *) {
   font-weight: 500;
 }
 /* Interactive text with no size class of its own inherits the caption size of a parent: raise it to 14px, never lower it. */
-:is(a, button, label, summary, [role="tab"]):not(:is(p, td, time) a):not([class*="text-xs"], [class*="text-sm"], [class*="text-base"], [class*="text-lg"], [class*="text-xl"], [class*="text-2xl"], [class*="text-\["]) {
+:is(a, button, label, summary, [role="tab"]):not(:is(p, td, time) a):not([class*="text-xs"], [class*="text-sm"], [class*="text-base"], [class*="text-lg"], [class*="text-xl"], [class*="text-2xl"], [class*="text-\["]):not(.font-mono, [data-mono], :is(.font-mono, [data-mono]) *) {
   font-size: max(0.875rem, 1em);
 }
 
-/* One reading width: running text stops at 70 characters; utilities with a narrower max-w still win. */
+/* One reading width: running text stops at 70 characters; utilities with a narrower max-w still win.
+   Paragraphs centred by themselves or by an ancestor are left alone: a capped, left-anchored box would centre off-axis. */
 @layer base {
-  main p:not(.text-center) {
+  main p:not(.text-center):not(.text-center p) {
     max-width: 70ch;
   }
 }

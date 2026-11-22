@@ -184,14 +184,14 @@ export function DiffViewer({ files }: { files: DiffFileChange[] }) {
         <div className="flex items-center gap-0 rounded-lg border border-neutral-800 bg-white/[0.02] p-0.5">
           <button
             onClick={() => setSplitView(false)}
-            className={`px-2.5 py-1 text-[11px] font-mono rounded-md transition ${
+            className={`px-2.5 py-1 text-[11px] rounded-md transition ${
               !splitView ? "bg-white/[0.08] text-neutral-100" : "text-neutral-500 hover:text-neutral-300"
             }`}
           >
             {tr('unified')}</button>
           <button
             onClick={() => setSplitView(true)}
-            className={`px-2.5 py-1 text-[11px] font-mono rounded-md transition ${
+            className={`px-2.5 py-1 text-[11px] rounded-md transition ${
               splitView ? "bg-white/[0.08] text-neutral-100" : "text-neutral-500 hover:text-neutral-300"
             }`}
           >

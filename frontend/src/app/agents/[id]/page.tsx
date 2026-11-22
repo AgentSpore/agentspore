@@ -74,7 +74,7 @@ function CopyIdButton({ id }: { id: string }) {
       <button
         type="button"
         onClick={() => { void copy(id); }}
-        className="min-h-11 min-w-11 w-full flex items-center justify-center gap-2 bg-white/[0.04] border border-white/[0.08] text-neutral-400 hover:text-white hover:border-neutral-700/60 font-mono text-sm px-5 py-2.5 rounded-lg transition-all duration-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/60"
+        className="min-h-11 min-w-11 w-full flex items-center justify-center gap-2 bg-white/[0.04] border border-white/[0.08] text-neutral-400 hover:text-white hover:border-neutral-700/60 text-sm px-5 py-2.5 rounded-lg transition-all duration-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/60"
       >
         <svg className="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
           <rect x="9" y="9" width="13" height="13" rx="2" />
@@ -169,7 +169,7 @@ const DNA_TRAITS = [
   if (!agent) return (
     <main id="main-content" tabIndex={-1} className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center gap-4">
       {details.status === "error" ? <FetchError onRetry={details.retry} /> : <div className="text-red-400 text-sm font-mono">{tr('agentNotFound')}</div>}
-      <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded text-neutral-400 text-sm hover:text-white font-mono focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-300">{"\u2190"} {tr('backToDashboard')}</Link>
+      <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded text-neutral-400 text-sm hover:text-white focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-300">{"\u2190"} {tr('backToDashboard')}</Link>
     </main>
   );
 
@@ -197,10 +197,10 @@ const DNA_TRAITS = [
 
         {/* Breadcrumbs */}
         <div className="relative flex flex-wrap min-w-0 items-center gap-2 mb-8 fade-up">
-          <Link href="/" className="inline-flex min-h-11 min-w-11 max-w-full items-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-400 hover:text-white transition-colors">
+          <Link href="/" className="inline-flex min-h-11 min-w-11 max-w-full items-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-400 hover:text-white transition-colors">
             {tr('home')}</Link>
           <span className="text-neutral-700 text-xs">/</span>
-          <Link href="/agents" className="inline-flex min-h-11 min-w-11 max-w-full items-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-400 hover:text-white transition-colors">
+          <Link href="/agents" className="inline-flex min-h-11 min-w-11 max-w-full items-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-400 hover:text-white transition-colors">
             {tr('agents')}</Link>
           <span className="text-neutral-700 text-xs">/</span>
           <span className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-400">{agent.name}</span>
@@ -230,7 +230,7 @@ const DNA_TRAITS = [
           <div className="flex flex-col gap-2 w-full sm:w-[180px] shrink-0">
             {!agent.recovery_provenance && <Link
               href={`/agents/${agent.id}/chat`}
-              className="min-h-11 min-w-11 inline-flex items-center justify-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 w-full text-center bg-white text-black font-medium font-mono [overflow-wrap:anywhere] text-sm px-5 py-2.5 rounded-lg hover:bg-neutral-200 transition-all duration-300 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)]"
+              className="min-h-11 min-w-11 inline-flex items-center justify-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 w-full text-center bg-white text-black font-medium [overflow-wrap:anywhere] text-sm px-5 py-2.5 rounded-lg hover:bg-neutral-200 transition-all duration-300 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)]"
             >
               {tr('message')}</Link>}
           </div>
@@ -292,7 +292,7 @@ const DNA_TRAITS = [
                               : displayPublicLabel(locale, meta.label)}
                           </span>
                           {typeof ev.project_id === "string" && ( /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ev.project_id) ? (
-                            <Link href={`/projects/${ev.project_id}`} aria-label={tr("activityProjectLink", { id: ev.project_id })} className="text-xs text-neutral-400 underline font-mono [overflow-wrap:anywhere] focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-300">{ev.project_id.slice(0, 8)}</Link>
+                            <Link href={`/projects/${ev.project_id}`} aria-label={tr("activityProjectLink", { id: ev.project_id })} data-mono className="text-xs text-neutral-400 underline font-mono [overflow-wrap:anywhere] focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-300">{ev.project_id.slice(0, 8)}</Link>
                           ) : <span className="text-xs text-neutral-600 font-mono [overflow-wrap:anywhere]">{ev.project_id}</span>)}
                         </div>
                         <p className="text-sm text-neutral-300 leading-snug [overflow-wrap:anywhere]">{activityDescription(ev, agent.name, tr)}</p>
@@ -334,7 +334,7 @@ const DNA_TRAITS = [
                     <button
                       key={f.id} aria-pressed={ghFilter === f.id}
                       onClick={() => setGhFilter(f.id)}
-                      className={`min-h-11 min-w-11 max-w-full focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs px-2.5 py-1 rounded-full border transition-all duration-200 font-mono [overflow-wrap:anywhere] ${
+                      className={`min-h-11 min-w-11 max-w-full focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs px-2.5 py-1 rounded-full border transition-all duration-200 [overflow-wrap:anywhere] ${
                         ghFilter === f.id
                           ? "bg-neutral-800/50 border-neutral-700/60 text-white"
                           : "bg-neutral-900/30 border-neutral-800/50 text-neutral-500 hover:text-neutral-300 hover:border-neutral-700/60"
@@ -398,7 +398,7 @@ const DNA_TRAITS = [
                             href={ghLink}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="min-h-11 min-w-11 max-w-full focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs text-neutral-600 hover:text-violet-400 transition-colors flex items-center gap-0.5 font-mono [overflow-wrap:anywhere]"
+                            className="min-h-11 min-w-11 max-w-full focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs text-neutral-600 hover:text-violet-400 transition-colors flex items-center gap-0.5 [overflow-wrap:anywhere]"
                           >
                             GitHub {"\u2197"}
                           </a>

@@ -129,7 +129,7 @@ function MessageGroup({ messages, isHuman, userId, onEdit, onDelete, deleteState
           {isHuman ? (
             <span className="min-w-0 max-w-full [overflow-wrap:anywhere] text-xs font-semibold font-mono text-neutral-300">{first.agent_name}</span>
           ) : (
-            <Link href={`/agents/${first.agent_id}`} className="inline-flex min-h-12 min-w-12 max-w-full items-center [overflow-wrap:anywhere] text-xs font-semibold font-mono text-white hover:text-violet-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
+            <Link href={`/agents/${first.agent_id}`} className="inline-flex min-h-12 min-w-12 max-w-full items-center [overflow-wrap:anywhere] text-xs font-semibold text-white hover:text-violet-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
               {first.agent_name}
             </Link>
           )}
@@ -326,7 +326,7 @@ function ChatInput({ profile, editingId, editingContent, onCancelEdit, onSaveEdi
         {editingId && (
           <div className="mb-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-violet-950/20 border border-violet-800/20">
             <span className="text-xs text-violet-400 font-mono flex-1 min-w-0">{tr("Editing message")}</span>
-            <button type="button" onClick={cancelEditing} className="min-h-12 min-w-12 shrink-0 px-3 text-xs text-neutral-500 hover:text-neutral-300 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
+            <button type="button" onClick={cancelEditing} className="min-h-12 min-w-12 shrink-0 px-3 text-xs text-neutral-500 hover:text-neutral-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
               {" " + tr("Cancel (Esc)") + " "}</button>
           </div>
         )}

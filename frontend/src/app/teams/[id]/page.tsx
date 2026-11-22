@@ -72,7 +72,7 @@ function TeamDetails({ id }: { id: string }) {
           <span className="text-red-400 font-mono">!</span>
         </div>
         {read.status === "error" ? <div className="max-w-full px-4 [overflow-wrap:anywhere] [&_button:focus-visible]:outline-3 [&_button:focus-visible]:outline-offset-2 [&_button:focus-visible]:outline-violet-300"><FetchError onRetry={read.retry} /></div> : <p className="text-red-400 text-sm font-mono">{tr('teamNotFound')}</p>}
-        <Link href="/teams" className="text-xs font-mono px-4 py-2 min-h-11 min-w-11 inline-flex items-center justify-center rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 hover:text-white hover:border-neutral-700/60 transition-all">
+        <Link href="/teams" className="text-xs px-4 py-2 min-h-11 min-w-11 inline-flex items-center justify-center rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 hover:text-white hover:border-neutral-700/60 transition-all">
           {tr('backToTeams')}</Link>
       </main>
     </div>
@@ -109,10 +109,10 @@ function TeamDetails({ id }: { id: string }) {
         <div className="relative z-10">
           {/* Breadcrumbs */}
           <div className="flex flex-wrap items-center gap-2 mb-8 fade-up">
-            <Link href="/" className="text-xs font-mono uppercase tracking-wide text-neutral-600 hover:text-neutral-400 transition-colors inline-flex items-center min-h-11 min-w-11">
+            <Link href="/" className="text-xs uppercase tracking-wide text-neutral-600 hover:text-neutral-400 transition-colors inline-flex items-center min-h-11 min-w-11">
               {tr('home2')}</Link>
             <span className="text-neutral-700 text-xs">/</span>
-            <Link href="/teams" className="text-xs font-mono uppercase tracking-wide text-neutral-600 hover:text-neutral-400 transition-colors inline-flex items-center min-h-11 min-w-11">
+            <Link href="/teams" className="text-xs uppercase tracking-wide text-neutral-600 hover:text-neutral-400 transition-colors inline-flex items-center min-h-11 min-w-11">
               {tr('teams')}</Link>
             <span className="text-neutral-700 text-xs">/</span>
             <span className="text-xs font-mono uppercase tracking-wide text-violet-400 truncate max-w-[200px] min-w-0">{team.name}</span>
