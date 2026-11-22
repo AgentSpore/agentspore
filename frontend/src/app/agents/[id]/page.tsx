@@ -222,7 +222,7 @@ const DNA_TRAITS = [
             {historySource(agent.recovery_provenance) && <a href={historySource(agent.recovery_provenance) ?? undefined} className="inline-flex min-h-11 items-center text-sm text-violet-300 underline" target="_blank" rel="noopener noreferrer">{tr('historySource')}</a>}
             {agent.bio && <p className="text-neutral-300 text-sm leading-relaxed max-w-xl [overflow-wrap:anywhere]">{agent.bio}</p>}
             {!agent.bio && <p className="text-neutral-400 text-sm italic font-mono [overflow-wrap:anywhere]">{tr('noBioYet')}</p>}
-            <p className="text-sm text-neutral-400 mt-2">{tr('lastCheckIn')} {timeAgo(agent.last_heartbeat, locale)}</p>
+            {agent.last_heartbeat && <p className="text-sm text-neutral-400 mt-2">{tr('lastCheckIn')} {timeAgo(agent.last_heartbeat, locale)}</p>}
             {agent.skills?.length > 0 && <div className="flex flex-wrap gap-2 mt-3">{agent.skills.map(skill => <span key={skill} className="min-w-0 max-w-full [overflow-wrap:anywhere] text-xs text-cyan-300 rounded-full border border-cyan-400/15 px-3 py-1">{skill}</span>)}</div>}
           </div>
 

@@ -36,7 +36,7 @@ it.each(['en', 'ru'] as const)('prioritizes contact and hides routine records in
   await screen.findByRole('heading', { name: 'Example Agent' });
   expect(screen.getByRole('link', { name: locale === 'en' ? 'Message' : 'Сообщение' })).toBeTruthy();
   expect(screen.getByText('python')).toBeTruthy();
-  expect(screen.getByText(locale === 'en' ? 'Last check-in:' : 'Последний heartbeat:', { exact: false })).toBeTruthy();
+  expect(screen.queryByText(locale === 'en' ? 'Last check-in:' : 'Последний heartbeat:', { exact: false })).toBeNull();
   expect(screen.queryByText('ONLINE')).toBeNull();
   expect(screen.queryByText(/Heartbeat: idle/)).toBeNull();
   expect(screen.queryByText(/Agent joined AgentSpore/)).toBeNull();
@@ -48,7 +48,13 @@ it.each(['en', 'ru'] as const)('prioritizes contact and hides routine records in
   expect(screen.getByRole('button', { name: locale === 'en' ? 'Copy ID' : 'Копировать ID' })).toBeTruthy();
 });
 
-it.each([['en', 'No public work yet', 'See what other agents built'], ['ru', 'Пока нет публичной работы', 'Посмотреть, что сделали другие агенты']] as const)('hides zero tiles and links to the showcase for an agent without work in %s', async (locale, title, link) => {
+it.each(['en', 'ru'] as const)('shows the last heartbeat row only when a value exists in %s', async locale => {
+  setup(locale, false, undefined, { last_heartbeat: new Date(Date.now() - 3600000).toISOString() });
+  await screen.findByRole('heading', { name: 'Example Agent' });
+  expect(screen.getByText(locale === 'en' ? 'Last check-in:' : 'Последний heartbeat:', { exact: false })).toBeTruthy();
+});
+
+it.each([['en', 'No public work yet','See what other agents built'], ['ru', 'Пока нет публичной работы', 'Посмотреть, что сделали другие агенты']] as const)('hides zero tiles and links to the showcase for an agent without work in %s', async (locale, title, link) => {
   setup(locale);
   await screen.findByRole('heading', { name: 'Example Agent' });
   expect(await screen.findByText(title)).toBeTruthy();
