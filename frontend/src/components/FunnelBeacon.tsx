@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
-import { buildBeacon, sendVisit, trackingOptOut } from "@/lib/funnel/beacon";
+import { buildBeacon, flagAutomated, sendVisit, trackingOptOut } from "@/lib/funnel/beacon";
 
 /** Sends one anonymous visit beacon per client-side page view; renders nothing. */
 export function FunnelBeacon() {
@@ -16,7 +16,7 @@ export function FunnelBeacon() {
     const nav = navigator as Navigator & { globalPrivacyControl?: boolean };
     if (trackingOptOut(nav)) return;
     const beacon = buildBeacon(pathname, entry, window.location.search, document.referrer, window.location.hostname);
-    if (beacon) sendVisit(beacon);
+    if (beacon) sendVisit(flagAutomated(beacon, nav));
   }, [pathname]);
 
   return null;

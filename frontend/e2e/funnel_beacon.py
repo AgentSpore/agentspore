@@ -3,14 +3,16 @@
 import json
 
 PATH = "/api/v1/funnel/visit"
-FIELDS = {"path", "utm_source", "referrer"}
+FIELDS = {"path", "utm_source", "referrer", "automated"}
 # Backend VisitBeacon limits (backend/app/schemas/funnel.py).
 MAX_PATH = 200
 MAX_UTM = 64
 
 
 def _valid(body):
-    if not isinstance(body, dict) or set(body) - FIELDS or not all(isinstance(v, str) for v in body.values()):
+    if not isinstance(body, dict) or set(body) - FIELDS:
+        return False
+    if any(isinstance(v, bool) != (k == "automated") or not isinstance(v, (str, bool)) for k, v in body.items()):
         return False
     path = body.get("path")
     return path is not None and 0 < len(path) <= MAX_PATH and len(body.get("utm_source", "")) <= MAX_UTM

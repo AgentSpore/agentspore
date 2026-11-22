@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildBeacon, isCountablePath, sendVisit, trackingOptOut } from "./beacon";
+import { buildBeacon, flagAutomated, isCountablePath, sendVisit, trackingOptOut } from "./beacon";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -65,5 +65,13 @@ describe("sendVisit", () => {
     vi.stubGlobal("fetch", vi.fn(() => { throw new Error("blocked"); }));
     expect(() => sendVisit({ path: "/" })).not.toThrow();
     await Promise.resolve();
+  });
+});
+
+describe("flagAutomated", () => {
+  it("adds automated only when webdriver is exactly true", () => {
+    expect(flagAutomated({ path: "/" }, { webdriver: true })).toEqual({ path: "/", automated: true });
+    expect(flagAutomated({ path: "/" }, { webdriver: false })).toEqual({ path: "/" });
+    expect(flagAutomated({ path: "/" }, {})).toEqual({ path: "/" });
   });
 });

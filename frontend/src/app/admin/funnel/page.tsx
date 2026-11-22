@@ -7,7 +7,7 @@ import { FetchError } from "@/components/FetchError";
 import { SkeletonText } from "@/components/Skeleton";
 import { API_URL } from "@/lib/api";
 import { fetchWithAuth, getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
-import { buildFunnelTable, type FunnelReport, type FunnelTable } from "@/lib/funnel/report";
+import { buildFunnelTable, type FunnelReport, type FunnelTable, type SectionsTable } from "@/lib/funnel/report";
 import { funnelMessages } from "@/lib/i18n/funnel";
 import { useTranslations } from "@/lib/i18n/LocaleProvider";
 
@@ -73,7 +73,7 @@ export default function AdminFunnelPage() {
           {state.kind === "forbidden" && <Notice title={tr("forbiddenTitle")} body={tr("forbiddenBody")} />}
           {state.kind === "ready" && (state.table.days.length === 0
             ? <Notice title={tr("emptyTitle")} body={tr("emptyBody")} />
-            : <FunnelGrid table={state.table} />)}
+            : <><FunnelGrid table={state.table} />{state.table.sections && <SectionsGrid sections={state.table.sections} />}</>)}
         </div>
       </main>
     </div>
@@ -118,5 +118,36 @@ function FunnelGrid({ table }: { table: FunnelTable }) {
         </tfoot>
       </table>
     </div>
+  );
+}
+
+function SectionsGrid({ sections }: { sections: SectionsTable }) {
+  const tr = useTranslations(funnelMessages);
+  const label = (page: string) => (`section_${page}` in funnelMessages.en ? tr(`section_${page}` as keyof typeof funnelMessages.en) : page);
+  return (
+    <section className="mt-8">
+      <h2 className="text-lg font-semibold text-white">{tr("sections")}</h2>
+      <p className="mt-1 text-sm text-neutral-400">{tr("sectionsNote")}</p>
+      <div className="mt-3 overflow-x-auto rounded-xl border border-neutral-800">
+        <table aria-label={tr("sections")} className="w-full text-left text-sm">
+          <thead className="bg-neutral-900 text-neutral-300">
+            <tr>
+              <th scope="col" className="px-3 py-2">{tr("sectionName")}</th>
+              {sections.days.map(d => <th key={d.day} scope="col" className="px-3 py-2 text-right">{d.day}</th>)}
+              <th scope="col" className="px-3 py-2 text-right">{tr("visitorDays")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sections.pages.map(page => (
+              <tr key={page} className="border-t border-neutral-800">
+                <th scope="row" className="px-3 py-2 font-normal">{label(page)}</th>
+                {sections.days.map(d => <td key={d.day} className="px-3 py-2 text-right tabular-nums">{d.visitors[page] ?? 0}</td>)}
+                <td className="px-3 py-2 text-right font-medium tabular-nums">{sections.totals[page]}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }

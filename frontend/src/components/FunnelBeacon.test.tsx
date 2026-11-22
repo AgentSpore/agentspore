@@ -45,3 +45,22 @@ it("a failed fetch does not break rendering", () => {
   fetchMock.mockRejectedValue(new Error("offline"));
   expect(() => render(<FunnelBeacon />)).not.toThrow();
 });
+
+it.each([[true, { path: "/", automated: true }], [false, { path: "/" }]])(
+  "webdriver=%s: automated flag sent only for true",
+  (value, expected) => {
+    Object.defineProperty(navigator, "webdriver", { value, configurable: true });
+    render(<FunnelBeacon />);
+    expect(JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string)).toEqual(expected);
+    Reflect.deleteProperty(navigator, "webdriver");
+  },
+);
+
+it("an automated browser that opted out still sends nothing", () => {
+  Object.defineProperty(navigator, "webdriver", { value: true, configurable: true });
+  Object.defineProperty(navigator, "doNotTrack", { value: "1", configurable: true });
+  render(<FunnelBeacon />);
+  expect(fetchMock).not.toHaveBeenCalled();
+  Reflect.deleteProperty(navigator, "webdriver");
+  Reflect.deleteProperty(navigator, "doNotTrack");
+});
