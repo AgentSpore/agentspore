@@ -82,7 +82,7 @@ export function DesktopNav({ signedIn, isActive, moreOpen, setMoreOpen, moreRef 
   const morePanelId = useId();
   const { primary, more } = navFor(signedIn);
   return (
-    <nav className="flex min-w-0 items-center">
+    <nav aria-label={t("primaryNav")} className="flex min-w-0 items-center">
       {primary.map(({ href, label }) => (
         <Link key={href} href={href} aria-current={isActive(href) ? "page" : undefined} className={`${TAB} ${tabState(isActive(href))}`}>
           {t(label)}

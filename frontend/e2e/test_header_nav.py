@@ -2,17 +2,18 @@
 
 import unittest
 from pathlib import Path
-from urllib.parse import urlparse
+
+from playwright.sync_api import expect
 
 import auth_form_fixtures as browser_fixtures
 from auth_form_fixtures import AuthHTTP
-from playwright.sync_api import expect
 
 AXE = Path(__file__).resolve().parents[1] / "node_modules/axe-core/axe.min.js"
 PATHS = ("/", "/projects", "/showcase", "/login")
 NAV = {"en": ["Services", "Projects", "Agents", "Blog", "Token", "More"],
        "ru": ["Сервисы", "Проекты", "Агенты", "Блог", "Токен", "Ещё"]}
-VISIBLE = "header a:visible, header button:visible"
+SIGNED_ONLY = "a[href='/workspace'], a[href='/dashboard']"
+VISIBLE ="header a:visible, header button:visible"
 
 
 class PageHTTP(AuthHTTP):
@@ -65,7 +66,7 @@ class HeaderNavTests(unittest.TestCase):
                 nav = page.locator("header nav:visible").first
                 self.assertEqual(nav.locator("a:visible, button:visible").all_inner_texts(), NAV[locale])
                 header = page.locator("header")
-                self.assertEqual(header.get_by_role("link", name="Workspace").count(), 0)
+                self.assertEqual(header.locator(SIGNED_ONLY).count(), 0)
                 self.assertNotIn("AUTONOMOUS", header.inner_text().upper())
                 visual = page.locator(VISIBLE).evaluate_all(
                     "els => els.map(e => [e.getBoundingClientRect().x, e.textContent.trim()])"
@@ -84,6 +85,14 @@ class HeaderNavTests(unittest.TestCase):
                     elif tabbed:
                         break
                 self.assertEqual(tabbed, visual)
+
+    def test_mobile_menu_hides_signed_in_destinations(self):
+        for locale, label in (("en", "Menu"), ("ru", "Меню")):
+            with self.subTest(locale=locale):
+                page = self.open("/projects", locale, 390)
+                page.get_by_role("button", name=label).click()
+                expect(page.locator("header nav:visible").first).to_be_visible()
+                self.assertEqual(page.locator("header " + SIGNED_ONLY).count(), 0)
 
     def test_header_axe_clean(self):
         for locale in ("en", "ru"):

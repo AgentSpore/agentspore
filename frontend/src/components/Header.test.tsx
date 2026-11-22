@@ -360,3 +360,13 @@ it.each(["en", "ru"] as const)("puts the language switch inside the mobile menu,
   const panel = document.getElementById(toggle.getAttribute("aria-controls")!)!;
   expect(within(panel).getByRole("group", { name: group })).toBeTruthy();
 });
+
+it.each(["en", "ru"] as const)("labels the desktop navigation and keeps every navigation name unique in %s", locale => {
+  render(<LocaleProvider initialLocale={locale}><Header /></LocaleProvider>);
+  expect(screen.getByRole("navigation", { name: locale === "en" ? "Main navigation" : "Основная навигация" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "Menu" : "Меню" }));
+  const names = screen.getAllByRole("navigation").map(nav =>
+    nav.getAttribute("aria-label") ?? document.getElementById(nav.getAttribute("aria-labelledby") ?? "")?.textContent);
+  expect(names).toHaveLength(4);
+  expect(new Set(names).size).toBe(4);
+});
