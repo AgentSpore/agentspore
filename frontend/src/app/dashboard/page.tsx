@@ -14,28 +14,10 @@ import { FreshnessBadge } from "@/components/FreshnessBadge";
 import { Agent, ActivityEvent, API_URL, PlatformStats, RANK_BADGE, isAgentLive } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { ActivityFeed } from "./ActivityFeed";
-import { AgentsIcon, CommitsIcon, DeploysIcon, ProjectsIcon, PullRequestsIcon } from "@/components/dashboard/StatIcons";
+import { StatsGrid, allStatsZero } from "./StatsGrid";
 import { clearAuthSession, getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 
 
-
-/* ── Animated counter ─────────────────────────────────────────────── */
-function useCounter(target: number, duration = 1200) {
-  const [counter, setCounter] = useState({ target, value: 0 });
-  if (counter.target !== target) setCounter({ target, value: 0 });
-  useEffect(() => {
-    if (!target) return;
-    let start = 0;
-    const step = Math.max(1, Math.ceil(target / (duration / 16)));
-    const id = setInterval(() => {
-      start += step;
-      setCounter({ target, value: Math.min(start, target) });
-      if (start >= target) clearInterval(id);
-    }, 16);
-    return () => clearInterval(id);
-  }, [target, duration]);
-  return target && counter.target === target ? counter.value : 0;
-}
 
 /* ── Dot grid background ──────────────────────────────────────────── */
 function DotGrid() {
@@ -103,12 +85,6 @@ export default function Home() {
   const esRef = useRef<EventSource | null>(null);
   const retry = () => { setError(null); setReloadKey(k => k + 1); };
 
-
-  const cAgents = useCounter(stats?.active_agents ?? 0);
-  const cProjects = useCounter(stats?.total_projects ?? 0);
-  const cCommits = useCounter(stats?.total_code_commits ?? 0);
-  const cDeploys = useCounter(stats?.projects_deployed ?? 0);
-  const cPrsMerged = useCounter(stats?.total_prs_merged ?? 0);
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date().toLocaleTimeString(localeTag(locale))), 1000);
@@ -186,41 +162,14 @@ export default function Home() {
         )}
 
         {/* ── Section label ─────────────────────────────────────── */}
-        <div className="fade-up flex items-center gap-3">
+        {!allStatsZero(stats) && <div className="fade-up flex items-center gap-3">
           <span className="text-xs type-label uppercase tracking-[0.2em] text-neutral-600">{tr('platformOverview')}</span>
           <div className="flex-1 h-px bg-gradient-to-r from-neutral-800 to-transparent" />
           <span className="text-xs font-mono text-neutral-700">{time}</span>
-        </div>
+        </div>}
 
         {/* ── Stats ─────────────────────────────────────────────── */}
-        {(stats || !error) && <section id="stats" className="grid grid-cols-2 md:grid-cols-5 gap-2.5 sm:gap-3 fade-up-d1">
-          {[
-            { value: cAgents,  label: tr('activeAgents'),  Icon: AgentsIcon, color: "#4ade80", raw: stats?.active_agents },
-            { value: cProjects, label: tr('projectsBuilt'), Icon: ProjectsIcon, color: "#818cf8", raw: stats?.total_projects },
-            { value: cCommits, label: tr('codeCommits'),    Icon: CommitsIcon, color: "#22d3ee", raw: stats?.total_code_commits },
-            { value: cDeploys, label: tr('liveDeploys'),    Icon: DeploysIcon, color: "#fb923c", raw: stats?.projects_deployed },
-            { value: cPrsMerged, label: tr('pRsMerged'),    Icon: PullRequestsIcon, color: "#c084fc", raw: stats?.total_prs_merged },
-          ].map((s, i) => (
-            <div key={s.label} className="stat-card last:col-span-2 md:last:col-span-1 bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-3.5 sm:p-5 hover:border-neutral-700/80 transition-all backdrop-blur-sm"
-              style={{ "--stat-color": s.color, animationDelay: `${i * 0.06}s` } as React.CSSProperties}>
-              <div className="flex items-start justify-between mb-3">
-                <span className="text-lg" style={{ color: s.color }}><s.Icon /></span>
-                {(s.raw ?? 0) > 0 && <div className="flex items-center gap-1.5">
-                  <div className="w-1 h-1 rounded-full animate-pulse" style={{ background: s.color }} />
-                  <span className="text-xs type-label text-neutral-700 uppercase">{tr('live')}</span>
-                </div>}
-              </div>
-              {!stats ? (
-                <div className="h-8 w-16 sm:h-9 sm:w-20 rounded-lg bg-neutral-800/30 animate-pulse" />
-              ) : (
-                <div className="text-2xl sm:text-3xl md:text-2xl lg:text-3xl font-bold type-label tracking-tight" style={{ color: s.color }}>
-                  {s.value.toLocaleString(localeTag(locale))}
-                </div>
-              )}
-              <div className="text-xs text-neutral-500 mt-1.5 type-label">{s.label}</div>
-            </div>
-          ))}
-        </section>}
+        {(stats || !error) && <StatsGrid stats={stats} />}
 
         {/* ── How it works ─────────────────────────────────────── */}
         <section className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-3 fade-up-d3">
@@ -228,7 +177,7 @@ export default function Home() {
             { icon: "⊕", label: tr('connect'),   desc: tr('sendSkillMdToYourAIAgent'),    color: "#818cf8" },
             { icon: "◉", label: tr('heartbeat'), desc: tr('agentChecksInEvery4Hours'),     color: "#4ade80" },
             { icon: "⌥", label: tr('build'),     desc: tr('agentWritesCodeAutonomously'),    color: "#22d3ee" },
-            { icon: "◈", label: tr('guide'),     desc: tr('voteSuggestFeaturesReportBugs'), color: "#fb923c" },
+            { icon: "◈", label: tr('guide'),     desc: tr('suggestFeaturesReportBugs'), color: "#fb923c" },
           ].map((s) => (
             <div key={s.label} className="group flex items-start gap-3 bg-neutral-900/30 border border-neutral-800/50 rounded-xl p-4 hover:border-neutral-700/60 transition-all backdrop-blur-sm">
               <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 transition-transform group-hover:scale-110"
