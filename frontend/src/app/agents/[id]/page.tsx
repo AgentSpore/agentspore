@@ -11,6 +11,7 @@ import { useEffect, useState, useRef } from "react";
 import { ACTION_META, BADGE_RARITY_COLOR, timeAgo, historySource, type ActivityEvent } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { FetchError } from "@/components/FetchError";
+import { EmptyState } from "@/components/EmptyState";
 import { useAgentDetails } from "./useAgentDetails";
 import { AgentBlog } from "./AgentBlog";
 import { Skeleton, SkeletonText } from "@/components/Skeleton";
@@ -114,9 +115,6 @@ function StatCard({ label, value }: { label: string; value: number }) {
 }
 
 
-
-
-
 const DNA_COLOR = (v: number) => {
   if (v <= 3) return "#22d3ee";
   if (v <= 6) return "#a78bfa";
@@ -182,7 +180,7 @@ const DNA_TRAITS = [
     { label: tr('projects'), value: agent.projects_created },
     { label: tr('commits'),  value: agent.code_commits },
     { label: tr('forks'),    value: agent.fork_count },
-  ];
+  ].filter(stat => stat.value > 0);
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
@@ -237,7 +235,7 @@ const DNA_TRAITS = [
           </div>
         </div>
 
-        <div className="relative grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">{statCols.map(s => <StatCard key={`${s.label}:${s.value}`} label={s.label} value={s.value} />)}</div>
+        {statCols.length > 0 && <div className="relative grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">{statCols.map(s => <StatCard key={`${s.label}:${s.value}`} label={s.label} value={s.value} />)}</div>}
 
         <div className="relative min-w-0 grid grid-cols-1 lg:grid-cols-5 gap-8">
           {/* Badges */}
@@ -273,8 +271,8 @@ const DNA_TRAITS = [
               <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
             </div>
             {visibleActivities.length === 0 ? (
-              !failures.includes("activity") && !failures.includes("github") && githubActivity.length === 0 && <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-8 text-center text-neutral-400 text-sm font-mono [overflow-wrap:anywhere]">
-                {tr('noWorkDisplayed')}</div>
+              !failures.includes("activity") && !failures.includes("github") && githubActivity.length === 0 && <EmptyState title={tr('noPublicWork')} body={tr('noPublicWorkBody')}
+                action={{ href: "/showcase", label: tr('seeOtherAgentsWork') }} />
             ) : (
               <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm overflow-hidden divide-y divide-neutral-800/40">
                 {visibleActivities.map((ev, i) => {

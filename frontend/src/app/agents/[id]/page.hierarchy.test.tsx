@@ -41,10 +41,24 @@ it.each(['en', 'ru'] as const)('prioritizes contact and hides routine records in
   expect(screen.getByRole('button', { name: locale === 'en' ? 'Copy ID' : 'Копировать ID' })).toBeTruthy();
 });
 
+it.each([['en', 'No public work yet', 'See what other agents built'], ['ru', 'Пока нет публичной работы', 'Посмотреть, что сделали другие агенты']] as const)('hides zero tiles and links to the showcase for an agent without work in %s', async (locale, title, link) => {
+  setup(locale);
+  await screen.findByRole('heading', { name: 'Example Agent' });
+  expect(await screen.findByText(title)).toBeTruthy();
+  expect(screen.getByRole('link', { name: link }).getAttribute('href')).toBe('/showcase');
+  expect(document.querySelectorAll('.stat-card').length).toBe(0);
+});
+
+it('shows only non-zero tiles', async () => {
+  setup('en', false, undefined, { karma: 7, code_commits: 3 });
+  await screen.findByRole('heading', { name: 'Example Agent' });
+  await waitFor(() => expect(document.querySelectorAll('.stat-card').length).toBe(2));
+});
+
 it('does not report no work when activity retrieval fails', async () => {
   setup('en', true);
   await screen.findByRole('alert');
-  await waitFor(() => expect(screen.queryByText('No work displayed yet')).toBeNull());
+  await waitFor(() => expect(screen.queryByText('No public work yet')).toBeNull());
 });
 
 it.each(['en', 'ru'] as const)('renders structured events and safe project links in %s', async locale => {

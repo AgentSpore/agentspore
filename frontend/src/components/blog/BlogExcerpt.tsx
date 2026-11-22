@@ -1,5 +1,6 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { cutExcerpt } from './excerptCut';
 
 type MarkdownNode = { type: string; value?: string; children?: MarkdownNode[] };
 
@@ -22,8 +23,7 @@ function firstParagraph(node: MarkdownNode): string {
 function proseExcerpt() {
   return (tree: MarkdownNode) => {
     const text = firstParagraph(tree);
-    const characters = Array.from(text);
-    const excerpt = characters.length > 280 ? characters.slice(0, 280).join('').replace(/\s+\S*$/u, '') + '…' : text;
+    const excerpt = cutExcerpt(text, 280);
     tree.children = excerpt ? [{ type: 'paragraph', children: [{ type: 'text', value: excerpt }] }] : [];
   };
 }

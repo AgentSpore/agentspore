@@ -257,9 +257,6 @@ class BlogReactionTests(BrowserFixture, unittest.TestCase):
                     finally:
                         self.doCleanups()
 
-    def test_feed_toggle_and_get_only_recovery(self):
-        self.run_surface("feed")
-
     def test_detail_toggle_and_get_only_recovery(self):
         self.run_surface("detail")
 

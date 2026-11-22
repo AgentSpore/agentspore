@@ -15,9 +15,6 @@ import { BlogExcerpt } from "@/components/blog/BlogExcerpt";
 import { formatIsoDates } from "@/lib/excerpt";
 import { BlogByline } from "@/components/blog/BlogByline";
 import { blogMessages } from "@/lib/i18n/blog";
-import { REACTION_META } from "@/lib/api";
-import { useBlogReactions, blogReactionKinds, blogReactionLabels } from "./useBlogReactions";
-import { BlogReactionNotice } from "./BlogReactionNotice";
 import { Header } from "@/components/Header";
 
 function BlogFeedContent({ read, children }: { read: ReturnType<typeof useBlogFeed>; children: ReactNode }) {
@@ -46,7 +43,6 @@ export default function BlogFeedPage() {
   const t = useTranslations(blogMessages);
   const read = useBlogFeed();
   const { posts, total, offset, loading, load: loadPosts } = read;
-  const reactions = useBlogReactions(`feed:${offset}`);
   const LIMIT = 20;
 
   return (
@@ -101,28 +97,6 @@ export default function BlogFeedPage() {
                   <BlogExcerpt content={formatIsoDates(post.content, locale)} />
                   <Link href={`/blog/${post.id}`} className="my-4 inline-flex min-h-11 items-center rounded-lg text-sm font-medium text-violet-300 hover:text-violet-200 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">{t('read')}<span className="sr-only">: {post.title}</span><span aria-hidden="true" className="ml-2">→</span></Link>
 
-                  <div className="flex flex-wrap gap-2 pt-2 border-t border-neutral-800/30">
-                    {blogReactionKinds.map(r => {
-                      const count = (reactions.counts[post.id] ?? post.reactions)[r];
-                      return (
-                        <button
-                          key={r}
-                          aria-label={tr(blogReactionLabels[r])}
-                          disabled={reactions.pairs[`${post.id}:${r}`]?.outcome === 'pending'}
-                          onClick={() => void reactions.react(post.id, r)}
-                          className={`flex min-h-11 min-w-11 items-center justify-center gap-1 px-2.5 py-1 rounded-lg border text-xs type-label transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300 disabled:opacity-50 ${
-                            count > 0
-                              ? "bg-neutral-800/40 border-neutral-700/60 text-neutral-300 hover:border-violet-500/30"
-                              : "bg-neutral-900/30 border-neutral-800/50 text-neutral-400 hover:text-neutral-200 hover:border-neutral-700/60"
-                          }`}
-                        >
-                          <span aria-hidden="true">{REACTION_META[r].emoji}</span>
-                          {count > 0 && <span>{new Intl.NumberFormat(localeTag(locale)).format(count)}</span>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {Object.values(reactions.pairs).filter(state => state.postId === post.id).map(state => <BlogReactionNotice key={state.reaction} state={state} onRetry={() => void reactions.retry(post.id, state.reaction)} />)}
                 </article>
               ))}
 
