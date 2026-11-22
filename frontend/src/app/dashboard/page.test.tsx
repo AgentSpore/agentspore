@@ -12,7 +12,7 @@ const navigation = vi.hoisted(() => ({ replace: vi.fn() }));
 vi.mock('next/navigation', () => ({ useRouter: () => navigation, usePathname: () => '/dashboard' }));
 
 const STATS = { active_agents: 7, total_projects: 3, total_code_commits: 5, projects_deployed: 1, total_prs_merged: 2 };
-const api = vi.hoisted(() => ({ statsOk: true, activeAgents: 7, prsMerged: 2, statsPending: false, external: null as Promise<Response> | null }));
+const api = vi.hoisted(() => ({ statsOk: true, activeAgents: 7, prsMerged: 2, statsPending: false, statsOverride: {} as Record<string, number>, external: null as Promise<Response> | null }));
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -20,6 +20,7 @@ beforeEach(() => {
   api.activeAgents = 7;
   api.prsMerged = 2;
   api.statsPending = false;
+  api.statsOverride = {};
   api.external = null;
   navigation.replace.mockClear();
   const values = new Map<string, string>();
@@ -30,7 +31,7 @@ beforeEach(() => {
     if (String(url).endsWith('/auth/me')) return { ok: false, status: 503, json: async () => null };
     if (String(url).includes('/agents/stats') && api.statsPending) return new Promise(() => {});
     if (String(url).includes('/agents/stats')) return api.statsOk
-      ? { ok: true, json: async () => ({ ...STATS, active_agents: api.activeAgents, total_prs_merged: api.prsMerged }) } : { ok: false, status: 500, json: async () => ({}) };
+      ? { ok: true, json: async () => ({ ...STATS, active_agents: api.activeAgents, total_prs_merged: api.prsMerged, ...api.statsOverride }) } : { ok: false, status: 500, json: async () => ({}) };
     return { ok: true, json: async () => [] };
   }));
 });
@@ -66,15 +67,17 @@ it.each(['en', 'ru'] as const)('flags stale numbers with a retry when a later po
   expect(screen.queryByText(new RegExp(sharedMessages[locale].staleLastUpdated))).toBeNull();
 });
 
-it('drops the tile of a positive counter when the next target is zero and cancels its timer', async () => {
+it('drops the tile of a positive counter when its next value is zero', async () => {
   await mount('en');
   await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
-  expect(document.getElementById('stats')?.textContent).toContain('7');
+  expect(document.getElementById('stats')?.textContent).toContain(publicMessages.en.activeAgents);
+  expect(document.querySelectorAll('#stats .stat-card')).toHaveLength(5);
   api.activeAgents = 0;
   await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
-  expect(document.getElementById('stats')?.textContent).not.toContain('Active agents');
+  expect(document.getElementById('stats')?.textContent).not.toContain(publicMessages.en.activeAgents);
+  expect(document.querySelectorAll('#stats .stat-card')).toHaveLength(4);
   await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
-  expect(document.getElementById('stats')?.textContent).not.toContain('Active agents');
+  expect(document.getElementById('stats')?.textContent).not.toContain(publicMessages.en.activeAgents);
 });
 
 it('observes sign-in and sign-out without keeping a stale private result', async () => {
@@ -140,7 +143,7 @@ it('starts the animation at zero when a cleared target returns to its previous v
   await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
   api.activeAgents = 0;
   await act(async () => { fireEvent.click(screen.getAllByRole('button', { name: 'RU Русский' })[0]); });
-  expect(document.getElementById('stats')?.textContent).not.toContain('Активных агентов');
+  expect(document.getElementById('stats')?.textContent).not.toContain(publicMessages.ru.activeAgents);
   api.activeAgents = 7;
   await act(async () => { fireEvent.click(screen.getAllByRole('button', { name: 'EN English' })[0]); });
   expect(document.getElementById('stats')?.firstElementChild?.querySelector('.text-2xl')?.textContent).toBe('0');
@@ -181,6 +184,28 @@ it.each(['en', 'ru'] as const)('keeps all five tiles as skeletons while stats ar
   await mount(locale);
   expect(document.querySelectorAll('#stats .stat-card')).toHaveLength(5);
   expect(document.getElementById('stats')?.textContent).toContain(publicMessages[locale].pRsMerged);
+  expect(document.getElementById('stats')?.textContent).not.toContain(publicMessages[locale].live);
+});
+
+const ONE = { active_agents: 0, total_projects: 0, total_code_commits: 0, projects_deployed: 0, total_prs_merged: 0 };
+it.each([
+  [1, { total_projects: 4 }, 'md:grid-cols-1', true],
+  [2, { total_projects: 4, total_code_commits: 9 }, 'md:grid-cols-2', false],
+  [3, { total_projects: 4, total_code_commits: 9, projects_deployed: 1 }, 'md:grid-cols-3', true],
+] as const)('lays out %i visible stat tiles', async (count, nonZero, columns, spansLast) => {
+  api.statsOverride = { ...ONE, ...nonZero };
+  await mount('en');
+  const cards = [...document.querySelectorAll('#stats .stat-card')];
+  expect(cards).toHaveLength(count);
+  expect(document.getElementById('stats')?.className).toContain(columns);
+  expect(cards.at(-1)?.classList.contains('last:col-span-2')).toBe(spansLast);
+});
+
+it.each(['en', 'ru'] as const)('renders neither stats nor the overview heading when every metric is zero in %s', async locale => {
+  api.statsOverride = ONE;
+  await mount(locale);
+  expect(document.getElementById('stats')).toBeNull();
+  expect(document.body.textContent).not.toContain(publicMessages[locale].platformOverview);
 });
 
 it.each(['en', 'ru'] as const)('keeps the stat tile with a non-zero value in %s', async locale => {
@@ -190,7 +215,7 @@ it.each(['en', 'ru'] as const)('keeps the stat tile with a non-zero value in %s'
 
 it.each(['en', 'ru'] as const)('how-it-works copy has no voting in %s', async locale => {
   await mount(locale);
-  const desc = publicMessages[locale].voteSuggestFeaturesReportBugs;
+  const desc = publicMessages[locale].suggestFeaturesReportBugs;
   expect(desc.toLowerCase()).not.toMatch(/vote|голос/);
   expect(document.body.textContent?.toLowerCase()).not.toMatch(/vote|голос/);
   expect(document.body.textContent).toContain(locale === 'en' ? 'Suggest features and report bugs' : 'Предлагайте функции и сообщайте об ошибках');
