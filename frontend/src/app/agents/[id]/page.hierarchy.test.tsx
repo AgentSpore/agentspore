@@ -8,7 +8,7 @@ vi.mock('next/navigation', () => ({ useParams: () => ({ id: 'example' }), useRou
 vi.mock('@/components/Header', () => ({ Header: () => null }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-function setup(locale: 'en' | 'ru', activityError = false, events?: object[], overrides: Record<string, unknown> = {}) {
+function setup(locale: 'en' | 'ru', activityError = false, events?: object[], overrides: Record<string, unknown> = {}, posts: object[] = []) {
   const agent = { id: 'example', name: 'Example Agent', handle: 'example', specialization: 'programmer',
     bio: null, skills: ['python'], model_provider: 'provider', model_name: 'model', last_heartbeat: null,
     created_at: '2026-10-01T00:00:00Z', karma: 0, projects_created: 0, code_commits: 0, fork_count: 0,
@@ -18,7 +18,7 @@ function setup(locale: 'en' | 'ru', activityError = false, events?: object[], ov
     const value = url.endsWith('/agents/example') ? agent
       : url.includes('/activity?') ? events ?? [{ id: 'h', action_type: 'heartbeat', description: 'Heartbeat: idle, 0 tasks, 0 notifications, 0 DMs', ts: '2026-10-01T00:00:00Z' }, { id: 'r', action_type: 'registered', description: 'Agent joined AgentSpore', ts: '2026-10-01T00:00:00Z' }]
       : url.includes('/github-activity') ? { activities: [] }
-      : url.includes('/blog/') ? { posts: [], total: 0 } : [];
+      : url.includes('/blog/') ? { posts, total: posts.length } : [];
     return new Response(JSON.stringify(value), { status: 200 });
   }));
   render(<LocaleProvider initialLocale={locale}><AgentPage /></LocaleProvider>);
@@ -53,6 +53,20 @@ it('shows only non-zero tiles', async () => {
   setup('en', false, undefined, { karma: 7, code_commits: 3 });
   await screen.findByRole('heading', { name: 'Example Agent' });
   await waitFor(() => expect(document.querySelectorAll('.stat-card').length).toBe(2));
+});
+
+it('does not claim missing work when tiles are non-zero but the activity window is only heartbeats', async () => {
+  setup('en', false, undefined, { projects_created: 3, code_commits: 120 });
+  await screen.findByRole('heading', { name: 'Example Agent' });
+  await waitFor(() => expect(document.querySelectorAll('.stat-card').length).toBe(2));
+  expect(screen.queryByText('No public work yet')).toBeNull();
+  expect(screen.getByText('No recent activity')).toBeTruthy();
+});
+
+it('does not claim missing work when the agent has blog posts', async () => {
+  setup('en', false, undefined, {}, [{ id: 'p1', agent_id: 'example', agent_name: 'Example Agent', title: 'Synthetic post', content: 'Body.', created_at: '2026-10-01T00:00:00Z', reactions: { like: 0, fire: 0, insightful: 0, funny: 0 } }]);
+  await screen.findByText('Synthetic post');
+  expect(screen.queryByText('No public work yet')).toBeNull();
 });
 
 it('does not report no work when activity retrieval fails', async () => {

@@ -14,6 +14,7 @@ import { FetchError } from "@/components/FetchError";
 import { EmptyState } from "@/components/EmptyState";
 import { useAgentDetails } from "./useAgentDetails";
 import { AgentBlog } from "./AgentBlog";
+import { useAgentBlog } from "./useAgentBlog";
 import { Skeleton, SkeletonText } from "@/components/Skeleton";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 
@@ -114,7 +115,6 @@ function StatCard({ label, value }: { label: string; value: number }) {
   );
 }
 
-
 const DNA_COLOR = (v: number) => {
   if (v <= 3) return "#22d3ee";
   if (v <= 6) return "#a78bfa";
@@ -145,6 +145,7 @@ const DNA_TRAITS = [
   const visibleActivities = activities.filter(event => event.action_type !== "heartbeat" && event.action_type !== "registered");
   const loading = details.status === "loading";
   const [ghFilter, setGhFilter] = useState<string>("all");
+  const blog = useAgentBlog(id);
 
   if (loading) return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
@@ -271,8 +272,9 @@ const DNA_TRAITS = [
               <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
             </div>
             {visibleActivities.length === 0 ? (
-              !failures.includes("activity") && !failures.includes("github") && githubActivity.length === 0 && <EmptyState title={tr('noPublicWork')} body={tr('noPublicWorkBody')}
-                action={{ href: "/showcase", label: tr('seeOtherAgentsWork') }} />
+              !failures.includes("activity") && !failures.includes("github") && githubActivity.length === 0 && (statCols.length === 0 && !blog.pending && !blog.error && blog.total === 0
+                ? <EmptyState title={tr('noPublicWork')} body={tr('noPublicWorkBody')} action={{ href: "/showcase", label: tr('seeOtherAgentsWork') }} />
+                : <p className="text-sm text-neutral-400 font-mono">{tr('noRecentActivity')}</p>)
             ) : (
               <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm overflow-hidden divide-y divide-neutral-800/40">
                 {visibleActivities.map((ev, i) => {
@@ -543,7 +545,7 @@ const DNA_TRAITS = [
         )}
 
         {/* Blog */}
-        <AgentBlog agentId={agent.id} />
+        <AgentBlog blog={blog} />
       </main>
 
       <style jsx global>{`
