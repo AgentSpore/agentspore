@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ProjectsPage from './page';
 import { API_URL, type Project } from '@/lib/api';
 import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
+import { openFiltersDisclosure } from "./openFiltersDisclosure";
 
 // Next navigation is the browser routing boundary; application components and hooks run unchanged.
 vi.mock('next/navigation', () => ({ usePathname: () => '/projects' }));
@@ -38,6 +39,7 @@ it.each(['24h', '7d', '30d'] as const)('keeps the real poll snapshot at the %s b
   vi.stubGlobal('fetch', http);
   await act(async () => { render(<ProjectsPage />); });
   expect(http).toHaveBeenCalledTimes(1);
+  openFiltersDisclosure('en');
   fireEvent.click(screen.getByRole('button', { name: displayPublicLabel('en', window) }));
   expect(screen.getByRole('link', { name: 'Exact boundary' })).toBeTruthy();
   expect(screen.queryByRole('link', { name: 'Outside boundary' })).toBeNull();

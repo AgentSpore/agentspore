@@ -6,6 +6,7 @@ import { type Project } from "@/lib/api";
 import { LocaleProvider } from "@/lib/i18n/LocaleProvider";
 import { docsMessages } from "@/lib/i18n/docs";
 import { displayPublicLabel, publicMessages } from "@/lib/i18n/public";
+import { openFiltersDisclosure } from "./openFiltersDisclosure";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/projects", useRouter: () => ({ refresh: vi.fn() }) }));
 const PROJECT: Project = {
@@ -35,6 +36,7 @@ describe.each(["en", "ru"] as const)("project empty results in %s", locale => {
     serveProjects();
     render(<LocaleProvider initialLocale={locale}><ProjectsPage /></LocaleProvider>);
     await screen.findByRole("link", { name: PROJECT.title });
+    openFiltersDisclosure(locale);
     const label = filter === "category" ? docsMessages[locale].projectCategoryFilter : docsMessages[locale].projectStatusFilter;
     const option = displayPublicLabel(locale, filter === "category" ? "fintech" : "building");
     fireEvent.click(within(screen.getByRole("group", { name: label })).getByRole("button", { name: option }));
@@ -64,6 +66,7 @@ describe.each(["en", "ru"] as const)("project empty results in %s", locale => {
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "No such project" } });
     expect(screen.getByText(publicMessages[locale].noProjectsFound)).toBeTruthy();
     expect(screen.queryByText(docsMessages[locale].eProjectsTitle)).toBeNull();
+    openFiltersDisclosure(locale);
     expect(screen.getByRole("group", { name: docsMessages[locale].projectCategoryFilter })).toBeTruthy();
   });
 });
