@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/", useRouter: () => ({ refresh: vi.fn() }) }));
@@ -75,12 +75,41 @@ it.each(["en", "ru"] as const)("does not promise voting anywhere on the home pag
   expect(html).not.toMatch(/\bvot|голосуй|голосуют|голосовани|голосов(?!ой|ого|ые)/i);
 });
 
-it("translates the status terminal rows and hides decorative window titles from assistive technology in ru", () => {
-  const html = renderToString(
-    <LocaleProvider initialLocale="ru"><HomePageClient initialData={EMPTY_DATA} /></LocaleProvider>,
-  );
-  for (const raw of ["agents.active", "projects.total", "commits.count", "deploys.live"]) expect(html).not.toContain(raw);
-  expect(html).toMatch(/<span aria-hidden="true"[^>]*>platform:\/\/status<\/span>/);
+const SERVICE = { id: "00000000-0000-4000-8000-000000000001", title: "API PodMemory", description: "", status: "deployed", repo_url: "https://github.com/AgentSpore/podmemory", deploy_url: "https://podmemory.agentspore.com" };
+const WITH_SERVICE: HomePageInitialData = { ...EMPTY_DATA, services: { status: "ready", projects: [SERVICE] } };
+
+describe("home first screen", () => {
+  it.each(["en", "ru"] as const)("has exactly one primary action and a text link to connect an agent in %s", locale => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    const { container } = render(<LocaleProvider initialLocale={locale}><HomePageClient initialData={WITH_SERVICE} /></LocaleProvider>);
+    const hero = container.querySelector("h1")!.closest("section")!;
+    const primary = hero.querySelectorAll("a.bg-white, button.bg-white");
+    expect(primary).toHaveLength(1);
+    expect(primary[0]!.textContent).toBe(locale === "en" ? "Try a service" : "Попробовать сервис");
+    expect(primary[0]!.getAttribute("href")).toBe("#home-services-title");
+    const connect = within(hero).getByRole("link", { name: locale === "en" ? "Connect an agent" : "Подключить агента" });
+    expect(connect.getAttribute("href")).toBe("/workspace#connect-agent");
+    expect(connect.className).not.toContain("bg-");
+    expect(hero.textContent).not.toMatch(/\u2014/);
+  });
+
+  it.each(["en", "ru"] as const)("shows the service name and its action in the row right after the hero in %s", locale => {
+    const html = renderToString(<LocaleProvider initialLocale={locale}><HomePageClient initialData={WITH_SERVICE} /></LocaleProvider>);
+    const hero = html.indexOf("<h1");
+    const row = html.indexOf('id="home-services-title"');
+    expect(row).toBeGreaterThan(hero);
+    const afterRow = html.slice(row, html.indexOf("</article>", row));
+    expect(afterRow).toContain("PodMemory");
+    expect(afterRow).toContain(locale === "en" ? "Open PodMemory" : "Открыть PodMemory");
+    expect(html.indexOf('id="home-new-here"')).toBeGreaterThan(row);
+  });
+
+  it.each(["en", "ru"] as const)("drops the status terminal and the two card pair from home in %s", locale => {
+    const html = renderToString(<LocaleProvider initialLocale={locale}><HomePageClient initialData={EMPTY_DATA} /></LocaleProvider>);
+    expect(html).not.toContain("platform://status");
+    expect(html).not.toContain('id="home-people"');
+    expect(html).not.toContain('id="home-agent-owners"');
+  });
 });
 
 it.each(['en', 'ru'] as const)('labels imported activity and links its real GitHub source in %s', locale => {

@@ -123,10 +123,11 @@ class HomeServicesTests(BrowserFixture, unittest.TestCase):
                 self.assertTrue(link.get_attribute("href").startswith("https://"))
             expect(self.section.locator('a[href*="docs/user-guide.md"]')).to_have_count(1)
             expect(self.section.get_by_text("backup", exact=False).first).to_be_visible() if locale == "en" else None
-            expect(self.page.locator('section[aria-labelledby="home-agent-owners"] a')).to_be_visible()
+            expect(self.page.locator('h1').locator('xpath=ancestor::section').get_by_role('link', name='Connect an agent' if locale == 'en' else 'Подключить агента')).to_have_attribute('href', '/workspace#connect-agent')
             expect(self.page.locator("header nav:visible a").first).to_have_attribute("href", "/showcase")
             self.page.wait_for_timeout(1700)
-            counters = self.page.locator(".fade-in-d4 .tabular-nums").all_text_contents()
+            line = self.page.locator("p.tabular-nums").inner_text()
+            counters = [re.sub(r"\D", "", part.split(": ")[1]) for part in line.split(" · ")]
             snapshots.append({"locale": locale, "counters": counters})
             keys = ("active_agents", "total_projects", "total_code_commits", "projects_deployed", "total_reviews", "total_prs_merged")
             self.assertEqual(counters[:6], [str(self.stats[key]) for key in keys])
@@ -134,7 +135,7 @@ class HomeServicesTests(BrowserFixture, unittest.TestCase):
             self.doCleanups()
         (self.options.screenshots / "settled-home.json").write_text(json.dumps(snapshots, ensure_ascii=False))
 
-    def test_02_keyboard_mobile_menu_details_and_widths(self):
+    def test_02_keyboard_mobile_menu_action_focus_and_widths(self):
         for width in (320, 390, 1440):
             self.open_home("ru", width)
             if width < 1024:
@@ -147,10 +148,8 @@ class HomeServicesTests(BrowserFixture, unittest.TestCase):
                 self.page.keyboard.press("Escape")
                 expect(toggle).to_be_focused()
                 expect(toggle).to_have_attribute("aria-expanded", "false")
-            summary = self.section.locator("summary").first
-            summary.focus()
-            self.page.keyboard.press("Enter")
-            expect(summary.locator("..")).to_have_attribute("open", "")
+            action = self.section.locator('a[target="_blank"]').first
+            action.focus()
             self.page.keyboard.press("Tab")
             self.assertFalse(self.page.evaluate("document.activeElement === document.body"))
             self.assert_clean()
@@ -204,8 +203,8 @@ class HomeServicesTests(BrowserFixture, unittest.TestCase):
         result = self.page.evaluate("""async () => {
           const result = await axe.run({include: [['header'],
             ['section[aria-labelledby="home-services-title"]'],
-            ['section[aria-labelledby="home-people"]'],
-            ['section[aria-labelledby="home-agent-owners"]']]},
+            ['main > section:first-child'],
+            ['section[aria-labelledby="home-new-here"]']]},
             {runOnly: {type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']}});
           return result.violations.map(v => ({id:v.id, impact:v.impact, count:v.nodes.length, targets:v.nodes.map(n=>n.target)}));
         }""")

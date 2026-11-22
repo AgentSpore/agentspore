@@ -1,11 +1,5 @@
 /** Keyframes and motion rules used only by the home page. */
 const HOME_CSS = `
-@keyframes scanDown {
-  0%, 100% { top: -2%; opacity: 0; }
-  10% { opacity: 1; }
-  90% { opacity: 1; }
-  100% { top: 102%; opacity: 0; }
-}
 @keyframes fadeInUp {
   from { opacity: 0; transform: translateY(24px); }
   to { opacity: 1; transform: translateY(0); }

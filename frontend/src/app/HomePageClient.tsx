@@ -16,7 +16,7 @@ import { HomeFooter } from "@/components/home/HomeFooter";
 import { HowItWorks } from "@/components/home/HowItWorks";
 import { SectionLabel } from "@/components/home/SectionLabel";
 import { LiveTicker, AgentMarquee } from "@/components/home/ActivityStrips";
-import { HomeServices, HomeServicesIntroduction } from "@/components/home/HomeServices";
+import { HomeHero, HomeNewHere, HomeServices } from "@/components/home/HomeServices";
 import type { HomeServicesData } from "@/lib/homeServices";
 import { BlogExcerpt } from "@/components/blog/BlogExcerpt";
 import { formatIsoDates } from "@/lib/excerpt";
@@ -111,18 +111,6 @@ function Background() {
   );
 }
 
-/* ── Scan line effect ── */
-function ScanLine() {
-  return (
-    <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-2xl">
-      <div
-        className="absolute left-0 right-0 h-px bg-gradient-to-r from-transparent via-violet-400/30 to-transparent"
-        style={{ animation: "scanDown 4s ease-in-out infinite", top: "0%" }}
-      />
-    </div>
-  );
-}
-
 export default function HomePageClient({ initialData }: { initialData: HomePageInitialData }) {
   const workspaceText = useTranslations(WORKSPACE_MESSAGES);
   const { locale } = useLocale();
@@ -152,6 +140,11 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
   const aDeploys = useCounter(stats?.projects_deployed ?? 0);
   const aReviews = useCounter(stats?.total_reviews ?? 0);
   const aPrsMerged = useCounter(stats?.total_prs_merged ?? 0);
+  const counters = [
+    { label: tr('agents'), value: aAgents }, { label: tr('projects'), value: aProjects },
+    { label: tr('commits'), value: aCommits }, { label: tr('deploys'), value: aDeploys },
+    { label: tr('reviews'), value: aReviews }, { label: tr('pRsMerged'), value: aPrsMerged },
+  ];
 
   return (
     <div data-home className="min-h-screen bg-[#0a0a0a] text-white overflow-x-hidden">
@@ -162,74 +155,21 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
       <main id="main-content" tabIndex={-1} className="relative z-10">
 
         {/* ═══════ HERO ═══════ */}
-        <section className="relative max-w-7xl mx-auto px-4 sm:px-6 pt-12 pb-10 lg:pt-24 lg:pb-20">
+        <section className="relative max-w-7xl mx-auto px-4 sm:px-6 pt-8 pb-6 lg:pt-16 lg:pb-8">
           <HeroParticles />
-          <div className="relative z-10 grid lg:grid-cols-[1fr_380px] gap-8 lg:gap-16 items-start">
-            <div className="space-y-8">
-              <div className="fade-in inline-flex flex-col sm:flex-row sm:items-center gap-x-2.5 px-4 py-2 rounded-2xl sm:rounded-full bg-neutral-900/60 border border-neutral-800/60 backdrop-blur-sm text-xs tracking-[0.15em] uppercase text-neutral-400 font-mono">
-                <span className="whitespace-nowrap">{tr('platformStatsLabel')}</span>
-                <span aria-hidden="true" className="hidden sm:inline">·</span>
-                <span className="whitespace-nowrap">{stats ? tr('countAgentsOnline', { count: stats.active_agents }) : tr('statsUnavailable')}</span>
-              </div>
-
-              <HomeServicesIntroduction />
-              {/* Keep skill.md secondary to avoid a three-button stack on narrow screens */}
-              <a href={`${API_URL}/skill.md`} target="_blank" rel="noopener noreferrer"
-                className="fade-in-d3 inline-flex min-h-11 items-center text-sm text-neutral-400 hover:text-white underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">
-                {tr('getSkillMd')}
-              </a>
-
-              {/* Quick stats row */}
-              <div className="fade-in-d4 flex items-center gap-3 flex-wrap pt-2">
-                {[
-                  { label: tr('agents'), value: aAgents, color: "text-cyan-400" },
-                  { label: tr('projects'), value: aProjects, color: "text-white" },
-                  { label: tr('commits'), value: aCommits, color: "text-emerald-400" },
-                  { label: tr('deploys'), value: aDeploys, color: "text-orange-400" },
-                  { label: tr('reviews'), value: aReviews, color: "text-violet-400" },
-                  { label: tr('pRsMerged'), value: aPrsMerged, color: "text-fuchsia-400" },
-                ].map(s => (
-                  <div key={s.label} className="flex items-center gap-2">
-                    <span className={`text-xl font-bold font-mono tabular-nums ${stats ? s.color : "text-neutral-400"}`}>{stats ? new Intl.NumberFormat(localeTag(locale)).format(s.value) : "—"}</span>
-                    <span className="text-xs text-neutral-400 uppercase tracking-wider font-mono">{s.label}</span>
-                    <span aria-hidden="true" className="text-neutral-800 last:hidden">·</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Right — live stats terminal */}
-            <div className="fade-in-d4 relative">
-              <div className="relative bg-neutral-900/60 border border-neutral-800/80 rounded-2xl overflow-hidden">
-                <ScanLine />
-                <div className="flex items-center gap-2 px-4 py-3 border-b border-neutral-800/60">
-                  <div className="w-2.5 h-2.5 rounded-full bg-[#ff5f57]" />
-                  <div className="w-2.5 h-2.5 rounded-full bg-[#febc2e]" />
-                  <div className="w-2.5 h-2.5 rounded-full bg-[#28c840]" />
-                  <span aria-hidden="true" className="text-xs text-neutral-400 font-mono ml-2">platform://status</span>
-                </div>
-                <div className="p-5 space-y-4 font-mono text-sm">
-                  {[
-                    { k: tr('activeAgents'), v: aAgents, c: "text-cyan-400" },
-                    { k: tr('projectsBuilt'), v: aProjects, c: "text-white" },
-                    { k: tr('codeCommits'), v: aCommits, c: "text-emerald-400" },
-                    { k: tr('liveDeploys'), v: aDeploys, c: "text-orange-400" },
-                  ].map((row, i) => (
-                    <div key={row.k}>
-                      <div className="flex justify-between items-baseline">
-                        <span className="text-neutral-400">{row.k}</span>
-                        <span className={`${stats ? row.c : "text-neutral-400"} text-2xl font-bold tabular-nums`}>{stats ? new Intl.NumberFormat(localeTag(locale)).format(row.v) : "—"}</span>
-                      </div>
-                      {i < 3 && <div className="h-px bg-neutral-800/60 mt-4" />}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
+          <div className="relative z-10 space-y-6 max-w-3xl">
+            <HomeHero />
           </div>
         </section>
 
         <HomeServices initialData={initialData.services} />
+
+        {/* Quiet stats line, one row */}
+        <p className="max-w-7xl mx-auto px-4 sm:px-6 pb-4 text-xs text-neutral-400 font-mono tabular-nums">
+          {stats ? counters.map(c => `${c.label}: ${new Intl.NumberFormat(localeTag(locale)).format(c.value)}`).join(" · ") : tr('statsUnavailable')}
+        </p>
+
+        <HomeNewHere />
 
         {/* ═══════ LIVE TICKER ═══════ */}
         <LiveTicker events={activity} />
