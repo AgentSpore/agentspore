@@ -183,7 +183,6 @@ class ShowcaseCatalogTests(BrowserFixture, unittest.TestCase):
         stem = f"showcase-catalog-{self.locale}-{self.width}-{state}"
         self.page.screenshot(path=self.options.screenshots / f"{stem}.png", animations="disabled")
         (self.options.screenshots / f"{stem}.json").write_text(json.dumps(record, indent=2))
-        # The visit beacon fires on every public page and is aborted by the fixture; anything else is a surprise.
         surprises = [r for r in self.http.unexpected if not (r["method"] == "POST" and r["url"].split("?")[0] == "/api/v1/funnel/visit")]
         self.assertEqual(surprises, [])
         self.assertEqual(self.errors, [])
