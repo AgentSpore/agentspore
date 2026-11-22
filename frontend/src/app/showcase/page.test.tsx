@@ -19,19 +19,13 @@ function mockProjects() {
     { ...base, id: "1", title: "SignSafe", repo_url: "https://github.com/Example/signsafe", status: "archived", deploy_url: "https://old.example.test" },
     { ...base, id: "2", title: "Archived Verdict", repo_url: "https://github.com/Example/verdict", status: "archived", deploy_url: "https://old.example.test" },
     { ...base, id: "3", title: "No URL", repo_url: "https://github.com/Example/otkrytka", status: "active", deploy_url: null },
-    { ...base, id: "4", title: "Live Verdict", repo_url: "https://github.com/Example/verdict", status: "deployed", deploy_url: "https://actual.example.test/app" },
-  ];
+    { ...base, id: "4", title: "Live Verdict", repo_url: "https://github.com/Example/verdict", status: "deployed", deploy_url: "https://actual.example.test/app", service_live: true },
+    ...["podmemory", "otkrytka", "pereklichka", "saascalc"].map((slug, index) => ({ ...base, id: `s${index}`, title: `Live ${slug}`, repo_url: `https://github.com/Example/${slug}`, status: "deployed", deploy_url: `https://${slug}.example.test`, service_live: true })),
+  ].map(project => ({ service_live: false, ...project }));
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(projects), { status: 200 })));
 }
 
 describe("Showcase demo links", () => {
-  it("withdraws SignSafe from the curated showcase", async () => {
-    mockProjects();
-    render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
-    await screen.findByRole("heading", { name: /^Live Verdict/ });
-    expect(screen.queryByRole("heading", { name: /^SignSafe/ })).toBeNull();
-  });
-
   it("hides archived or missing deployments and preserves the real live URL", async () => {
     mockProjects();
     render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
@@ -51,9 +45,10 @@ function featuredCard(name: string) {
   return within(card);
 }
 
-  it.each(["en", "ru"] as const)("keeps launch visible and setup expandable in %s", locale => {
-    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+  it.each(["en", "ru"] as const)("keeps launch visible and setup expandable in %s", async locale => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
     render(<LocaleProvider initialLocale={locale}><ShowcasePage /></LocaleProvider>);
+    await screen.findByText(locale === "en" ? /no catalog apps found/i : /в каталоге пока нет/i);
     for (const card of screen.getAllByRole("article")) {
       const details = card.querySelector("details");
       if (!details) throw new Error("Service details are missing");
@@ -71,9 +66,10 @@ function featuredCard(name: string) {
   });
 
 describe("Showcase service selection", () => {
-  it("does not promise all catalog services are running today", () => {
-    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+  it("does not promise all catalog services are running today", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
     render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
+    await screen.findByText(/no catalog apps found/i);
     expect(screen.queryByText(/running service today/i)).toBeNull();
     expect(screen.getAllByRole("article")).toHaveLength(4);
   });
@@ -126,7 +122,7 @@ describe("Showcase service selection", () => {
     expect(family.getByRole("link", { name: "Прочитать инструкцию" }).getAttribute("href"))
       .toBe("https://github.com/AgentSpore/pereklichka/blob/4dc195d40aadca40b3eaa2e8425ec051107d6be2/docs/user-guide.md");
     expect(family.getByText("Не рассчитывайте на семейные отчёты или экстренную помощь. Голосовой разговор независимо не проверен.")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Каталог проектов" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Архив проектов" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "English" }));
     expect(screen.getByRole("heading", { name: "Pereklichka" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Live Verdict: live demo" }).getAttribute("href"))

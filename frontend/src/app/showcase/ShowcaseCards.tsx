@@ -1,6 +1,5 @@
 import type { Project } from "@/lib/api";
 import { SERVICE_CONTACT_URL, SHOWCASE_COPY, type CuratedService, type ShowcaseLanguage } from "./curatedServices";
-import { descriptionInLanguage } from "./descriptionText";
 import { ServiceMark, ServiceThumb } from "./ServiceThumb";
 
 const FOCUS = "focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-violet-300";
@@ -44,19 +43,16 @@ export function CuratedCard({ service, language }: { service: CuratedService; la
   );
 }
 
-function primaryHref(p: Project): string | null {
-  return p.status !== "archived" && p.deploy_url ? p.deploy_url : p.repo_url;
+/** Live projects link to their running service; archived ones never do. */
+export type CardMode = "live" | "archive";
+
+function primaryHref(p: Project, mode: CardMode): string | null {
+  return mode === "live" && p.deploy_url ? p.deploy_url : p.repo_url;
 }
 
-function cardDescription(p: Project, language: ShowcaseLanguage): string {
+export function ShowcaseCard({ project: p, index, language, mode }: { project: Project; index: number; language: ShowcaseLanguage; mode: CardMode }) {
   const copy = SHOWCASE_COPY[language];
-  if (!p.description?.trim()) return copy.noDescription;
-  return descriptionInLanguage(p.description, language) ?? copy.otherLanguage;
-}
-
-export function ShowcaseCard({ project: p, index, language }: { project: Project; index: number; language: ShowcaseLanguage }) {
-  const copy = SHOWCASE_COPY[language];
-  const href = primaryHref(p);
+  const href = primaryHref(p, mode);
   const repoPath = p.repo_url?.replace("https://github.com/", "") || "";
   const showRepoLink = Boolean(p.repo_url) && href !== p.repo_url;
   return (
@@ -71,7 +67,7 @@ export function ShowcaseCard({ project: p, index, language }: { project: Project
           {repoPath && <span className="mt-1 block whitespace-normal font-mono text-xs tracking-wide text-neutral-600 [overflow-wrap:anywhere]">{repoPath}</span>}
         </div>
       </div>
-      <p className="line-clamp-2 flex-1 text-xs leading-relaxed text-neutral-500">{cardDescription(p, language)}</p>
+      <p className="line-clamp-2 flex-1 text-xs leading-relaxed text-neutral-500">{p.description?.trim() || copy.noDescription}</p>
       {p.tech_stack.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {p.tech_stack.slice(0, 4).map(t => (

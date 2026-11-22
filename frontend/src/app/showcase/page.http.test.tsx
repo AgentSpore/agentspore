@@ -47,8 +47,8 @@ function catalogHTTP() {
 }
 function openCatalog(locale: Locale) {
   render(<AppRouterContext.Provider value={router}><LocaleProvider initialLocale={locale}><ShowcasePage /></LocaleProvider></AppRouterContext.Provider>);
-  const section = screen.getByRole('heading', { name: SHOWCASE_COPY[locale].catalog }).closest('section');
-  if (!section) throw new Error('Missing project catalog section');
+  const section = screen.getByRole('heading', { name: SHOWCASE_COPY[locale].archive }).closest('section');
+  if (!section) throw new Error('Missing project archive section');
   return within(section);
 }
 async function finish(pending: ReturnType<typeof deferredResponse>, projects: Project[]) {
@@ -80,9 +80,9 @@ it.each([{ locale: 'en', mode: 'http' }, { locale: 'ru', mode: 'network' }] as c
     expect(catalog.queryByText(copy.unavailable)).toBeNull(); expect(http.requests).toHaveLength(2); expect(http.unexpected).toEqual([]);
   });
 
-it.each(['en', 'ru'] as const)('SC.HTTP a successful unlisted response in %s is catalog zero, not a data failure', async locale => {
+it.each(['en', 'ru'] as const)('SC.HTTP a successful response holding only a curated service in %s is archive zero, not a data failure', async locale => {
   const http = catalogHTTP(), initial = http.hold(), catalog = openCatalog(locale), copy = SHOWCASE_COPY[locale];
-  await finish(initial, [{ ...PROJECT, repo_url: 'https://github.com/Example/synthetic-unlisted-project' }]);
+  await finish(initial, [{ ...PROJECT, repo_url: 'https://github.com/Example/podmemory' }]);
   expect(catalog.getByText(`0 ${copy.apps}`)).toBeTruthy(); expect(catalog.getByText(copy.empty)).toBeTruthy();
   expect(catalog.queryByText(copy.unavailable)).toBeNull(); expect(catalog.queryByRole('status')).toBeNull();
   expect(catalog.queryByRole('heading', { name: new RegExp(`^${PROJECT.title}`) })).toBeNull(); expect(http.unexpected).toEqual([]);
