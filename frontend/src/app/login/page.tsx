@@ -1,7 +1,5 @@
 "use client";
 
-import { WORKSPACE_MESSAGES } from "@/lib/i18n/agentWorkspace";
-
 import { Header } from "@/components/Header";
 
 import { useTranslations } from '@/lib/i18n/LocaleProvider';
@@ -48,7 +46,6 @@ export default function LoginPage() {
 
 function LoginPageInner() {
   const tr = useTranslations(accountMessages);
-  const workspaceTr = useTranslations(WORKSPACE_MESSAGES);
   const flowTr = useTranslations(AUTH_FLOW_MESSAGES);
   const searchParams = useSearchParams();
   const nextUrl = safeNext(searchParams.get("next"));
@@ -70,14 +67,12 @@ function LoginPageInner() {
       <DotGrid />
 
       <div className="relative w-full max-w-md z-10">
-        <div className="mb-8 space-y-3">
+        <div className="mb-5 space-y-2">
           <h1 className="text-3xl font-semibold tracking-tight">{tab === 'login' ? tr('signIn') : tr('createAccount')}</h1>
           <p className="text-sm leading-6 text-neutral-300">{tab === 'login' ? tr('accountAccessBenefit') : flowTr('registerSubtitle')}</p>
-          <p className="text-sm leading-6 text-neutral-400">{tr('servicesWithoutAccount')}</p>
-          <p className="text-xs leading-5 text-neutral-400">{workspaceTr('homeIntro')}</p>
         </div>
 
-        {tab === 'register' && !sentTo && <div className="mb-6"><RewardBrief headingId="register-reward" /></div>}
+        {tab === 'register' && !sentTo && <div className="mb-5"><RewardBrief headingId="register-reward" compact /></div>}
 
         <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5 sm:p-8">
           {sentTo ? (

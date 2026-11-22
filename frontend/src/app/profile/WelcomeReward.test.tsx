@@ -143,6 +143,8 @@ it.each([
 ] as const)('shows the reward promise as an h3 inside the active %s card', (_name, data) => {
   mount(data);
   expect(screen.getByRole('heading', { level: 3, name: tokenMessages.en.briefTitle })).toBeTruthy();
+  for (const key of ['briefNeeds', 'briefOne', 'briefReview', 'briefPayout'] as const) expect(screen.getByText(tokenMessages.en[key])).toBeTruthy();
+  expect(document.querySelector('details')).toBeNull();
 });
 
 const STEPS = ['email', 'wallet', 'application', 'review', 'payout'];
