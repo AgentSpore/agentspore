@@ -21,7 +21,7 @@ async function readProfile(id: string, signal: AbortSignal): Promise<ProfileRead
   if (response.status === 404) return { status: "not-found" };
   if (!response.ok) throw new Error("Agent profile request failed");
   const agent: Agent = await response.json();
-  if (!agent || agent.id !== id || typeof agent.name !== "string") throw new Error("Invalid agent identity");
+  if (!agent || typeof agent.id !== "string" || (agent.id !== id && agent.handle !== id) || typeof agent.name !== "string") throw new Error("Invalid agent identity");
   if (agent.skills != null && (!Array.isArray(agent.skills) || !agent.skills.every(skill => typeof skill === "string"))) throw new Error("Invalid agent skills");
   return { status: "ready", agent };
 }
@@ -30,22 +30,29 @@ function sectionValue<T>(result: PromiseSettledResult<T>, previous: T, section: 
   failures.push(section);
   return previous;
 }
-async function readBatch(id: string, signal: AbortSignal) {
-  return Promise.allSettled([
-    readProfile(id, signal),
-    readJSON<ActivityEvent[]>(`/api/v1/activity?agent_id=${id}&limit=50`, signal),
-    readJSON<ModelUsageStats | null>(`/api/v1/agents/${id}/model-usage`, signal),
-    readJSON<{ activities?: GitHubActivityItem[] }>(`/api/v1/agents/${id}/github-activity?limit=50`, signal).then(body => body.activities ?? []),
-    readJSON<AgentBadge[]>(`/api/v1/agents/${id}/badges`, signal),
+type Sections = [PromiseSettledResult<ActivityEvent[]>, PromiseSettledResult<ModelUsageStats | null>, PromiseSettledResult<GitHubActivityItem[]>, PromiseSettledResult<AgentBadge[]>];
+type Batch = { profile: ProfileRead; sections: Sections | null };
+/** Resolve the profile by route id or handle, then read every section by the canonical agent id. */
+async function readBatch(id: string, signal: AbortSignal): Promise<Batch> {
+  const profile = await readProfile(id, signal);
+  signal.throwIfAborted();
+  if (profile.status !== "ready") return { profile, sections: null };
+  const agentId = profile.agent.id;
+  const sections = await Promise.allSettled([
+    readJSON<ActivityEvent[]>(`/api/v1/activity?agent_id=${agentId}&limit=50`, signal),
+    readJSON<ModelUsageStats | null>(`/api/v1/agents/${agentId}/model-usage`, signal),
+    readJSON<{ activities?: GitHubActivityItem[] }>(`/api/v1/agents/${agentId}/github-activity?limit=50`, signal).then(body => body.activities ?? []),
+    readJSON<AgentBadge[]>(`/api/v1/agents/${agentId}/badges`, signal),
   ]);
+  return { profile, sections };
 }
-function readyDetails(previous: Details, results: Awaited<ReturnType<typeof readBatch>>, agent: Agent, revision: number): Details {
+function readyDetails(previous: Details, sections: Sections, agent: Agent, revision: number): Details {
   const failures: Section[] = [];
   return { ...previous, revision, status: "ready", agent, pending: false,
-    activities: sectionValue(results[1], previous.activities, "activity", failures),
-    modelUsage: sectionValue(results[2], previous.modelUsage, "model", failures),
-    githubActivity: sectionValue(results[3], previous.githubActivity, "github", failures),
-    badges: sectionValue(results[4], previous.badges, "badges", failures), failures };
+    activities: sectionValue(sections[0], previous.activities, "activity", failures),
+    modelUsage: sectionValue(sections[1], previous.modelUsage, "model", failures),
+    githubActivity: sectionValue(sections[2], previous.githubActivity, "github", failures),
+    badges: sectionValue(sections[3], previous.badges, "badges", failures), failures };
 }
 
 /** Read one public profile batch, preserving usable sections without accepting old-route results. */
@@ -60,12 +67,13 @@ export function useAgentDetails(id: string) {
   useEffect(() => {
     const controller = new AbortController(), epoch = ++epochRef.current;
     requestRef.current = controller;
-    void readBatch(id, controller.signal).then(results => {
+    void readBatch(id, controller.signal).then(({ profile, sections }) => {
       if (controller.signal.aborted || epochRef.current !== epoch) return;
-      const profile = results[0];
-      if (profile.status === "rejected") setDetails({ ...initialDetails(id, revision), status: "error", pending: false });
-      else if (profile.value.status === "not-found") setDetails({ ...initialDetails(id, revision), status: "not-found", pending: false });
-      else { const agent = profile.value.agent; setDetails(previous => readyDetails(previous.id === id ? previous : initialDetails(id, revision), results, agent, revision)); }
+      if (profile.status === "not-found" || !sections) setDetails({ ...initialDetails(id, revision), status: "not-found", pending: false });
+      else setDetails(previous => readyDetails(previous.id === id ? previous : initialDetails(id, revision), sections, profile.agent, revision));
+    }, () => {
+      if (controller.signal.aborted || epochRef.current !== epoch) return;
+      setDetails({ ...initialDetails(id, revision), status: "error", pending: false });
     }).finally(() => { if (requestRef.current === controller) requestRef.current = null; });
     return () => { controller.abort(); epochRef.current += 1; if (requestRef.current === controller) requestRef.current = null; };
   }, [id, revision]);

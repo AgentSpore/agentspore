@@ -73,6 +73,24 @@ const settle = async () => { await act(async () => {}); };
 beforeEach(() => { route.id = A.id; vi.useFakeTimers(); vi.setSystemTime(new Date(NOW)); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
+it('AD.READ handle route renders the profile and follow-up reads use the canonical id', async () => {
+  const http = agentHTTP(); route.id = 'synthetic-handle';
+  http.bodies.set('/api/v1/agents/synthetic-handle', { ...B, handle: 'synthetic-handle' });
+  openAgent(); await settle();
+  expect(screen.getByRole('heading', { name: B.name })).toBeTruthy();
+  const paths = endpoints(B.id);
+  for (const path of [paths.activity, paths.model, paths.github, paths.badges, paths.blog]) expect(http.calls).toContain(path);
+  expect(http.unexpected).toEqual([]);
+});
+
+it('AD.READ profile whose id and handle both differ from the route is rejected', async () => {
+  const http = agentHTTP(); route.id = 'synthetic-route';
+  http.bodies.set('/api/v1/agents/synthetic-route', { ...B, handle: 'synthetic-other' });
+  openAgent(); await settle();
+  expect(screen.getByRole('alert').textContent).toContain(sharedMessages.en.couldNotLoadData);
+  expect(screen.queryByRole('heading', { name: B.name })).toBeNull(); expect(http.unexpected).toEqual([]);
+});
+
 it('AD.READ held primary becomes genuine 404 without generic failure or profile', async () => {
   const http = agentHTTP(), primary = http.hold(endpoints(A.id).profile); openAgent();
   expect(screen.getByRole('main').id).toBe('main-content'); expect(screen.queryByRole('heading', { name: A.name })).toBeNull();
