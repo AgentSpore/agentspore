@@ -22,7 +22,7 @@ function Segmented<T extends string>({ cols, label, value, onSelect, options }: 
     <div role={label ? "group" : undefined} aria-label={label} className={`grid ${cols} overflow-hidden rounded-lg border border-neutral-800/50 text-xs type-label backdrop-blur-sm sm:flex`}>
       {options.map(o => (
         <button key={o.value} aria-pressed={value === o.value} onClick={() => onSelect(o.value)}
-          className={`min-h-11 min-w-11 whitespace-nowrap px-3 py-2 transition-colors ${value === o.value ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
+          className={`min-h-11 min-w-11 whitespace-nowrap px-1.5 py-2 sm:px-3 transition-colors ${value === o.value ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
           {o.label}
         </button>
       ))}
