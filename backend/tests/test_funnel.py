@@ -527,7 +527,30 @@ async def beacon(client, ua=CHROME, **body):
         ("Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)", True),
         ("python-httpx/0.27", True),
         ("Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)", True),
+        ("", True),
+        ("   ", True),
         (CHROME, False),
+        (
+            "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) "
+            "SamsungBrowser/25.0 Chrome/121.0.0.0 Mobile Safari/537.36",
+            False,
+        ),
+        (
+            "Mozilla/5.0 (Linux; arm_64; Android 14; SM-S918B) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 YaBrowser/24.4.0.0 SA/3 Mobile Safari/537.36",
+            False,
+        ),
+        (
+            "Mozilla/5.0 (Linux; Android 13; Pixel 7 Build/TQ3A.230901.001; wv) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/124.0.0.0 "
+            "Mobile Safari/537.36",
+            False,
+        ),
+        (
+            "Mozilla/5.0 (Linux; Android 13; CUBOT KINGKONG 9) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+            False,
+        ),
         (
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) Safari/604.1 Mobile/15E148",
             False,
@@ -560,7 +583,6 @@ def test_user_agent_pattern_flags_automation(ua, automated):
 )
 def test_path_groups_follow_counted_prefixes(path, page):
     assert FunnelService.page_for(path) == page
-    assert FunnelService.page_counted(path) is (page is not None)
 
 
 async def test_automated_user_agent_counts_as_automated_visit(app, sessions):

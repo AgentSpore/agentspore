@@ -55,7 +55,7 @@ PAGE_PREFIXES = (
     "/token",
 )
 AUTOMATION_UA = re.compile(
-    r"bot|crawl|spider|slurp|preview|curl|wget|python|httpx|go-http|node|axios"
+    r"(?<!cu)bot|crawl|spider|slurp|preview|curl|wget|python|httpx|go-http|node|axios"
     r"|headless|lighthouse|playwright|monitor|uptime",
     re.IGNORECASE,
 )
@@ -90,7 +90,8 @@ class FunnelService:
 
     @staticmethod
     def is_automated(ua: str) -> bool:
-        return AUTOMATION_UA.search(ua) is not None
+        """No user agent at all, or one matching the bot/script/headless pattern."""
+        return not ua.strip() or AUTOMATION_UA.search(ua) is not None
 
     @staticmethod
     def page_for(path: str) -> str | None:
@@ -101,10 +102,6 @@ class FunnelService:
             if path == prefix or path.startswith(prefix + "/"):
                 return prefix[1:]
         return None
-
-    @classmethod
-    def page_counted(cls, path: str) -> bool:
-        return cls.page_for(path) is not None
 
     async def record(self, step: str, source: str = "direct") -> None:
         """Count one event. Own session: a failure never touches the caller's transaction."""
