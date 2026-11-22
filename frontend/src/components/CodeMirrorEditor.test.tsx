@@ -18,7 +18,7 @@ it('reconfigures the real editor without losing code, selection or calling onCha
   const content = screen.getByRole('textbox', { name: 'Code editor' });
   const editor = EditorView.findFromDOM(content)!;
   act(() => { editor.dispatch({ selection: { anchor: 7 } }); });
-  fireEvent.click(screen.getByRole('button', { name: 'Русский' }));
+  fireEvent.click(screen.getByRole('button', { name: 'RU Русский' }));
   expect(EditorView.findFromDOM(content)).toBe(editor);
   expect(editor.state.doc.toString()).toBe(code);
   expect(editor.state.selection.main.anchor).toBe(7);

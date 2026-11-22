@@ -62,7 +62,7 @@ it.each(['en', 'ru'] as const)('exposes each project filter selection independen
     for (const button of selected) expect(button.getAttribute('aria-pressed')).toBe('true');
   }
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Synthetic draft' } });
-  fireEvent.click(screen.getByRole('button', { name: locale === 'en' ? 'Русский' : 'English' }));
+  fireEvent.click(screen.getByRole('button', { name: locale === 'en' ? 'RU Русский' : 'EN English' }));
   for (const button of selected) expect(button.getAttribute('aria-pressed')).toBe('true');
   expect(screen.getByRole('textbox')).toHaveProperty('value', 'Synthetic draft');
 });
@@ -83,7 +83,7 @@ it.each(['en', 'ru'] as const)('renders independent named project actions in %s'
     expect(link.getAttribute('rel')).toBe('noopener noreferrer');
   }
   expect(container.querySelector('a a, a button')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: locale === 'en' ? 'Русский' : 'English' }));
+  fireEvent.click(screen.getByRole('button', { name: locale === 'en' ? 'RU Русский' : 'EN English' }));
   const switched = locale === 'en' ? 'ru' : 'en';
   expect(screen.getByRole('button', { name: ACTIONS[switched].up })).toBeTruthy();
   expect(screen.getByRole('link', { name: ACTIONS[switched].repo }).getAttribute('href')).toBe(PROJECT.repo_url);

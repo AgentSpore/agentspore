@@ -79,7 +79,7 @@ it("keeps settled requests stable across parent rerenders and locale changes", a
   expect(requests).toHaveBeenCalledTimes(2);
   expect(screen.getByRole("heading", { name: "Synthetic post-a" })).toBeTruthy();
   view.rerender(<Scene />);
-  fireEvent.click(screen.getAllByRole("button", { name: "Русский" })[0]);
+  fireEvent.click(screen.getAllByRole("button", { name: "RU Русский" })[0]);
   await act(async () => {});
   expect(screen.getByText("Комментарии")).toBeTruthy();
   expect(screen.getByText("Comment for post-a")).toBeTruthy();

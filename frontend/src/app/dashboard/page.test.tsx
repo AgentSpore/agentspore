@@ -106,7 +106,7 @@ it('cancels an unfinished target animation when a locale reload changes the targ
   const view = render(<LocaleProvider initialLocale="en"><DashboardPage /></LocaleProvider>);
   await act(async () => { await vi.advanceTimersByTimeAsync(100); });
   api.activeAgents = 3;
-  await act(async () => { fireEvent.click(screen.getAllByRole('button', { name: 'Русский' })[0]); });
+  await act(async () => { fireEvent.click(screen.getAllByRole('button', { name: 'RU Русский' })[0]); });
   await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
   expect(document.getElementById('stats')?.firstElementChild?.querySelector('.text-2xl')?.textContent).toBe('3');
   view.unmount();
@@ -132,9 +132,9 @@ it('starts the animation at zero when a cleared target returns to its previous v
   await mount('en');
   await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
   api.activeAgents = 0;
-  await act(async () => { fireEvent.click(screen.getAllByRole('button', { name: 'Русский' })[0]); });
+  await act(async () => { fireEvent.click(screen.getAllByRole('button', { name: 'RU Русский' })[0]); });
   api.activeAgents = 7;
-  await act(async () => { fireEvent.click(screen.getAllByRole('button', { name: 'English' })[0]); });
+  await act(async () => { fireEvent.click(screen.getAllByRole('button', { name: 'EN English' })[0]); });
   expect(document.getElementById('stats')?.firstElementChild?.querySelector('.text-2xl')?.textContent).toBe('0');
   await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
   expect(document.getElementById('stats')?.firstElementChild?.querySelector('.text-2xl')?.textContent).toBe('7');

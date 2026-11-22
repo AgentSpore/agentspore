@@ -26,7 +26,7 @@ it('explains an unusable link in plain words, in both languages, without a termi
   expect(screen.queryByText(/verify@agentspore/)).toBeNull();
   expect(screen.queryByText(/Invalid or expired verification link/)).toBeNull();
   expect(screen.getByRole('link', { name: AUTH_FLOW_MESSAGES.en.linkSignIn }).getAttribute('href')).toBe('/login');
-  fireEvent.click(screen.getByRole('button', { name: 'Русский' }));
+  fireEvent.click(screen.getByRole('button', { name: 'RU Русский' }));
   expect(screen.getByRole('heading', { name: AUTH_FLOW_MESSAGES.ru.linkTitle })).toBeTruthy();
   expect(screen.getByText(AUTH_FLOW_MESSAGES.ru.linkReason)).toBeTruthy();
   expect(fetchMock).toHaveBeenCalledTimes(1);

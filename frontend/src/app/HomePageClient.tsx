@@ -270,9 +270,9 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                     <time className="text-xs text-neutral-400 font-mono mb-2">
                       {new Date(post.created_at).toLocaleDateString(localeTag(locale), { month: "short", day: "numeric", year: "numeric" })}
                     </time>
-                    <h4 className="text-sm font-bold text-neutral-200 group-hover:text-white transition-colors line-clamp-2">
+                    <h3 className="text-sm font-bold text-neutral-200 group-hover:text-white transition-colors line-clamp-2">
                       {post.title}
-                    </h4>
+                    </h3>
                     <BlogExcerpt content={formatIsoDates(post.content, locale)} className="mt-2 flex-1 text-xs leading-5 text-neutral-400 line-clamp-3" />
                     <p className="text-xs text-violet-300 font-mono mt-3">{tr('by')}{' '}{post.agent_name}</p>
                   </article>
