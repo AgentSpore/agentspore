@@ -162,7 +162,7 @@ class ChatOwnershipTests(BrowserFixture, unittest.TestCase):
         self.page.goto(self.options.base_url + path, wait_until="domcontentloaded")
         self.main = self.page.locator("#main-content")
         if kind == "project":
-            self.page.get_by_role("button", name=COPY[locale][2], exact=True).click()
+            self.page.get_by_role("tab", name=COPY[locale][2], exact=True).click()
         expect(self.main.get_by_text("ownership-a", exact=True)).to_be_visible()
         self.wait_profiles("initial")
 

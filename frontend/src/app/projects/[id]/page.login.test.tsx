@@ -87,7 +87,7 @@ function openProject(locale: Locale = 'en') {
   return { ...view, navigate: async () => { route.id = 'synthetic-b'; view.rerender(tree()); await settle(); } };
 }
 async function openUnderAccount() {
-  install(); const view = openProject(); await settle(); fireEvent.click(screen.getByRole('button', { name: /^Contributors/ }));
+  install(); const view = openProject(); await settle(); fireEvent.click(screen.getByRole('tab', { name: /^Contributors/ }));
   fireEvent.click(screen.getByRole('button', { name: publicMessages.en.requestToJoin })); await settle();
   fireEvent.click(screen.getByRole('button', { name: publicMessages.en.projectJoinSignInAgain })); return view;
 }

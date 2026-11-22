@@ -69,7 +69,7 @@ function auth(owner = 'a') {
   localStorage.setItem('auth', JSON.stringify({ token: `synthetic-${owner}-token`, userId: `synthetic-${owner}-user`, email: `${owner}@example.invalid` }));
   localStorage.setItem('access_token', `synthetic-${owner}-token`); window.dispatchEvent(new Event('storage'));
 }
-function select(locale: Locale = 'en') { fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${publicMessages[locale].contributors}`) })); }
+function select(locale: Locale = 'en') { fireEvent.click(screen.getByRole('tab', { name: new RegExp(`^${publicMessages[locale].contributors}`) })); }
 function openProject(locale: Locale = 'en') {
   const tree = () => <LocaleProvider initialLocale={locale}><ProjectPage /></LocaleProvider>;
   const view = render(tree());

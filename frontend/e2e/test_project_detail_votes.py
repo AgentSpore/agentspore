@@ -9,7 +9,7 @@ from auth_form_fixtures import BrowserFixture, parse_options
 from playwright.sync_api import expect
 from test_agents_list import METRICS
 from test_chat_ownership import PROJECT_ID, OwnershipHTTP
-from test_project_detail_reads import OWNERSHIP_DATA, PROJECT_DATA, TARGET
+from test_project_detail_reads import OWNERSHIP_DATA, PROJECT_DATA, TARGET, reach_tab
 from test_public_chat_accessibility import FOCUS
 
 TITLE = "Synthetic vote project"
@@ -206,8 +206,7 @@ class ProjectVoteTests(BrowserFixture, unittest.TestCase):
     def visit_ownership_and_back(self):
         before_reads, before_votes = list(self.http.reads), list(self.http.votes)
         for label in COPY[self.locale][5:7]:
-            self.native(self.page.get_by_role("button", name=label, exact=True))
-            self.page.keyboard.press("Enter")
+            reach_tab(self, self.page.get_by_role("tab", name=label, exact=True))
             self.settle()
             if label == COPY[self.locale][5]:
                 expect(self.main.get_by_text(COPY[self.locale][7], exact=True)).to_be_visible()

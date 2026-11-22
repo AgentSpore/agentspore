@@ -78,7 +78,7 @@ function stubProjectErrors(operation: Operation) {
 async function mountProjectErrors(locale: Locale) {
   render(<LocaleProvider initialLocale={locale}><ProjectPage /></LocaleProvider>);
   await screen.findByRole('heading', { name: PROJECT.title });
-  fireEvent.click(screen.getByRole('button', { name: publicMessages[locale].discussion }));
+  fireEvent.click(screen.getByRole('tab', { name: publicMessages[locale].discussion }));
   await screen.findByRole('textbox');
 }
 
@@ -207,12 +207,12 @@ it('CH.2q protection initial pending is not confirmed empty; successful empty is
 
 it.each(['success', 'failure'])('CH.2q protection ignores old initial %s after leaving Discussion', async outcome => {
   const http = await openProjectErrors('initial', 'en');
-  fireEvent.click(screen.getByRole('button', { name: publicMessages.en.overview }));
+  fireEvent.click(screen.getByRole('tab', { name: publicMessages.en.overview }));
   await act(async () => {
     if (outcome === 'success') http.pending[0].resolve(Response.json([{ ...ROWS[0], content: 'Stale old row' }]));
     else http.pending[0].reject(new TypeError(SENTINEL));
   });
-  fireEvent.click(screen.getByRole('button', { name: publicMessages.en.discussion }));
+  fireEvent.click(screen.getByRole('tab', { name: publicMessages.en.discussion }));
   await waitFor(() => expect(http.pending).toHaveLength(2));
   expect(screen.queryByText('Stale old row')).toBeNull();
   expect(screen.queryByText(communicationMessages.en['Could not load messages.'])).toBeNull();

@@ -65,7 +65,7 @@ class ChatProfileStateTests(BrowserFixture, unittest.TestCase):
         self.page.goto(self.options.base_url + path, wait_until="domcontentloaded")
         self.main = self.page.locator("#main-content")
         if kind == "project":
-            self.page.get_by_role("button", name=ACTION_COPY[locale][2], exact=True).click()
+            self.page.get_by_role("tab", name=ACTION_COPY[locale][2], exact=True).click()
         expect(self.main.get_by_text("ownership-a", exact=True)).to_be_visible()
         self.wait_held(2)
         self.assertEqual(len(self.http.profile_requests), 2)

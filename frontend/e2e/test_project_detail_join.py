@@ -10,7 +10,7 @@ from auth_form_fixtures import USER, BrowserFixture, parse_options
 from playwright.sync_api import expect
 from test_agents_list import METRICS
 from test_chat_ownership import PROJECT_ID, OwnershipHTTP
-from test_project_detail_reads import CONTRIBUTOR, OWNERSHIP_DATA, PROJECT_DATA, TARGET
+from test_project_detail_reads import CONTRIBUTOR, OWNERSHIP_DATA, PROJECT_DATA, TARGET, reach_tab
 from test_public_chat_accessibility import FOCUS
 
 BASE = f"/api/v1/projects/{PROJECT_ID}"
@@ -166,9 +166,8 @@ class ProjectJoinTests(BrowserFixture, unittest.TestCase):
         self.wait_count("A")
         self.wait_count("profile-A")
         expect(self.page.get_by_text(AUTH["A"]["email"], exact=True)).to_be_visible()
-        tab = self.page.get_by_role("button", name=re.compile("^" + COPY[locale][8] + r"(?:\s|$)"))
-        self.native(tab, measure=False)
-        self.page.keyboard.press("Enter")
+        tab = self.page.get_by_role("tab", name=re.compile("^" + COPY[locale][8] + r"(?:\s|$)"))
+        reach_tab(self, tab, measure=False)
         self.settle()
         self.header = self.main.get_by_text(COPY[locale][0], exact=True).locator("..")
         expect(self.main.get_by_text(MEMBER_NAME, exact=True)).to_be_visible()

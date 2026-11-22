@@ -76,7 +76,7 @@ function counts(up: number, down: number, locale: Locale = 'en') {
 }
 const posts = (http: ReturnType<typeof voteHTTP>) => http.calls.filter(call => call.method === 'POST');
 const gets = (http: ReturnType<typeof voteHTTP>) => http.calls.filter(call => call.method === 'GET');
-function section(key: 'overview' | 'ownership') { fireEvent.click(screen.getByRole('button', { name: publicMessages.en[key] })); }
+function section(key: 'overview' | 'ownership') { fireEvent.click(screen.getByRole('tab', { name: publicMessages.en[key] })); }
 beforeEach(() => { route.id = PROJECT.id; localStorage.clear(); vi.useFakeTimers(); vi.setSystemTime(new Date(NOW)); });
 afterEach(() => { cleanup(); localStorage.clear(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 

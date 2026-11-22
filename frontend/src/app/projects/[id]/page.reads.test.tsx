@@ -67,7 +67,7 @@ function openProject(locale: Locale = 'en') {
 const main = () => within(screen.getByRole('main'));
 function select(section: Section | 'overview', locale: Locale = 'en') {
   const label = section === 'contributors' ? publicMessages[locale].contributors : publicMessages[locale][section];
-  fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${label}`) }));
+  fireEvent.click(screen.getByRole('tab', { name: new RegExp(`^${label}`) }));
 }
 function counter(locale: Locale = 'en') {
   const container = main().getByText(publicMessages[locale].contributors, { exact: true }).parentElement;
@@ -167,10 +167,11 @@ it('PD.R3 auth refresh failure keeps confirmed contributor rows/count and Retry 
 it.each(['en', 'ru'] as const)('PD.R5 %s populated and successful empty sections are local with explicit selected state', async locale => {
   const http = projectHTTP(); http.bodies.set(path('ownership'), { ...OWNERSHIP, contributors: [] }); openProject(locale); await settle();
   expect(counter(locale).getByText('1')).toBeTruthy(); const before = http.calls.length;
+  expect(screen.getByRole('tablist', { name: publicMessages[locale].projectSections })).toBeTruthy();
   select('ownership', locale); expect(main().getByText(publicMessages[locale].noAgentContributorsYet)).toBeTruthy();
   select('contributors', locale); expect(main().getByText('Synthetic member A')).toBeTruthy(); select('overview', locale);
   expect(main().getByText(PROJECT.description)).toBeTruthy(); expect(http.calls).toHaveLength(before);
-  expect(screen.getByRole('button', { name: publicMessages[locale].overview }).getAttribute('aria-pressed')).toBe('true'); expect(http.unexpected).toEqual([]);
+  expect(screen.getByRole('tab', { name: publicMessages[locale].overview }).getAttribute('aria-selected')).toBe('true'); expect(http.unexpected).toEqual([]);
 });
 
 it('PD.R4 old contributor body cannot clear a newer account read pending or replace its result', async () => {
