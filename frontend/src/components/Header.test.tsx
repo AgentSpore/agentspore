@@ -298,7 +298,7 @@ it("keeps mobile navigation open and translates its groups when the locale chang
   const toggle = screen.getByRole("button", { name: "Menu" });
   fireEvent.click(toggle);
   expect(document.getElementById(toggle.getAttribute("aria-controls") ?? "")).toBeTruthy();
-  fireEvent.click(screen.getAllByRole("button", { name: "Русский" })[1]);
+  fireEvent.click(screen.getAllByRole("button", { name: "RU Русский" })[1]);
   expect(screen.getByRole("heading", { name: "Сервисы для людей" })).toBeTruthy();
   expect(screen.getByRole("heading", { name: "Платформа" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Меню" }).getAttribute("aria-expanded")).toBe("true");

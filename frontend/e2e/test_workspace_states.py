@@ -395,7 +395,7 @@ class WorkspaceStateTests(unittest.TestCase):
         collapse.press("Enter")
         expect(self.main.get_by_text("Synthetic receipt 1", exact=True)).to_have_count(0)
         language = page.get_by_role(
-            "button", name="Русский" if self.locale == "en" else "English", exact=True
+            "button", name="RU Русский" if self.locale == "en" else "EN English", exact=True
         ).first
         language.press("Enter")
         expect(page.locator("html")).to_have_attribute(

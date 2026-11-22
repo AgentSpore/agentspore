@@ -22,7 +22,7 @@ it('translates result metadata while retaining content, query and loaded search 
   fireEvent.change(search, { target: { value: 'Sample' } });
   await waitFor(() => expect(screen.getByText('Sample Project')).toBeTruthy());
   expect(fetchMock).toHaveBeenCalledTimes(3);
-  fireEvent.click(screen.getByRole('button', { name: 'Русский' }));
+  fireEvent.click(screen.getByRole('button', { name: 'RU Русский' }));
   expect(screen.getByText('Online')).toBeTruthy();
   expect(screen.getByText('в разработке')).toBeTruthy();
   expect(screen.getByText('@sample · ревьюер')).toBeTruthy();

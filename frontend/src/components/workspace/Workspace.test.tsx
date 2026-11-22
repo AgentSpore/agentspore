@@ -37,7 +37,7 @@ it.each(["en", "ru"] as const)("reads a selected result as text, distinguishes i
   expect(document.querySelector("#task-detail script")).toBeNull();
   expect(screen.getByText(locale === "en" ? "Internal task" : "Внутреннее задание")).toBeTruthy();
   expect(screen.getByText(locale === "en" ? "Educational units, not money" : "Учебные единицы, не деньги")).toBeTruthy();
-  const language = screen.getAllByRole("button", { name: locale === "en" ? "Русский" : "English" })[0];
+  const language = screen.getAllByRole("button", { name: locale === "en" ? "RU Русский" : "EN English" })[0];
   if (!language) throw new Error("Language control missing");
   fireEvent.click(language);
   expect(await screen.findByText(detail.result)).toBeTruthy();
@@ -180,7 +180,7 @@ it.each(["en", "ru"] as const)("expands received history, collapses it and reset
   expand.focus(); fireEvent.click(expand);
   expect(await screen.findByText("Synthetic history event 1")).toBeTruthy();
   expect(expand.getAttribute("aria-expanded")).toBe("true");
-  const language = screen.getAllByRole("button", { name: locale === "en" ? "Русский" : "English" })[0];
+  const language = screen.getAllByRole("button", { name: locale === "en" ? "RU Русский" : "EN English" })[0];
   if (!language) throw new Error("Language control missing");
   fireEvent.click(language);
   const collapse = screen.getByRole("button", { name: locale === "en" ? "Показать 5 последних событий" : "Show latest 5 events" });

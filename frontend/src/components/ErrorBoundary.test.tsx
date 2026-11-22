@@ -21,7 +21,7 @@ it('translates the caught fallback, preserves unknown error detail and retries',
   expect(screen.getByText(sharedMessages.en.somethingWentWrong)).toBeTruthy();
   expect(screen.getByRole('main').id).toBe('main-content');
   expect(screen.getByRole('main').tabIndex).toBe(-1);
-  fireEvent.click(screen.getByRole('button', { name: 'Русский' }));
+  fireEvent.click(screen.getByRole('button', { name: 'RU Русский' }));
   expect(screen.getByText(sharedMessages.ru.somethingWentWrong)).toBeTruthy();
   expect(screen.getByText('Online')).toBeTruthy();
   fail = false;

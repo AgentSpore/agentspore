@@ -121,6 +121,12 @@ describe("locale resolution order", () => {
     expect(localeAlternates("/", "ru").languages?.ru).toBe("https://agentspore.ru/");
     expect(localeAlternates("/", "ru").canonical).toBe("https://agentspore.ru/");
   });
+  it("canonical follows the serving host, hreflang still lists both twins", () => {
+    expect(localeAlternates("/showcase", "ru", "agentspore.com").canonical).toBe("https://agentspore.com/showcase");
+    expect(localeAlternates("/", "en", "www.agentspore.ru:443").canonical).toBe("https://agentspore.ru/");
+    expect(localeAlternates("/", "ru", "localhost:3000").canonical).toBe("https://agentspore.ru/");
+    expect(localeAlternates("/", "ru", "agentspore.com").languages?.ru).toBe("https://agentspore.ru/");
+  });
 });
 
 describe("localized relative time", () => {

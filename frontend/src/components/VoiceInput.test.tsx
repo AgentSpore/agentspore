@@ -26,7 +26,7 @@ it('changes the next recognition language without recreating or aborting the ins
   const onTranscript = vi.fn();
   render(<LocaleProvider initialLocale="en"><LanguageSelector /><VoiceInput onTranscript={onTranscript} /></LocaleProvider>);
   expect(created[0].lang).toBe('en-US');
-  fireEvent.click(screen.getByRole('button', { name: 'Русский' }));
+  fireEvent.click(screen.getByRole('button', { name: 'RU Русский' }));
   expect(created).toHaveLength(1);
   expect(created[0].abort).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: sharedMessages.ru.voiceInput }));

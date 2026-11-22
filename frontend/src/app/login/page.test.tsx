@@ -90,7 +90,7 @@ it.each(['en', 'ru'] as const)('drops the workspace paragraph from the first scr
     const password = screen.getByPlaceholderText('Enter your password');
     fireEvent.change(email, { target: { value: 'synthetic@example.invalid' } });
     fireEvent.change(password, { target: { value: 'synthetic-password' } });
-    fireEvent.click(screen.getAllByRole('button', { name: 'Русский' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'RU Русский' })[0]);
     expect(await screen.findByText('Продолжить с GitHub')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Войти' })).toBeTruthy();
     expect((email as HTMLInputElement).value).toBe('synthetic@example.invalid');
@@ -106,7 +106,7 @@ it.each(['en', 'ru'] as const)('drops the workspace paragraph from the first scr
     render(<LocaleProvider initialLocale="en"><LoginPage /></LocaleProvider>);
     fireEvent.submit(screen.getByRole('button', { name: 'Sign In' }).closest('form')!);
     await waitFor(() => expect(screen.getByText(accountMessages.en.networkErrorCannotReachServerCheckCORSAd)).toBeTruthy());
-    fireEvent.click(screen.getAllByRole('button', { name: 'Русский' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'RU Русский' })[0]);
     expect(screen.getByText(accountMessages.ru.networkErrorCannotReachServerCheckCORSAd)).toBeTruthy();
     expect(authCalls(fetchMock)).toHaveLength(1);
   });
@@ -119,7 +119,7 @@ it.each(['en', 'ru'] as const)('drops the workspace paragraph from the first scr
     render(<LocaleProvider initialLocale="en"><LoginPage /></LocaleProvider>);
     fireEvent.submit(screen.getByRole('button', { name: 'Sign In' }).closest('form')!);
     await waitFor(() => expect(screen.getByText('Authentication failed (HTTP 503)')).toBeTruthy());
-    fireEvent.click(screen.getAllByRole('button', { name: 'Русский' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'RU Русский' })[0]);
     expect(screen.getByText('Не удалось войти (HTTP 503)')).toBeTruthy();
     expect(authCalls(fetchMock)).toHaveLength(1);
   });
@@ -166,7 +166,7 @@ it.each(['en', 'ru'] as const)('exposes authentication mode without submitting o
   expect(register.getAttribute('aria-pressed')).toBe('true');
   expect(signIn.getAttribute('aria-pressed')).toBe('false');
   expect(screen.getByLabelText(accountMessages[locale].name)).toBeTruthy();
-  fireEvent.click(screen.getAllByRole('button', { name: locale === 'en' ? 'Русский' : 'English' })[0]);
+  fireEvent.click(screen.getAllByRole('button', { name: locale === 'en' ? 'RU Русский' : 'EN English' })[0]);
   const switched = locale === 'en' ? 'ru' : 'en';
   expect(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES[switched].tabRegister }).getAttribute('aria-pressed')).toBe('true');
   fireEvent.click(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES[switched].tabSignIn }));

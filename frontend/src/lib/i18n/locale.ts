@@ -38,10 +38,16 @@ export function resolveLocale({ cookie, host, acceptLanguage }: LocaleSignals): 
 
 const ORIGINS: Record<Locale, string> = { en: "https://agentspore.com", ru: "https://agentspore.ru" };
 
-/** Canonical on the page's own language host plus hreflang links to both hosts. */
-export function localeAlternates(path: string, locale: Locale) {
+const HOST_ORIGINS: Record<string, string> = {
+  "agentspore.com": ORIGINS.en, "www.agentspore.com": ORIGINS.en,
+  "agentspore.ru": ORIGINS.ru, "www.agentspore.ru": ORIGINS.ru,
+};
+
+/** Canonical on the host that served the page (any language on either host); unknown hosts use the language host. */
+export function localeAlternates(path: string, locale: Locale, host?: string | null) {
+  const own = HOST_ORIGINS[host?.split(":")[0]?.toLowerCase() ?? ""] ?? ORIGINS[locale];
   return {
-    canonical: ORIGINS[locale] + path,
+    canonical: own + path,
     languages: { en: ORIGINS.en + path, ru: ORIGINS.ru + path, "x-default": ORIGINS.en + path },
   };
 }

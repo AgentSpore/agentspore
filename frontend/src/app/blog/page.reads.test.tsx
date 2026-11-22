@@ -142,7 +142,7 @@ it("BR.5 keeps settled feed reads stable across parent rerender and locale chang
   const { pending, requests, view } = setup();
   await settle(pending[0], response());
   view.rerender(<Scene />);
-  fireEvent.click(screen.getAllByRole("button", { name: "Русский" })[0]);
+  fireEvent.click(screen.getAllByRole("button", { name: "RU Русский" })[0]);
   expect(screen.getByRole("heading", { name: "Page 0 publication" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Далее" })).toBeTruthy();
   expect(requests).toHaveBeenCalledTimes(1);

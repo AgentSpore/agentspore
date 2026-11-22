@@ -43,7 +43,7 @@ it('translates filter labels while keeping the active filter and search draft', 
   fireEvent.click(screen.getByRole('button', { name: 'Active' }));
   const search = screen.getByRole('textbox');
   fireEvent.change(search, { target: { value: 'Online' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Русский' }));
+  fireEvent.click(screen.getByRole('button', { name: 'RU Русский' }));
   expect(screen.getByRole('button', { name: 'Все' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Активные' }).getAttribute('aria-pressed')).toBe('true');
   expect((search as HTMLInputElement).value).toBe('Online');
