@@ -37,10 +37,6 @@ COPY = {
         "Prev",
         "Next",
         "Could not load the data. Check your connection and try again.",
-        "Sign in to react.",
-        "You already added this reaction.",
-        "Could not save reaction.",
-        "Reaction saved. Could not refresh counts.",
     ),
     "ru": (
         "Блог",
@@ -50,10 +46,6 @@ COPY = {
         "Назад",
         "Далее",
         "Не удалось загрузить данные. Проверьте соединение и повторите попытку.",
-        "Войдите, чтобы отреагировать.",
-        "Вы уже добавили эту реакцию.",
-        "Не удалось сохранить реакцию.",
-        "Реакция сохранена. Не удалось обновить счётчики.",
     ),
 }
 
@@ -107,9 +99,7 @@ class BlogHTTP(AgentReadHTTP):
             return None, None
         if target.query:
             return None, None
-        post = next((p for p in POSTS if target.path == f"/api/v1/blog/posts/{p['id']}"), None)
-        if post and request.method == "GET":
-            return "canonical", post["id"]
+        # Guard: the page must send no reaction POST; a stray one is held so the held() counts fail.
         write = next((p for p in POSTS if target.path == f"/api/v1/blog/posts/{p['id']}/reactions"), None)
         if not write or request.method != "POST":
             return None, None
@@ -178,11 +168,8 @@ class AgentBlogTests(BrowserFixture, unittest.TestCase):
                     "offset": offset,
                 }
             )
-        elif kind == "canonical":
-            post = next(p for p in POSTS if p["id"] == item[1])
-            route.fulfill(json=dict(post, reactions=dict(REACTIONS, like=99)))
         else:
-            route.fulfill(status=status, json={"status": "added", "reaction": item[1][1]})
+            self.fail(f"unexpected held request kind {kind}")
         self.settle()
 
     def save(self, state):
@@ -248,15 +235,7 @@ class AgentBlogTests(BrowserFixture, unittest.TestCase):
         issues.extend({"focus": f} for f in self.focus if not all(f[k] for k in ("active", "visible", "painted")))
         self.assertEqual(issues, [])
         expect(self.page.get_by_role("region", name=COPY[self.locale][0], exact=True)).to_have_count(1)
-        labels = (
-            ("Like", "Fire", "Insightful", "Funny")
-            if self.locale == "en"
-            else ("Нравится", "Огонь", "Полезно", "Смешно")
-        )
-        for label in labels:
-            expect(self.blog.get_by_role("article").first.get_by_role("button", name=label, exact=True)).to_have_count(
-                1
-            )
+        expect(self.blog.get_by_role("article").first.get_by_role("button")).to_have_count(0)
 
     def reading_flow(self):
         self.save("initial-pending")
@@ -307,82 +286,18 @@ class AgentBlogTests(BrowserFixture, unittest.TestCase):
         expect(self.pager(False)).to_be_disabled()
         self.geometry()
 
-    def reaction_failure(self, status, copy_index):
-        self.native(self.card(0).get_by_role("button").nth(0))
-        self.held(1)
-        disabled = self.card(0).get_by_role("button").nth(0).is_disabled()
-        self.save(f"reaction-{status}-pending")
-        self.complete("write", status)
-        self.save(f"reaction-{status}-observed")
-        expect(self.card(0).get_by_text(COPY[self.locale][copy_index], exact=True)).to_be_visible()
-        expect(self.card(0).get_by_role("button").nth(0)).to_contain_text("7")
-        self.assertTrue(disabled)
-
-    def reactions_flow(self):
-        self.complete("read")
-        expect(self.card(0)).to_be_visible()
-        self.reaction_failure(401, 7)
-        login = self.card(0).locator('a[href="/login"]')
-        expect(login).to_be_visible()
-        self.native(login, activate=False)
-        self.reaction_failure(409, 8)
-        self.reaction_failure(503, 9)
-        writes = sum(x["kind"] == "write" for x in self.http.calls)
-        self.retry(self.card(0))
-        self.assertEqual(sum(x["kind"] == "write" for x in self.http.calls), writes + 1)
-        self.assertEqual(self.http.calls[-1]["value"], (POSTS[0]["id"], "like"))
-        self.complete("write", 201)
-        self.held(1)
-        expect(self.card(0).get_by_role("button").nth(0)).to_contain_text("7")
-        self.complete("canonical", 503)
-        self.save("canonical-error")
-        expect(self.card(0).get_by_text(COPY[self.locale][10], exact=True)).to_be_visible()
-        self.retry(self.card(0))
-        self.assertEqual(self.http.calls[-1]["kind"], "canonical")
-        self.assertEqual(sum(x["kind"] == "write" for x in self.http.calls), writes + 1)
-        self.complete("canonical")
-        expect(self.card(0).get_by_role("button").nth(0)).to_contain_text("99")
-        self.save("canonical-recovered")
-        self.native(self.card(0).get_by_role("button").nth(0))
-        self.held(1)
-        expect(self.card(0).get_by_role("button").nth(0)).to_be_disabled()
-        self.page.keyboard.press("Enter")
-        self.held(1)
-        self.native(self.card(1).get_by_role("button").nth(1))
-        self.held(2)
-        self.assertEqual(self.http.calls[-1]["value"], (POSTS[1]["id"], "fire"))
-        self.native(self.pager(True))
-        self.held(3)
-        self.save("independent-read-write-pending")
-        self.assertEqual(sorted(item[0] for _, item in self.http.pending), ["read", "write", "write"])
-        self.complete("read")
-        expect(self.card(10)).to_be_visible()
-        for route, item in list(self.http.pending):
-            self.http.pending.remove((route, item))
-            route.fulfill(status=409, json={"detail": SENTINEL})
-        self.settle()
-        expect(self.blog.get_by_text(COPY[self.locale][8], exact=True)).to_have_count(0)
-        self.save("independent-page-recovered")
-        self.geometry()
-
-    def run_flow(self, kind):
+    def run_flow(self):
         for locale in COPY:
             for width in (320, 390, 1280):
                 with self.subTest(locale=locale, width=width):
                     try:
                         self.open_page(locale, width)
-                        if kind == "reading":
-                            self.reading_flow()
-                        else:
-                            self.reactions_flow()
+                        self.reading_flow()
                     finally:
                         self.doCleanups()
 
     def test_blog_read_error_empty_and_retained_paging_retry(self):
-        self.run_flow("reading")
-
-    def test_reaction_outcomes_canonical_get_retry_and_independent_pending(self):
-        self.run_flow("reactions")
+        self.run_flow()
 
 
 if __name__ == "__main__":
