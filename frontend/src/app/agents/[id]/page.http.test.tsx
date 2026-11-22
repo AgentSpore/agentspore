@@ -7,18 +7,18 @@ import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
 import { publicMessages } from '@/lib/i18n/public';
 import { sharedMessages } from '@/lib/i18n/shared';
 
-const route = vi.hoisted(() => ({ id: 'synthetic-a' }));
+const route = vi.hoisted(() => ({ id: '00000000-0000-4000-8000-00000000000a' }));
 vi.mock('next/navigation', () => ({ useParams: () => route, useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock('@/components/Header', () => ({ Header: () => null }));
 type Locale = 'en' | 'ru';
 const NOW = '2026-10-20T12:00:00Z';
 const PRIVATE_FAILURE = 'Synthetic internal agent read failure';
 const PARTIAL = { en: 'Some profile sections could not be loaded.', ru: 'Не удалось загрузить некоторые разделы профиля.' };
-const A: Agent = { id: 'synthetic-a', name: 'Synthetic Agent A', handle: 'synthetic-a', agent_type: 'external',
+const A: Agent = { id: '00000000-0000-4000-8000-00000000000a', name: 'Synthetic Agent A', handle: 'synthetic-a', agent_type: 'external',
   model_provider: 'synthetic', model_name: 'synthetic', specialization: 'programmer', skills: [], karma: 0,
   projects_created: 0, code_commits: 0, reviews_done: 0, last_heartbeat: null, is_active: true, created_at: NOW,
   dna_risk: 5, dna_speed: 5, dna_verbosity: 5, dna_creativity: 5, bio: null, fork_count: 0, is_hosted: false };
-const B: Agent = { ...A, id: 'synthetic-b', name: 'Synthetic Agent B', handle: 'synthetic-b' };
+const B: Agent = { ...A, id: '00000000-0000-4000-8000-00000000000b', name: 'Synthetic Agent B', handle: 'synthetic-b' };
 const MODEL: ModelUsageStats = { total_calls: 0, unique_models: 0, by_model: [], by_task: [] };
 function activity(id: string): ActivityEvent[] { return [{ id: `activity-${id}`, action_type: 'code_commit', description: `Activity ${id}`, ts: NOW }]; }
 function github(id: string): { activities: GitHubActivityItem[] } { return { activities: [{ id: `github-${id}`, action_type: 'code_commit', description: `Commit ${id}`, created_at: NOW }] }; }
@@ -72,6 +72,46 @@ async function finish<T>(pending: ReturnType<typeof deferred<T>>, value: T) { aw
 const settle = async () => { await act(async () => {}); };
 beforeEach(() => { route.id = A.id; vi.useFakeTimers(); vi.setSystemTime(new Date(NOW)); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+it('AD.READ handle route renders the profile and follow-up reads use the canonical id', async () => {
+  const http = agentHTTP(); route.id = 'synthetic-handle';
+  http.bodies.set('/api/v1/agents/synthetic-handle', { ...B, handle: 'synthetic-handle' });
+  openAgent(); await settle();
+  expect(screen.getByRole('heading', { name: B.name })).toBeTruthy();
+  const paths = endpoints(B.id);
+  for (const path of [paths.activity, paths.model, paths.github, paths.badges, paths.blog]) expect(http.calls).toContain(path);
+  expect(http.unexpected).toEqual([]);
+});
+
+it('AD.READ handle route chat link and Copy ID use the canonical id', async () => {
+  const http = agentHTTP(), writeText = vi.fn(async () => undefined); route.id = 'synthetic-handle';
+  vi.stubGlobal('navigator', { clipboard: { writeText } });
+  http.bodies.set('/api/v1/agents/synthetic-handle', { ...B, handle: 'synthetic-handle' });
+  const view = openAgent(); await settle();
+  expect(view.container.querySelector(`a[href="/agents/${B.id}/chat"]`)).toBeTruthy();
+  expect(view.container.querySelector('a[href="/agents/synthetic-handle/chat"]')).toBeNull();
+  fireEvent.click(screen.getByText(publicMessages.en.technicalDetails));
+  fireEvent.click(screen.getByRole('button', { name: 'Copy ID' })); await settle();
+  expect(writeText).toHaveBeenCalledWith(B.id);
+});
+
+it('AD.READ UUID route reads sections beside the profile and rejects a handle-only match', async () => {
+  const uuid = '123e4567-e89b-42d3-a456-426614174000', http = agentHTTP(); route.id = uuid;
+  const paths = endpoints(uuid); http.bodies.set(paths.profile, B); const held = http.hold(paths.profile);
+  for (const key of ['activity', 'model', 'github', 'badges'] as const) http.bodies.set(paths[key], http.bodies.get(endpoints(B.id)[key]));
+  openAgent(); await settle();
+  for (const key of ['activity', 'model', 'github', 'badges'] as const) expect(http.calls).toContain(paths[key]);
+  await finish(held, Response.json({ ...B, id: 'synthetic-other-id', handle: uuid })); await settle();
+  expect(screen.getByRole('alert').textContent).toContain(sharedMessages.en.couldNotLoadData); expect(http.unexpected).toEqual([]);
+});
+
+it('AD.READ profile whose id and handle both differ from the route is rejected', async () => {
+  const http = agentHTTP(); route.id = 'synthetic-route';
+  http.bodies.set('/api/v1/agents/synthetic-route', { ...B, handle: 'synthetic-other' });
+  openAgent(); await settle();
+  expect(screen.getByRole('alert').textContent).toContain(sharedMessages.en.couldNotLoadData);
+  expect(screen.queryByRole('heading', { name: B.name })).toBeNull(); expect(http.unexpected).toEqual([]);
+});
 
 it('AD.READ held primary becomes genuine 404 without generic failure or profile', async () => {
   const http = agentHTTP(), primary = http.hold(endpoints(A.id).profile); openAgent();
@@ -157,4 +197,12 @@ it('AD.READ same-agent partial Retry retains the current blog page instead of re
   fireEvent.click(screen.getByRole('button', { name: sharedMessages.en.retry })); await settle();
   expect(screen.getByRole('heading', { name: A.name })).toBeTruthy(); expect(screen.getByText('Page two retained')).toBeTruthy();
   expect(http.calls.filter(path => path === paths.blog)).toHaveLength(initialReads); expect(http.unexpected).toEqual([]);
+});
+
+it('AD.READ uppercase UUID route matches the lowercase profile id', async () => {
+  const http = agentHTTP(); route.id = B.id.toUpperCase();
+  const upper = endpoints(route.id);
+  for (const key of ['profile', 'activity', 'model', 'github', 'badges'] as const) http.bodies.set(upper[key], http.bodies.get(endpoints(B.id)[key]));
+  openAgent(); await settle();
+  expect(screen.getByRole('heading', { name: B.name })).toBeTruthy(); expect(http.unexpected).toEqual([]);
 });

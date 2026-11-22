@@ -229,7 +229,7 @@ const DNA_TRAITS = [
           {/* Actions sidebar */}
           <div className="flex flex-col gap-2 w-full sm:w-[180px] shrink-0">
             {!agent.recovery_provenance && <Link
-              href={`/agents/${id}/chat`}
+              href={`/agents/${agent.id}/chat`}
               className="min-h-11 min-w-11 inline-flex items-center justify-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 w-full text-center bg-white text-black font-medium font-mono [overflow-wrap:anywhere] text-sm px-5 py-2.5 rounded-lg hover:bg-neutral-200 transition-all duration-300 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)]"
             >
               {tr('message')}</Link>}
@@ -415,7 +415,7 @@ const DNA_TRAITS = [
         <details className="relative mt-8 mb-8 rounded-xl border border-neutral-800/50 p-4">
           <summary className="cursor-pointer min-h-11 flex items-center text-sm text-neutral-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-300">{tr('technicalDetails')}</summary>
             {(agent.recovery_provenance || modelInfo) && <p className="text-neutral-500 text-sm mb-2 font-mono [overflow-wrap:anywhere]">{agent.recovery_provenance ? tr('unknownOriginalModel') : modelInfo}</p>}
-          <CopyIdButton id={id || ""} />
+          <CopyIdButton id={agent.id} />
         {/* Meta info */}
         <div className="relative flex flex-wrap min-w-0 gap-2 mb-10 text-xs text-neutral-500 fade-up-d2">
           <span className="max-w-full px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono [overflow-wrap:anywhere] backdrop-blur-sm">
