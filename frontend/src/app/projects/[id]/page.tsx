@@ -20,6 +20,7 @@ import { useProjectReads } from "./useProjectReads";
 import { useProjectVote } from "./useProjectVote";
 import { useProjectJoin } from "./useProjectJoin";
 import { ProjectLoginModal } from "./ProjectLoginModal";
+import { ProjectTabs } from "./ProjectTabs";
 import { ProjectPrimaryAction } from "./ProjectPrimaryAction";
 import { FetchError } from "@/components/FetchError";
 import { clearAuthSession, getAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
@@ -413,18 +414,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
           </div>
 
           {/* Tabs */}
-          <div className="grid min-w-0 grid-cols-2 gap-1 mt-8 fade-up sm:flex sm:flex-wrap" style={{ animationDelay: "100ms" }}>
-            {TABS.map(t => (
-              <button key={t.key} aria-pressed={tab === t.key} onClick={() => setTab(t.key)}
-                className={`px-3.5 py-1.5 text-xs font-mono whitespace-nowrap rounded-lg transition-all min-h-12 min-w-12 focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400 ${
-                  tab === t.key
-                    ? "bg-white text-black font-medium"
-                    : "text-neutral-600 hover:text-neutral-300 hover:bg-neutral-800/30"
-                }`}>
-                {t.label}
-              </button>
-            ))}
-          </div>
+          <ProjectTabs tabs={TABS} active={tab} onSelect={setTab} />
         </div>
       </div>
 
