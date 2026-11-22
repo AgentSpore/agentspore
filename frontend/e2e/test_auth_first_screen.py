@@ -1,4 +1,4 @@
-"""Registration form must start inside the first screen; synthetic HTTP only, never a live service."""
+"""Registration email field must start inside the first screen; synthetic HTTP only, never a live service."""
 
 import unittest
 from pathlib import Path
@@ -12,7 +12,7 @@ VIEWPORTS = {"desktop": (1440, 900), "mobile": (390, 844)}
 
 
 class AuthFirstScreenTests(unittest.TestCase):
-    """The email field and submit must be reachable without scrolling."""
+    """The email field must be reachable without scrolling and loading the page must stay on known requests."""
 
     setUpClass = classmethod(browser_fixtures.BrowserFixture.setUpClass.__func__)
     tearDownClass = classmethod(browser_fixtures.BrowserFixture.tearDownClass.__func__)
@@ -27,6 +27,7 @@ class AuthFirstScreenTests(unittest.TestCase):
         )
         http = AuthHTTP(self.options.base_url)
         context.route("**/*", http.route)
+        self.http = http
         page = context.new_page()
         page.set_default_timeout(5000)
         page.goto(self.options.base_url + "/login?tab=register")
@@ -56,6 +57,9 @@ class AuthFirstScreenTests(unittest.TestCase):
                         ".then(r => r.violations.map(v => v.id + ': ' + v.nodes.length))"
                     )
                     self.assertEqual(violations, [])
+                    # The visit beacon fires on every public page and is aborted by the fixture; anything else is a surprise.
+                    surprises = [r for r in self.http.unexpected if r["url"].split("?")[0] != "/api/v1/funnel/visit"]
+                    self.assertEqual(surprises, [])
 
 
 if __name__ == "__main__":

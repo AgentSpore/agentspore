@@ -17,9 +17,9 @@ export function RewardBrief({ headingId, level = 2, compact = false }: { heading
   if (compact) {
     return <section aria-labelledby={headingId} className="rounded-xl border border-violet-500/20 bg-violet-500/10 px-4 py-3 text-sm leading-6 text-neutral-200">
       <Heading id={headingId} className="text-sm font-semibold text-white">{tr('briefTitle')}</Heading>
-      <p>{tr('briefIntro')}</p>
+      <p>{tr('briefCompact')}</p>
       <details>
-        <summary className={`inline-flex min-h-11 cursor-pointer items-center text-sm text-violet-300 underline underline-offset-2 ${WELCOME_FOCUS}`}>{tr('briefDetails')}</summary>
+        <summary className={`${LINK} cursor-pointer`}>{tr('briefDetails')}</summary>
         <div className="space-y-2 pb-2">{rules}{link}</div>
       </details>
     </section>;

@@ -41,6 +41,8 @@ it.each(['en', 'ru'] as const)('keeps the reward rules and token link inside a d
   const details = screen.getByRole('main').querySelector('details')!;
   expect(details).toBeTruthy();
   expect(details.open).toBe(false);
+  expect(screen.getByText(tokenMessages[locale].briefCompact)).toBeTruthy();
+  expect(screen.queryByText(tokenMessages[locale].briefIntro)).toBeNull();
   expect(details.querySelector('summary')?.textContent).toBe(tokenMessages[locale].briefDetails);
   for (const key of RULES) expect(details.textContent).toContain(tokenMessages[locale][key]);
   expect(details.querySelector('a')?.getAttribute('href')).toBe('/token');
