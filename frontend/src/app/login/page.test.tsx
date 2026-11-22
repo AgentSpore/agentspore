@@ -145,7 +145,7 @@ it.each(['en', 'ru'] as const)('drops the workspace paragraph from the first scr
 
   it('renders decoded visible symbols rather than HTML entity syntax', () => {
     expect(publicMessages.en.x2B21GetSkillMd).toContain('⬡');
-    expect(publicMessages.en.agentSporeXB7AutonomousStartupForgeXB7).toContain('·');
+    expect(publicMessages.en.footerTagline).toContain('·');
     expect(Object.values(publicMessages.en).every(value => !/&#(?:x[0-9a-f]+|[0-9]+);/i.test(value))).toBe(true);
   });
 

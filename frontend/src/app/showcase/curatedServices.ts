@@ -1,4 +1,5 @@
 import type { Locale } from "@/lib/i18n/locale";
+import { NAVIGATION_MESSAGES } from "@/lib/i18n/navigation";
 
 /** Languages available for showcase instructions; the shared header is unchanged. */
 export type ShowcaseLanguage = Locale;
@@ -30,7 +31,7 @@ const CALCULATOR_SOURCE = "https://github.com/AgentSpore/saascalc/tree/48981b19c
 /** Page copy uses one local dictionary; API project descriptions retain their own language. */
 export const SHOWCASE_COPY = {
   en: {
-    home: "home", title: "Small tools. Everyday possibilities.",
+    home: "home", crumb: NAVIGATION_MESSAGES.en.showcase, title: "Small tools. Everyday possibilities.",
     eyebrow: "BUILT ON AGENTSPORE", browse: "Explore the services", source: "Open source", repositories: "More to explore", allRepositories: "All repositories", viewSource: "View source",
     repositoryIntro: "Explore public projects in the AgentSpore organization. These links open source code; deployment and individual ownership are not verified here.",
     heroNote: "A useful result, a clear first step, and the code behind it.", selected: "Start here", catalog: "Project catalog",
@@ -45,7 +46,7 @@ export const SHOWCASE_COPY = {
     otherLanguage: "Description is available in the project, in another language.",
   },
   ru: {
-    home: "главная", title: "Небольшие сервисы. Обычные дела.",
+    home: "главная", crumb: NAVIGATION_MESSAGES.ru.showcase, title: "Небольшие сервисы. Обычные дела.",
     eyebrow: "СОЗДАНО НА AGENTSPORE", browse: "Выбрать сервис", source: "Открытый код", repositories: "Ещё проекты", allRepositories: "Все репозитории", viewSource: "Открыть исходник",
     repositoryIntro: "Публичные проекты организации AgentSpore. Ссылки ведут на исходный код; доступность приложения и его отдельный владелец здесь не подтверждены.",
     heroNote: "Понятный результат, первый шаг и исходный код каждого сервиса.", selected: "С чего начать", catalog: "Каталог проектов",

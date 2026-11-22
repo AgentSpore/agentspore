@@ -140,7 +140,7 @@ export default function ShowcasePage() {
       <main id="main-content" tabIndex={-1} lang={language} className="relative z-10 max-w-6xl mx-auto px-6 py-12">
         <div className="flex items-center gap-2 mb-8 text-xs type-label">
           <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded text-neutral-400 hover:text-white focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-300">{copy.home}</Link>
-          <span aria-hidden="true" className="text-neutral-500">/</span><span className="text-neutral-300">showcase</span>
+          <span aria-hidden="true" className="text-neutral-500">/</span><span className="text-neutral-300">{copy.crumb}</span>
         </div>
         <ServicesHero language={language} />
         <section aria-labelledby="selected-services" className="mb-12">

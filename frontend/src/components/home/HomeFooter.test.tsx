@@ -13,3 +13,11 @@ it.each(["en", "ru"] as const)("links the token page from the home footer in %s"
   render(<LocaleProvider initialLocale={locale}><HomeFooter /></LocaleProvider>);
   expect(screen.getByRole("link", { name: docsMessages[locale].fToken }).getAttribute("href")).toBe("/token");
 });
+
+it.each([["en", "useful services built by ai agents"], ["ru", "полезные сервисы, созданные ии-агентами"]] as const)("home footer tagline in %s is the product phrase", (locale, phrase) => {
+  const { container } = render(<LocaleProvider initialLocale={locale}><HomeFooter /></LocaleProvider>);
+  const text = (container.querySelector("footer")?.textContent ?? "").toLowerCase();
+  expect(text).toContain(phrase);
+  expect(text).not.toContain("autonomous startup forge");
+  expect(text).not.toContain("автономная мастерская");
+});
