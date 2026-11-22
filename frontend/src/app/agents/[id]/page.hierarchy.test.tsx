@@ -4,24 +4,31 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
 import AgentPage from './page';
 
+const release: { profile?: () => void } = {};
 vi.mock('next/navigation', () => ({ useParams: () => ({ id: 'example' }), useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock('@/components/Header', () => ({ Header: () => null }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-function setup(locale: 'en' | 'ru', activityError = false, events?: object[], overrides: Record<string, unknown> = {}, posts: object[] = []) {
+function setup(locale: 'en' | 'ru', activityError = false, events?: object[], overrides: Record<string, unknown> = {}, extra: { posts?: object[]; blog?: 'hang' | 'fail'; profile?: 'hang' } = {}) {
+  const posts = extra.posts ?? [];
   const agent = { id: 'example', name: 'Example Agent', handle: 'example', specialization: 'programmer',
     bio: null, skills: ['python'], model_provider: 'provider', model_name: 'model', last_heartbeat: null,
     created_at: '2026-10-01T00:00:00Z', karma: 0, projects_created: 0, code_commits: 0, fork_count: 0,
     dna_risk: 5, dna_speed: 5, dna_verbosity: 5, dna_creativity: 5, ...overrides };
-  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+  const fetchMock = vi.fn(async (url: string) => {
+    if (extra.profile === 'hang' && url.endsWith('/agents/example')) await new Promise<void>(resolve => { release.profile = resolve; });
+    if (url.includes('/blog/') && extra.blog === 'hang') return new Promise<Response>(() => {});
+    if (url.includes('/blog/') && extra.blog === 'fail') return new Response('', { status: 500 });
     if (url.includes('/activity?') && activityError) return new Response('', { status: 500 });
     const value = url.endsWith('/agents/example') ? agent
       : url.includes('/activity?') ? events ?? [{ id: 'h', action_type: 'heartbeat', description: 'Heartbeat: idle, 0 tasks, 0 notifications, 0 DMs', ts: '2026-10-01T00:00:00Z' }, { id: 'r', action_type: 'registered', description: 'Agent joined AgentSpore', ts: '2026-10-01T00:00:00Z' }]
       : url.includes('/github-activity') ? { activities: [] }
       : url.includes('/blog/') ? { posts, total: posts.length } : [];
     return new Response(JSON.stringify(value), { status: 200 });
-  }));
+  });
+  vi.stubGlobal('fetch', fetchMock);
   render(<LocaleProvider initialLocale={locale}><AgentPage /></LocaleProvider>);
+  return fetchMock;
 }
 
 it.each(['en', 'ru'] as const)('prioritizes contact and hides routine records in %s', async locale => {
@@ -56,17 +63,42 @@ it('shows only non-zero tiles', async () => {
 });
 
 it('does not claim missing work when tiles are non-zero but the activity window is only heartbeats', async () => {
-  setup('en', false, undefined, { projects_created: 3, code_commits: 120 });
+  const fetchMock = setup('en', false, undefined, { projects_created: 3, code_commits: 120 });
   await screen.findByRole('heading', { name: 'Example Agent' });
   await waitFor(() => expect(document.querySelectorAll('.stat-card').length).toBe(2));
+  await waitFor(() => expect(fetchMock.mock.results.filter((r, i) => String(fetchMock.mock.calls[i]?.[0]).includes('/blog/') && r.type === 'return').length).toBeGreaterThan(0));
+  await new Promise(resolve => setTimeout(resolve, 0));
   expect(screen.queryByText('No public work yet')).toBeNull();
   expect(screen.getByText('No recent activity')).toBeTruthy();
 });
 
 it('does not claim missing work when the agent has blog posts', async () => {
-  setup('en', false, undefined, {}, [{ id: 'p1', agent_id: 'example', agent_name: 'Example Agent', title: 'Synthetic post', content: 'Body.', created_at: '2026-10-01T00:00:00Z', reactions: { like: 0, fire: 0, insightful: 0, funny: 0 } }]);
+  setup('en', false, undefined, {}, { posts: [{ id: 'p1', agent_id: 'example', agent_name: 'Example Agent', title: 'Synthetic post', content: 'Body.', created_at: '2026-10-01T00:00:00Z', reactions: { like: 0, fire: 0, insightful: 0, funny: 0 } }] });
   await screen.findByText('Synthetic post');
   expect(screen.queryByText('No public work yet')).toBeNull();
+});
+
+it('waits for the blog read before claiming missing work', async () => {
+  const fetchMock = setup('en', false, undefined, {}, { blog: 'hang' });
+  await screen.findByRole('heading', { name: 'Example Agent' });
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/blog/'))).toBe(true));
+  expect(screen.queryByText('No public work yet')).toBeNull();
+});
+
+it('does not claim missing work when the blog read fails', async () => {
+  setup('en', false, undefined, {}, { blog: 'fail' });
+  await screen.findByRole('heading', { name: 'Example Agent' });
+  await screen.findByText(/blog/i, { selector: 'span' });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy());
+  expect(screen.queryByText('No public work yet')).toBeNull();
+});
+
+it('does not request the blog before the profile resolves, then requests by profile id', async () => {
+  const fetchMock = setup('en', false, undefined, {}, { profile: 'hang' });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/blog/'))).toEqual([]);
+  release.profile?.();
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/blog/agents/example/posts'))).toBe(true));
 });
 
 it('does not report no work when activity retrieval fails', async () => {

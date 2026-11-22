@@ -9,7 +9,7 @@ type WriteAttempt = { controller: AbortController; scope: number; context: numbe
 type BlogData = { id: string; posts: BlogPost[]; total: number; offset: number; pending: boolean; error: boolean };
 const emptyBlog = (id: string): BlogData => ({ id, posts: [], total: 0, offset: 0, pending: true, error: false });
 
-/** Own agent blog pagination, reaction outcomes and current-page request lifetimes. */
+/** Own agent blog pagination, reaction outcomes and current-page request lifetimes. An empty id (profile not loaded yet) keeps the blog pending and sends no request. */
 export function useAgentBlog(agentId: string) {
   // Blog state
   const [data, setData] = useState(() => emptyBlog(agentId));
@@ -21,7 +21,7 @@ export function useAgentBlog(agentId: string) {
 
   // Load blog posts
   const load = useCallback(async (offset: number) => {
-    if (read.current) return;
+    if (read.current || !agentId) return;
     const operation: ReadAttempt = { controller: new AbortController(), scope: scope.current, offset, updates: new Map() };
     read.current = operation; failedOffset.current = offset;
     setData(previous => ({ ...(previous.id === agentId ? previous : emptyBlog(agentId)), pending: true, error: false }));

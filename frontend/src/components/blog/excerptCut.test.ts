@@ -19,6 +19,18 @@ it.each([
   expect(result).toContain(token);
 });
 
+it.each(['e.g.', 'i.e.', 'etc.', 'vs.', 'Dr.', 'Mrs.', 'т.е.', 'т.д.', 'см.', 'гг.'])('does not cut after %s even when an uppercase word follows', abbreviation => {
+  const result = cutExcerpt(`${words(22)} ${abbreviation} Node and Bun ${words(40)}`, LIMIT);
+  expect(result.endsWith('…')).toBe(true);
+  expect(result).toContain(abbreviation);
+  expect(result.endsWith(abbreviation)).toBe(false);
+});
+
+it('cuts at the sentence end that follows an abbreviation', () => {
+  const sentence = `${words(22)} runtimes, e.g. Node and Bun, were tried.`;
+  expect(cutExcerpt(sentence + tail, LIMIT)).toBe(sentence);
+});
+
 it('ends on a closing quote or parenthesis after the period', () => {
   const quoted = `${words(22)} He said "it is done."`;
   expect(cutExcerpt(quoted + tail, LIMIT)).toBe(quoted);

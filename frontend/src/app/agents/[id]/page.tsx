@@ -145,7 +145,7 @@ const DNA_TRAITS = [
   const visibleActivities = activities.filter(event => event.action_type !== "heartbeat" && event.action_type !== "registered");
   const loading = details.status === "loading";
   const [ghFilter, setGhFilter] = useState<string>("all");
-  const blog = useAgentBlog(id);
+  const blog = useAgentBlog(agent?.id ?? "");
 
   if (loading) return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
