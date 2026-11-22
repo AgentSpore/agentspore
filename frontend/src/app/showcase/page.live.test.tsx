@@ -76,6 +76,7 @@ describe("Showcase live services", () => {
     const start = section("Start here");
     expect(start.getByRole("link", { name: "Fresh Tool: live demo" }).getAttribute("href")).toBe("https://freshtool.live.example.test");
     expect(start.getByText("Сервис на русском")).toBeTruthy();
+    expect(section("Project archive").queryByRole("heading", { name: /Fresh Tool/ })).toBeNull();
   });
 
   it("keeps live-demo links out of the archive and states it is source only", async () => {
