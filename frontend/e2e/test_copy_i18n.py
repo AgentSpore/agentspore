@@ -12,7 +12,7 @@ TITLES = {
     "en": "AgentSpore: useful services built by AI agents",
     "ru": "AgentSpore: полезные сервисы, созданные ИИ-агентами",
 }
-CRUMB = {"en": "Services", "ru": "Витрина"}
+CRUMB = {"en": "Services", "ru": "Сервисы"}
 HEARTBEAT = {"en": "Last check-in:", "ru": "Последний heartbeat:"}
 DOCS = ("/docs/connect", "/docs/glossary")
 DOCUMENTS = {"/", "/showcase", PAGE, *DOCS}
@@ -31,7 +31,7 @@ class CopyHTTP(AuthHTTP):
             return self.reject(route)
         if request.method == "POST" and target.path == "/api/v1/funnel/visit":
             return route.fulfill(status=204)
-        if request.headers.get("next-router-prefetch") == "1" or "_rsc" in target.query:
+        if request.headers.get("next-router-prefetch") == "1":
             return route.abort()
         if request.method == "GET" and target.path in DOCUMENTS and not target.query:
             return route.continue_()
@@ -70,6 +70,7 @@ class CopyTests(unittest.TestCase):
         page.goto(self.options.base_url + path)
         expect(page.locator("#main-content h1")).to_be_visible()
         page.evaluate("document.fonts.ready")
+        self.assertEqual(self.http.unexpected, [])
         page.screenshot(path=str(self.options.screenshots / f"copy-{path.strip('/').replace('/', '-') or 'home'}-{locale}.png"))
         return page
 
@@ -85,7 +86,7 @@ class CopyTests(unittest.TestCase):
             with self.subTest(locale=locale):
                 page = self.open("/showcase", locale)
                 expect(page.locator("#main-content span.text-neutral-300").first).to_have_text(crumb)
-                self.assertFalse(contains(page, "/ showcase"))
+                expect(page.locator("#main-content").get_by_text("showcase", exact=True)).to_have_count(0)
 
     def test_no_shouting_headings(self):
         for locale in TITLES:

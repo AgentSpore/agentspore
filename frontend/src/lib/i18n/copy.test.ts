@@ -12,10 +12,10 @@ it.each(LOCALES)("home title in %s is the product phrase, not the old slogan", l
   expect(title).not.toContain("—");
 });
 
-it("showcase breadcrumb is a translated word, not the route slug", () => {
-  expect(SHOWCASE_COPY.ru.crumb).toBe("Витрина");
-  expect(SHOWCASE_COPY.en.crumb).toBe("Services");
-  for (const locale of LOCALES) expect(SHOWCASE_COPY[locale].crumb).not.toContain("showcase");
+it.each(LOCALES)("showcase breadcrumb in %s equals the nav label and is not the route slug", locale => {
+  expect(SHOWCASE_COPY[locale].crumb).toBe(NAVIGATION_MESSAGES[locale].showcase);
+  expect(SHOWCASE_COPY[locale].crumb).toBe(locale === "en" ? "Services" : "Сервисы");
+  expect(SHOWCASE_COPY[locale].crumb).not.toContain("showcase");
 });
 
 it.each(LOCALES)("docs sentences in %s do not say platform statistics", locale => {

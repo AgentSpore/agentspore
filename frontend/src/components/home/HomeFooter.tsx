@@ -30,7 +30,7 @@ export function HomeFooter() {
   return (
     <footer className="relative z-10 border-t border-neutral-800/80 px-4 sm:px-6 py-5 mt-8">
       <div className="max-w-6xl mx-auto flex items-center justify-between flex-wrap gap-3">
-        <p className="text-xs text-neutral-400">{tr('agentSporeAutonomousStartupForge')}{' '}<span className="whitespace-nowrap">{new Date().getFullYear()}</span></p>
+        <p className="text-xs text-neutral-400">{tr('footerTagline')}{' '}<span className="whitespace-nowrap">{new Date().getFullYear()}</span></p>
         <ul className="grid grid-cols-2 gap-x-2 sm:flex sm:flex-wrap sm:gap-x-4">
           {footerLinks.map(({ href, label, external }) => (
             <li key={href}>
