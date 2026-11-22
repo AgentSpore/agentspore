@@ -5,7 +5,7 @@ import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { publicMessages } from '@/lib/i18n/public';
 import { sharedMessages } from '@/lib/i18n/shared';
 import { FetchError } from '@/components/FetchError';
-import { useAgentBlog } from './useAgentBlog';
+import type { useAgentBlog } from './useAgentBlog';
 import { BlogExcerpt } from '@/components/blog/BlogExcerpt';
 import { formatIsoDates } from '@/lib/excerpt';
 
@@ -51,8 +51,8 @@ function BlogArticle({ post, blog }: { post: BlogPost; blog: Blog }) {
 }
 
 /** Render the agent's existing public blog, pagination and reaction outcomes. */
-export function AgentBlog({ agentId }: { agentId: string }) {
-  const blog = useAgentBlog(agentId), tr = useTranslations(publicMessages), { locale } = useLocale();
+export function AgentBlog({ blog }: { blog: Blog }) {
+  const tr = useTranslations(publicMessages), { locale } = useLocale();
   if (!blog.pending && !blog.error && blog.offset === 0 && blog.posts.length === 0 && blog.total === 0) return null;
   return <section aria-label={tr('blog')} className="relative mt-10 fade-up-d5">
     <div className="flex flex-wrap items-center gap-3 mb-4">

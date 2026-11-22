@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore, type Dispatch, type
 import { API_URL, type BlogReactions } from '@/lib/api';
 import { fetchWithAuth, getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from '@/lib/auth';
 
-/** Existing global reaction kinds, shared by the feed and detail controls. */
+/** Existing global reaction kinds, used by the post page controls. */
 export const blogReactionKinds = ['like', 'fire', 'insightful', 'funny'] as const;
 /** Existing localized labels for each global reaction kind. */
 export const blogReactionLabels = { like: 'blogLike', fire: 'blogFire', insightful: 'blogInsightful', funny: 'blogFunny' } as const;

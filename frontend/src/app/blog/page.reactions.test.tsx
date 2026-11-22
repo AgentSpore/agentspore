@@ -86,7 +86,7 @@ function retry(locale: Locale = 'en') {
   if (!(notice instanceof HTMLElement)) throw new Error('Expected accessible reaction notice');
   return within(notice).getByRole('button', { name: sharedMessages[locale].retry });
 }
-async function open(surface: Surface = 'feed', locale: Locale = 'en') {
+async function open(surface: Surface = 'detail', locale: Locale = 'en') {
   route.surface = surface;
   const scene = () => <LocaleProvider initialLocale={locale}>{surface === 'feed' ? <BlogFeedPage /> : <BlogPostPage />}</LocaleProvider>;
   const view = render(scene()); await settle();
@@ -96,10 +96,10 @@ async function switchAccount() {
   localStorage.setItem('access_token', 'synthetic-B');
   await act(async () => window.dispatchEvent(new Event('storage')));
 }
-beforeEach(() => { route.id = A; route.surface = 'feed'; localStorage.clear(); localStorage.setItem('access_token', 'synthetic-A'); });
+beforeEach(() => { route.id = A; route.surface = 'detail'; localStorage.clear(); localStorage.setItem('access_token', 'synthetic-A'); });
 afterEach(() => { cleanup(); localStorage.clear(); vi.unstubAllGlobals(); });
 
-it.each([{ surface: 'feed', locale: 'en' }, { surface: 'detail', locale: 'ru' }] as const)(
+it.each([{ surface: 'detail', locale: 'en' }, { surface: 'detail', locale: 'ru' }] as const)(
   'BM.R1 $surface preserves POST201 and POST409→DELETE200 toggle with canonical counts', async ({ surface, locale }) => {
     const http = reactionHTTP(); await open(surface, locale);
     http.respond('POST', reactionPath(), { status: 'added', reaction: 'like' }, 201);
@@ -162,13 +162,13 @@ it('BM.R4 accepted add and removal recover counts through GET-only Retry', async
   http.respond('POST', reactionPath(), { status: 'added' }, 201); http.respond('GET', postPath(), { detail: INTERNAL }, 503);
   fireEvent.click(reaction()); await settle(); expect(screen.getByText(publicMessages.en.blogReactionCounts)).toBeTruthy(); expect(count()).toBe(1);
   http.respond('GET', postPath(), post(A, 2)); fireEvent.click(retry()); await settle(); expect(count()).toBe(2);
-  expect(calls(http, 'POST', reactionPath())).toHaveLength(1); expect(calls(http, 'GET', postPath())).toHaveLength(2);
+  expect(calls(http, 'POST', reactionPath())).toHaveLength(1); expect(calls(http, 'GET', postPath())).toHaveLength(3);
   http.respond('POST', reactionPath(), { detail: 'Reaction already exists' }, 409); http.respond('DELETE', `${reactionPath()}/like`, { status: 'removed' });
   const refresh = http.hold('GET', postPath()); fireEvent.click(reaction()); await settle(); await act(async () => refresh.reject(new TypeError(INTERNAL)));
   expect(screen.getByText(publicMessages.en.blogReactionCounts)).toBeTruthy(); expect(count()).toBe(2);
   http.respond('GET', postPath(), post(A, 1)); fireEvent.click(retry()); await settle(); expect(count()).toBe(1);
   expect(calls(http, 'POST', reactionPath())).toHaveLength(2); expect(calls(http, 'DELETE', `${reactionPath()}/like`)).toHaveLength(1);
-  expect(calls(http, 'GET', postPath())).toHaveLength(4); expect(http.unexpected).toEqual([]);
+  expect(calls(http, 'GET', postPath())).toHaveLength(5); expect(http.unexpected).toEqual([]);
 });
 it('BM.R5 delayed A canonical body cannot replace detail B', async () => {
   const http = reactionHTTP(), view = await open('detail');
@@ -176,17 +176,10 @@ it('BM.R5 delayed A canonical body cannot replace detail B', async () => {
   fireEvent.click(reaction()); await settle(); await view.navigate(); await finish(oldBody, post(A, 9));
   expect(count('like', B)).toBe(1); expect(screen.queryByRole('heading', { name: post().title })).toBeNull(); expect(http.unexpected).toEqual([]);
 });
-it('BM.R5 accepting a new feed page invalidates held old POST before canonical GET', async () => {
-  const http = reactionHTTP(), pending = http.hold('POST', reactionPath()); await open(); fireEvent.click(reaction());
-  fireEvent.click(screen.getByRole('button', { name: 'Next' })); await settle(); expect(article(B)).toBeTruthy();
-  await finish(pending, Response.json({ status: 'added' }, { status: 201 }));
-  expect(calls(http, 'GET', postPath())).toHaveLength(0); expect(count('like', B)).toBe(1); expect(http.unexpected).toEqual([]);
-  fireEvent.click(screen.getByRole('button', { name: 'Prev' })); await settle();
-  expect(reaction().hasAttribute('disabled')).toBe(false);
-  expect(within(screen.getByRole('main')).queryByRole('status')).toBeNull();
-  http.respond('POST', reactionPath(), { status: 'added' }, 201); http.respond('GET', postPath(), post(A, 2));
-  fireEvent.click(reaction()); await settle(); expect(count()).toBe(2);
-  expect(calls(http, 'POST', reactionPath())).toHaveLength(2); expect(http.unexpected).toEqual([]);
+it('the feed list has no reaction row', async () => {
+  const http = reactionHTTP(); await open('feed'); expect(article(A)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: publicMessages.en.blogLike })).toBeNull();
+  expect(http.unexpected).toEqual([]);
 });
 it('BM.R5 old account completion cannot publish failure or release a newer pair lock', async () => {
   const http = reactionHTTP(), old = http.hold('POST', reactionPath()); await open('detail'); fireEvent.click(reaction());
@@ -201,5 +194,5 @@ it('BM.R5 old account completion cannot publish failure or release a newer pair 
 it('BM.R5 unmounted held POST cannot start a canonical GET', async () => {
   const http = reactionHTTP(), pending = http.hold('POST', reactionPath()), view = await open(); fireEvent.click(reaction()); view.unmount();
   const before = http.calls.length; await finish(pending, Response.json({ status: 'added' }, { status: 201 }));
-  expect(http.calls).toHaveLength(before); expect(calls(http, 'GET', postPath())).toHaveLength(0); expect(http.unexpected).toEqual([]);
+  expect(http.calls).toHaveLength(before); expect(calls(http, 'GET', postPath())).toHaveLength(1); expect(http.unexpected).toEqual([]);
 });

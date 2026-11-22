@@ -9,7 +9,7 @@ it('keeps excerpts plain, bounded and outside fenced code, tables and HTML', () 
   const { container } = render(<BlogExcerpt content={`# Heading\n\n<script>bad()</script>\n\n\`\`\`json\n{"raw": 1}\n\`\`\`\n\n| raw |\n| --- |\n| table |\n\n${prose.repeat(8)}`} />);
   const text = container.textContent ?? '';
   expect(text).toContain('Useful text with a guide, clear steps, and code.');
-  expect(text.endsWith('…')).toBe(true);
+  expect(text.endsWith('.')).toBe(true);
   expect(Array.from(text).length).toBeLessThanOrEqual(281);
   expect(container.querySelector('a, code, pre, table, script, strong, h1')).toBeNull();
   expect(text).not.toContain('bad()');

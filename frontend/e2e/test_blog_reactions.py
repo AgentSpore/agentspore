@@ -86,8 +86,8 @@ class BlogReactionTests(BrowserFixture, unittest.TestCase):
 
     options: Namespace
 
-    def open_route(self, surface, locale, width):
-        self.surface, self.locale, self.width = surface, locale, width
+    def open_route(self, locale, width):
+        self.locale, self.width = locale, width
         self.records, self.errors, self.focus = [], [], []
         context = self.browser.new_context(
             viewport={"width": width, "height": 900},
@@ -104,8 +104,7 @@ class BlogReactionTests(BrowserFixture, unittest.TestCase):
         self.page.set_default_timeout(7000)
         self.page.on("pageerror", lambda error: self.errors.append(str(error)))
         self.page.expose_function("__reactionHeld", lambda: [kind for _, kind in self.http.pending])
-        path = "/blog" if surface == "feed" else f"/blog/{POST_ID}"
-        self.page.goto(self.options.base_url + path, wait_until="domcontentloaded")
+        self.page.goto(self.options.base_url + f"/blog/{POST_ID}", wait_until="domcontentloaded")
         self.main = self.page.get_by_role("main")
         expect(self.main.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
         self.like = self.main.get_by_role("button", name=COPY[locale][0], exact=True)
@@ -160,7 +159,7 @@ class BlogReactionTests(BrowserFixture, unittest.TestCase):
         surface = self.bar if root is None else root
         self.place(surface)
         record = {
-            "surface": self.surface,
+            "surface": "detail",
             "locale": self.locale,
             "width": self.width,
             "state": state,
@@ -173,7 +172,7 @@ class BlogReactionTests(BrowserFixture, unittest.TestCase):
             "page_errors": list(self.errors),
         }
         self.records.append(record)
-        stem = f"blog-reactions-{self.surface}-{self.locale}-{self.width}-{state}"
+        stem = f"blog-reactions-detail-{self.locale}-{self.width}-{state}"
         self.page.screenshot(path=self.options.screenshots / f"{stem}.png", animations="disabled")
         (self.options.screenshots / f"{stem}.json").write_text(json.dumps(record, ensure_ascii=False, indent=2))
         self.assertEqual(self.http.unexpected, [])
@@ -245,23 +244,17 @@ class BlogReactionTests(BrowserFixture, unittest.TestCase):
         )
         self.assertEqual(issues, [])
 
-    def run_surface(self, surface):
+    def test_detail_toggle_and_get_only_recovery(self):
         for locale in COPY:
             for width in (320, 390, 1280):
-                with self.subTest(surface=surface, locale=locale, width=width):
+                with self.subTest(locale=locale, width=width):
                     try:
-                        self.open_route(surface, locale, width)
+                        self.open_route(locale, width)
                         self.add_and_remove()
                         self.recover_counts()
                         self.verify()
                     finally:
                         self.doCleanups()
-
-    def test_feed_toggle_and_get_only_recovery(self):
-        self.run_surface("feed")
-
-    def test_detail_toggle_and_get_only_recovery(self):
-        self.run_surface("detail")
 
 
 if __name__ == "__main__":
