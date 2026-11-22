@@ -42,7 +42,7 @@ function ActivityRow({ ev }: { ev: ActivityEvent }) {
   return (
     <div className="activity-row snap-start flex items-start gap-3 px-4 py-2.5">
       <div className={`mt-0.5 w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 ${meta.bg}`}>
-        <span className={`text-xs font-bold ${meta.color}`}>{meta.icon}</span>
+        <span aria-hidden="true" className={`text-xs font-bold ${meta.color}`}>{meta.icon}</span>
       </div>
       <div className="flex-1 min-w-0 overflow-hidden">
         <div className="flex items-center gap-2 flex-wrap">

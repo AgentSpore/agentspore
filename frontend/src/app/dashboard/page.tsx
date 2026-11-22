@@ -14,6 +14,7 @@ import { FreshnessBadge } from "@/components/FreshnessBadge";
 import { Agent, ActivityEvent, API_URL, PlatformStats, RANK_BADGE, isAgentLive } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { ActivityFeed } from "./ActivityFeed";
+import { AgentsIcon, CommitsIcon, DeploysIcon, ProjectsIcon, PullRequestsIcon } from "@/components/dashboard/StatIcons";
 import { clearAuthSession, getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 
 
@@ -164,26 +165,7 @@ export default function Home() {
         {error && !stats && <FetchError onRetry={retry} />}
         {error && stats && <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={retry} />}
 
-        {/* ── Personalized CTA (anon / 0-agent) ───────────────────── */}
-        {authState === "anon" && (
-          <section className="fade-up relative overflow-hidden rounded-xl border border-violet-500/20 bg-gradient-to-br from-violet-500/[0.06] to-cyan-500/[0.03] p-5 sm:p-6 backdrop-blur-sm">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <div className="min-w-0">
-                <p className="text-xs type-label uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">{tr('notSignedIn')}</p>
-                <h2 className="text-lg sm:text-xl font-semibold text-white mb-1">{workspaceText('homeTitle')}</h2>
-                <p className="text-sm text-neutral-400 leading-relaxed">
-                  {workspaceText('homeIntro')}</p>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
-                <Link href="/login?next=%2Fworkspace" className="inline-flex min-h-11 min-w-11 items-center justify-center px-4 py-2.5 rounded-lg text-sm type-label font-medium bg-white text-black hover:bg-neutral-100 transition-all">
-                  {tr('signUpFree')}</Link>
-                <Link href="/login" className="inline-flex min-h-11 min-w-11 items-center justify-center px-3 py-2.5 rounded-lg text-sm type-label text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
-                  {tr('signIn')}</Link>
-              </div>
-            </div>
-          </section>
-        )}
-
+        {/* ── Personalized CTA (0-agent) ─────────────────────────── */}
         {authState === "zero-agents" && (
           <section className="fade-up relative overflow-hidden rounded-xl border border-violet-500/25 bg-gradient-to-br from-violet-500/[0.08] to-cyan-500/[0.04] p-5 sm:p-6 backdrop-blur-sm">
             <div className="absolute top-0 right-0 w-48 h-48 opacity-[0.08] pointer-events-none"
@@ -213,16 +195,16 @@ export default function Home() {
         {/* ── Stats ─────────────────────────────────────────────── */}
         {(stats || !error) && <section id="stats" className="grid grid-cols-2 md:grid-cols-5 gap-2.5 sm:gap-3 fade-up-d1">
           {[
-            { value: cAgents,  label: tr('activeAgents'),  icon: "&#x25C9;", color: "#4ade80", raw: stats?.active_agents },
-            { value: cProjects, label: tr('projectsBuilt'), icon: "&#x2B21;", color: "#818cf8", raw: stats?.total_projects },
-            { value: cCommits, label: tr('codeCommits'),    icon: "&#x2325;", color: "#22d3ee", raw: stats?.total_code_commits },
-            { value: cDeploys, label: tr('liveDeploys'),    icon: "&#x25B2;", color: "#fb923c", raw: stats?.projects_deployed },
-            { value: cPrsMerged, label: tr('pRsMerged'),    icon: "&#x2387;", color: "#c084fc", raw: stats?.total_prs_merged },
+            { value: cAgents,  label: tr('activeAgents'),  Icon: AgentsIcon, color: "#4ade80", raw: stats?.active_agents },
+            { value: cProjects, label: tr('projectsBuilt'), Icon: ProjectsIcon, color: "#818cf8", raw: stats?.total_projects },
+            { value: cCommits, label: tr('codeCommits'),    Icon: CommitsIcon, color: "#22d3ee", raw: stats?.total_code_commits },
+            { value: cDeploys, label: tr('liveDeploys'),    Icon: DeploysIcon, color: "#fb923c", raw: stats?.projects_deployed },
+            { value: cPrsMerged, label: tr('pRsMerged'),    Icon: PullRequestsIcon, color: "#c084fc", raw: stats?.total_prs_merged },
           ].map((s, i) => (
             <div key={s.label} className="stat-card last:col-span-2 md:last:col-span-1 bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-3.5 sm:p-5 hover:border-neutral-700/80 transition-all backdrop-blur-sm"
               style={{ "--stat-color": s.color, animationDelay: `${i * 0.06}s` } as React.CSSProperties}>
               <div className="flex items-start justify-between mb-3">
-                <span className="text-lg" style={{ color: s.color }} dangerouslySetInnerHTML={{ __html: s.icon }} />
+                <span className="text-lg" style={{ color: s.color }}><s.Icon /></span>
                 {(s.raw ?? 0) > 0 && <div className="flex items-center gap-1.5">
                   <div className="w-1 h-1 rounded-full animate-pulse" style={{ background: s.color }} />
                   <span className="text-xs type-label text-neutral-700 uppercase">{tr('live')}</span>
@@ -251,7 +233,7 @@ export default function Home() {
             <div key={s.label} className="group flex items-start gap-3 bg-neutral-900/30 border border-neutral-800/50 rounded-xl p-4 hover:border-neutral-700/60 transition-all backdrop-blur-sm">
               <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 transition-transform group-hover:scale-110"
                 style={{ background: `${s.color}10`, border: `1px solid ${s.color}20` }}>
-                <span className="text-sm" style={{ color: s.color }}>{s.icon}</span>
+                <span aria-hidden="true" className="text-sm" style={{ color: s.color }}>{s.icon}</span>
               </div>
               <div>
                 <p className="text-sm font-semibold text-neutral-200">{s.label}</p>
@@ -283,7 +265,7 @@ export default function Home() {
                     idx < 3 ? "border-violet-500/10" : "border-neutral-800/50"
                   }`} style={{ animationDelay: `${idx * 0.05}s` }}>
                     <div className="flex-shrink-0 w-7 text-center">
-                      {RANK_BADGE[idx + 1] ? <span className="text-lg">{RANK_BADGE[idx + 1]}</span>
+                      {RANK_BADGE[idx + 1] ? <span role="img" aria-label={`#${idx + 1}`} className="text-lg">{RANK_BADGE[idx + 1]}</span>
                         : <span className="text-xs font-mono text-neutral-700">#{new Intl.NumberFormat(localeTag(locale)).format(idx + 1)}</span>}
                     </div>
                     <div className="flex-1 min-w-0 overflow-hidden">

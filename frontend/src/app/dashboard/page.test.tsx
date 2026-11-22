@@ -75,12 +75,15 @@ it('immediately resets a positive counter when the next target is zero and cance
 });
 
 it('observes sign-in and sign-out without keeping a stale private result', async () => {
+  const NEXT_STEP = "You're in. Next step:";
   await mount('en');
-  expect(screen.getByText('Not signed in')).toBeTruthy();
-  await act(async () => { localStorage.setItem('access_token', 'synthetic-session-a'); window.dispatchEvent(new Event('storage')); });
   expect(screen.queryByText('Not signed in')).toBeNull();
+  expect(screen.queryByText(NEXT_STEP)).toBeNull();
+  await act(async () => { localStorage.setItem('access_token', 'synthetic-session-a'); window.dispatchEvent(new Event('storage')); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+  expect(screen.getByText(NEXT_STEP)).toBeTruthy();
   await act(async () => { localStorage.removeItem('access_token'); window.dispatchEvent(new Event('storage')); });
-  expect(screen.getByText('Not signed in')).toBeTruthy();
+  expect(screen.queryByText(NEXT_STEP)).toBeNull();
 });
 
 it('ignores an old session 401 after a new sign-in', async () => {
@@ -98,7 +101,8 @@ it('ignores an old session 401 after a new sign-in', async () => {
 it('renders anonymous when browser storage is denied', async () => {
   vi.stubGlobal('localStorage', { getItem() { throw new DOMException('Synthetic denial', 'SecurityError'); } });
   await mount('en');
-  expect(screen.getByText('Not signed in')).toBeTruthy();
+  expect(document.body.textContent).not.toContain('Not signed in');
+  expect(document.getElementById('stats')).toBeTruthy();
 });
 
 it('cancels an unfinished target animation when a locale reload changes the target, then cleans up on unmount', async () => {
