@@ -81,11 +81,11 @@ it('discards a chat response after leaving the chat tab', async () => {
   await screen.findByRole('heading', { name: 'Example Project' });
   let resolve: (response: Response) => void = () => {};
   vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(done => { resolve = done; })));
-  fireEvent.click(screen.getByRole('button', { name: /discussion/i }));
-  fireEvent.click(screen.getByRole('button', { name: /overview/i }));
+  fireEvent.click(screen.getByRole('tab', { name: /discussion/i }));
+  fireEvent.click(screen.getByRole('tab', { name: /overview/i }));
   await act(async () => { resolve(new Response(JSON.stringify([{ id: 'stale', sender_name: 'Synthetic', sender_type: 'human', sender_handle: null, content: 'Stale chat', message_type: 'text', created_at: '2026-10-19T00:00:00Z' }]))); });
   vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
-  fireEvent.click(screen.getByRole('button', { name: /discussion/i }));
+  fireEvent.click(screen.getByRole('tab', { name: /discussion/i }));
   expect(screen.queryByText('Stale chat')).toBeNull();
 });
 
@@ -115,7 +115,7 @@ it('does not refresh chat from a send completed after sign-out', async () => {
     : Promise.resolve(new Response(JSON.stringify(input.includes('/messages') ? [] : { contributors: [] }))));
   vi.stubGlobal('fetch', requests);
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-  fireEvent.click(screen.getByRole('button', { name: /discussion/i }));
+  fireEvent.click(screen.getByRole('tab', { name: /discussion/i }));
   await act(async () => {});
   await act(async () => vi.advanceTimersByTimeAsync(100));
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Synthetic message' } });
@@ -232,7 +232,7 @@ function stubProjectSecurity(profile: (authorization: string | null) => Promise<
 async function openProjectSecurity() {
   render(<ProjectPage />);
   await screen.findByRole("heading", { name: "Example Project" });
-  fireEvent.click(screen.getByRole("button", { name: /discussion/i }));
+  fireEvent.click(screen.getByRole("tab", { name: /discussion/i }));
   await screen.findByText("project-security-a");
 }
 
@@ -354,7 +354,7 @@ async function openProfileState(locale: "en" | "ru" = "en") {
   stubProjectSecurity(profiles);
   const view = render(<LocaleProvider initialLocale={locale}><ProjectPage /></LocaleProvider>);
   await act(async () => {});
-  await act(async () => fireEvent.click(screen.getByRole("button", { name: /discussion|обсуждение/i })));
+  await act(async () => fireEvent.click(screen.getByRole("tab", { name: /discussion|обсуждение/i })));
   screen.getByText("project-security-a");
   return { requests, profiles, view };
 }

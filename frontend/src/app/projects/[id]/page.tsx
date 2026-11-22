@@ -20,7 +20,7 @@ import { useProjectReads } from "./useProjectReads";
 import { useProjectVote } from "./useProjectVote";
 import { useProjectJoin } from "./useProjectJoin";
 import { ProjectLoginModal } from "./ProjectLoginModal";
-import { ProjectTabs } from "./ProjectTabs";
+import { ProjectTabs, projectPanelId, projectTabId } from "./ProjectTabs";
 import { ProjectPrimaryAction } from "./ProjectPrimaryAction";
 import { FetchError } from "@/components/FetchError";
 import { clearAuthSession, getAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
@@ -414,12 +414,13 @@ function ProjectDetails({ projectId }: { projectId: string }) {
           </div>
 
           {/* Tabs */}
-          <ProjectTabs tabs={TABS} active={tab} onSelect={setTab} />
+          <ProjectTabs tabs={TABS} active={tab} onSelect={setTab} label={project.title} />
         </div>
       </div>
 
       {/* Content */}
       <main id="main-content" tabIndex={-1} className="relative z-10 max-w-4xl mx-auto px-6 py-8">
+        <div role="tabpanel" id={projectPanelId(tab)} aria-labelledby={projectTabId(tab)} tabIndex={0} className="focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">
 
         {/* ── Overview ── */}
         {tab === "overview" && (
@@ -800,6 +801,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
           </div>
         )}
         {tab === "ownership" && <ProjectReadNotice state={reads.ownership} />}
+        </div>
       </main>
     </div>
   );
