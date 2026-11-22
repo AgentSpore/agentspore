@@ -38,10 +38,12 @@ describe("Showcase demo links", () => {
     const heading = await screen.findByRole("heading", { name: "Live Verdict" });
     const card = heading.closest(".project-card");
     if (!(card instanceof HTMLElement)) throw new Error("Live project card is missing");
-    expect(screen.getAllByRole("link", { name: "live demo" })).toHaveLength(1);
-    expect(within(card).getByRole("link", { name: "live demo" }).getAttribute("href"))
+    expect(within(card).getByRole("link", { name: "Live Verdict" }).getAttribute("href"))
       .toBe("https://actual.example.test/app");
-    expect(screen.getAllByRole("link", { name: "repo" })).toHaveLength(3);
+    expect(screen.getAllByRole("link", { name: "repo" })).toHaveLength(1);
+    expect(document.querySelector('a[href="https://old.example.test"]')).toBeNull();
+    expect(screen.getByRole("link", { name: "Archived Verdict" }).getAttribute("href"))
+      .toBe("https://github.com/Example/verdict");
   });
 });
 
@@ -129,7 +131,7 @@ describe("Showcase service selection", () => {
     expect(screen.getByRole("heading", { name: "Каталог проектов" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "English" }));
     expect(screen.getByRole("heading", { name: "Pereklichka" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "live demo" }).getAttribute("href"))
+    expect(screen.getByRole("link", { name: "Live Verdict" }).getAttribute("href"))
       .toBe("https://actual.example.test/app");
   });
 
@@ -158,10 +160,10 @@ it.each(["en", "ru"] as const)("keeps public source repositories separate from l
   const section = screen.getByRole("heading", { name: locale === "en" ? "More to explore" : "Ещё проекты" }).closest("section");
   if (!section) throw new Error("Source repository section is missing");
   const sources = within(section);
-  expect(sources.getAllByRole("listitem")).toHaveLength(8);
+  expect(sources.getAllByRole("listitem")).toHaveLength(5);
   expect(sources.getByRole("link", { name: locale === "en" ? "All repositories" : "Все репозитории" }).getAttribute("href"))
     .toBe("https://github.com/orgs/AgentSpore/repositories");
-  for (const name of ["otkrytka", "podmemory", "saascalc", "kogda", "potluck", "dawntask", "paynudge-lite", "splitpost"]) {
+  for (const name of ["kogda", "potluck", "dawntask", "paynudge-lite", "splitpost"]) {
     expect(sources.getByRole("link", { name: `${locale === "en" ? "View source" : "Открыть исходник"}: ${name}` }).getAttribute("href"))
       .toBe(`https://github.com/AgentSpore/${name}`);
   }
@@ -173,9 +175,9 @@ describe("Showcase repository list", () => {
   it("does not repeat a repository that already appears in the project catalog", async () => {
     mockProjects();
     render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
-    await screen.findByRole("heading", { name: "No URL" });
+    await screen.findByRole("heading", { name: "Live Verdict" });
     const names = screen.getAllByRole("heading", { level: 3 }).map(h => h.textContent);
     expect(names.filter(name => name === "otkrytka")).toHaveLength(0);
-    expect(names).toContain("podmemory");
+    expect(names).toContain("kogda");
   });
 });

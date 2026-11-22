@@ -41,7 +41,8 @@ export const SHOWCASE_COPY = {
     details: "Setup, limits and checks",
     purpose: "What it does", start: "Getting started", result: "Expected result", limits: "Limits",
     checked: "Checks", contact: "Feedback: @exzentttt", policy: "Privacy policy",
-    repo: "repo", demo: "live demo", noDescription: "No description.",
+    repo: "repo", demo: "live demo", noDescription: "The author has not added a description yet.",
+    otherLanguage: "Description is available in the project, in another language.",
   },
   ru: {
     home: "главная", title: "Небольшие сервисы. Обычные дела.",
@@ -55,7 +56,8 @@ export const SHOWCASE_COPY = {
     details: "Настройка, ограничения и проверки",
     purpose: "Для чего", start: "Как начать", result: "Ожидаемый результат", limits: "Ограничения",
     checked: "Проверка", contact: "Обратная связь: @exzentttt", policy: "Политика конфиденциальности",
-    repo: "исходный код", demo: "открыть демо", noDescription: "Описание отсутствует.",
+    repo: "исходный код", demo: "открыть демо", noDescription: "Автор пока не добавил описание.",
+    otherLanguage: "Описание доступно в проекте на другом языке.",
   },
 };
 
