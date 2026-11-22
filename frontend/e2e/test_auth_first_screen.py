@@ -58,7 +58,7 @@ class AuthFirstScreenTests(unittest.TestCase):
                     )
                     self.assertEqual(violations, [])
                     # The visit beacon fires on every public page and is aborted by the fixture; anything else is a surprise.
-                    surprises = [r for r in self.http.unexpected if r["url"].split("?")[0] != "/api/v1/funnel/visit"]
+                    surprises = [r for r in self.http.unexpected if not (r["method"] == "POST" and r["url"].split("?")[0] == "/api/v1/funnel/visit")]
                     self.assertEqual(surprises, [])
 
 
