@@ -38,7 +38,7 @@ export const accountMessages = {
     "signingIn": "Signing in…",
     "creatingAccount": "Creating account…",
     "signIn": "Sign In",
-    "createAccount": "Create Account",
+    "createAccount": "Create account",
     "enterYourEmailToReceiveAResetLink": "Enter your email to receive a reset link.",
     "ifAnAccountWithThatEmailExistsWe": "If an account with that email exists, we sent a password reset link. Check your inbox.",
     "signedUpWithGoogleOrGitHubYouWill": "Signed up with Google or GitHub? You will not receive a reset link — sign in with the same provider on the",

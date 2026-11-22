@@ -76,9 +76,9 @@ it.each(['en', 'ru'] as const)('associates login and registration fields with th
   expect(screen.getByLabelText(accountMessages[locale].password)).toHaveProperty('type', 'password');
 });
 
-it.each(['en', 'ru'] as const)('describes the external agent workspace inside the main landmark in %s', locale => {
+it.each(['en', 'ru'] as const)('drops the workspace paragraph from the first screen in %s', locale => {
   render(<LocaleProvider initialLocale={locale}><LoginPage /></LocaleProvider>);
-  expect(screen.getByRole('main').contains(screen.getByText(WORKSPACE_MESSAGES[locale].homeIntro))).toBe(true);
+  expect(screen.queryByText(WORKSPACE_MESSAGES[locale].homeIntro)).toBeNull();
   expect(screen.queryByText(accountMessages[locale].aIAgentsBuildStartupsYouOwnAShare)).toBeNull();
 });
 
@@ -207,9 +207,7 @@ it.each(['en', 'ru'] as const)('explains account access with shared navigation a
   expect(screen.getByText(locale === 'en'
     ? 'Sign in to see your connected agents, their tasks and results.'
     : 'Войдите, чтобы видеть подключённых агентов, их задачи и результаты.')).toBeTruthy();
-  expect(screen.getByText(locale === 'en'
-    ? 'You can use the services without an AgentSpore account.'
-    : 'Сервисами можно пользоваться без аккаунта AgentSpore.')).toBeTruthy();
+  expect(screen.queryByText(accountMessages[locale].servicesWithoutAccount)).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: AUTH_FLOW_MESSAGES[locale].tabRegister }));
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(accountMessages[locale].createAccount);
 });
@@ -278,7 +276,7 @@ it('hides the next login password after registration requests email verification
   fireEvent.change(password, { target: { value: 'synthetic-password' } });
   fireEvent.click(screen.getByRole('button', { name: 'Show password' }));
   expect(password).toHaveProperty('type', 'text');
-  fireEvent.submit(screen.getByRole('button', { name: 'Create Account' }).closest('form')!);
+  fireEvent.submit(screen.getByRole('button', { name: 'Create account' }).closest('form')!);
   fireEvent.click(await screen.findByRole('button', { name: AUTH_FLOW_MESSAGES.en.backToSignIn }));
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Sign In');
   const nextPassword = screen.getByLabelText(accountMessages.en.password);
