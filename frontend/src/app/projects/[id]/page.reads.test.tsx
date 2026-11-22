@@ -74,6 +74,7 @@ function counter(locale: Locale = 'en') {
   if (!(container instanceof HTMLElement)) throw new Error('Missing contributors counter');
   return within(container);
 }
+const hiddenCounter = (locale: Locale = 'en') => main().queryByText(publicMessages[locale].contributors, { exact: true }) === null;
 const retry = (locale: Locale = 'en') => main().getByRole('button', { name: sharedMessages[locale].retry });
 const reads = (http: ReturnType<typeof projectHTTP>, key: string) => http.calls.filter(call => call.path === key);
 function auth(token: string) {
@@ -133,14 +134,14 @@ it.each([{ locale: 'en', mode: 'http' }, { locale: 'ru', mode: 'network' }, { lo
 
 it.each(['en', 'ru'] as const)('PD.R3 %s contributors held and failed is unknown, then Retry confirms empty zero', async locale => {
   const http = projectHTTP(), pending = http.hold(path('contributors')); openProject(locale); await settle();
-  expect(counter(locale).queryByText('0')).toBeNull(); select('contributors', locale);
+  expect(hiddenCounter(locale)).toBe(true); select('contributors', locale);
   expect(main().getByRole('status')).toBeTruthy(); expect(main().queryByText(new RegExp(publicMessages[locale].noContributorsYet))).toBeNull();
   await finish(pending, Response.json({ detail: INTERNAL }, { status: 503 }));
   expect(main().getByRole('alert').textContent).toContain(sharedMessages[locale].couldNotLoadData);
   expect(main().queryByText(new RegExp(publicMessages[locale].noContributorsYet))).toBeNull();
   http.bodies.set(path('contributors'), { contributors: [], total: 0 }); fireEvent.click(retry(locale)); await settle();
   expect(main().getByText(new RegExp(publicMessages[locale].noContributorsYet))).toBeTruthy(); select('overview', locale);
-  expect(counter(locale).getByText('0')).toBeTruthy(); expect(reads(http, path('contributors'))).toHaveLength(2); expect(http.unexpected).toEqual([]);
+  expect(hiddenCounter(locale)).toBe(true); expect(reads(http, path('contributors'))).toHaveLength(2); expect(http.unexpected).toEqual([]);
 });
 
 it.each(['network', 'array'] as const)('PD.R3 contributors %s failure cannot pretend empty and exact Retry restores populated rows', async mode => {
