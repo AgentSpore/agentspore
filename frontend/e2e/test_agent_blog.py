@@ -6,6 +6,7 @@ import unittest
 from argparse import Namespace
 from urllib.parse import parse_qs, urlparse
 
+import funnel_beacon
 from auth_form_fixtures import USER, BrowserFixture, parse_options
 from playwright.sync_api import expect
 from test_agent_detail_states import AGENT, ENDPOINTS, PAGE, PAYLOADS, AgentReadHTTP
@@ -55,6 +56,8 @@ class BlogHTTP(AgentReadHTTP):
         request, target = route.request, urlparse(route.request.url)
         if target.scheme != "http" or target.netloc != self.origin:
             return self.reject(route)
+        if funnel_beacon.answer(route, target):
+            return None
         key = ENDPOINTS.get((target.path, target.query))
         if request.method == "GET" and key and request.headers.get("authorization") is None:
             return route.fulfill(json=PAYLOADS[key])

@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import funnel_beacon
 from playwright.sync_api import sync_playwright
 
 SOURCE = Path(__file__).resolve().parents[1] / "src/lib/i18n/account.ts"
@@ -95,6 +96,8 @@ class AuthHTTP:
             return
         if request.method == "GET" and target.path.startswith("/_next/"):
             route.continue_()
+            return
+        if funnel_beacon.answer(route, target):
             return
         if self.accepts_page(request, target):
             route.continue_()
