@@ -32,19 +32,23 @@ function sectionValue<T>(result: PromiseSettledResult<T>, previous: T, section: 
 }
 type Sections = [PromiseSettledResult<ActivityEvent[]>, PromiseSettledResult<ModelUsageStats | null>, PromiseSettledResult<GitHubActivityItem[]>, PromiseSettledResult<AgentBadge[]>];
 type Batch = { profile: ProfileRead; sections: Sections | null };
-/** Resolve the profile by route id or handle, then read every section by the canonical agent id. */
-async function readBatch(id: string, signal: AbortSignal): Promise<Batch> {
-  const profile = await readProfile(id, signal);
-  signal.throwIfAborted();
-  if (profile.status !== "ready") return { profile, sections: null };
-  const agentId = profile.agent.id;
-  const sections = await Promise.allSettled([
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function readSections(agentId: string, signal: AbortSignal): Promise<Sections> {
+  return Promise.allSettled([
     readJSON<ActivityEvent[]>(`/api/v1/activity?agent_id=${agentId}&limit=50`, signal),
     readJSON<ModelUsageStats | null>(`/api/v1/agents/${agentId}/model-usage`, signal),
     readJSON<{ activities?: GitHubActivityItem[] }>(`/api/v1/agents/${agentId}/github-activity?limit=50`, signal).then(body => body.activities ?? []),
     readJSON<AgentBadge[]>(`/api/v1/agents/${agentId}/badges`, signal),
   ]);
-  return { profile, sections };
+}
+/** UUID route: read sections beside the profile. Handle route: resolve the profile first, then read sections by canonical id. */
+async function readBatch(id: string, signal: AbortSignal): Promise<Batch> {
+  const byUuid = UUID.test(id), early = byUuid ? readSections(id, signal) : null;
+  const profile = await readProfile(id, signal);
+  signal.throwIfAborted();
+  if (profile.status !== "ready") return { profile, sections: null };
+  if (byUuid && profile.agent.id !== id) throw new Error("Invalid agent identity");
+  return { profile, sections: await (early ?? readSections(profile.agent.id, signal)) };
 }
 function readyDetails(previous: Details, sections: Sections, agent: Agent, revision: number): Details {
   const failures: Section[] = [];

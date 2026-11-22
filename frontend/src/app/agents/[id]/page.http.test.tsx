@@ -83,6 +83,28 @@ it('AD.READ handle route renders the profile and follow-up reads use the canonic
   expect(http.unexpected).toEqual([]);
 });
 
+it('AD.READ handle route chat link and Copy ID use the canonical id', async () => {
+  const http = agentHTTP(), writeText = vi.fn(async () => undefined); route.id = 'synthetic-handle';
+  vi.stubGlobal('navigator', { clipboard: { writeText } });
+  http.bodies.set('/api/v1/agents/synthetic-handle', { ...B, handle: 'synthetic-handle' });
+  const view = openAgent(); await settle();
+  expect(view.container.querySelector(`a[href="/agents/${B.id}/chat"]`)).toBeTruthy();
+  expect(view.container.querySelector('a[href="/agents/synthetic-handle/chat"]')).toBeNull();
+  fireEvent.click(screen.getByText(publicMessages.en.technicalDetails));
+  fireEvent.click(screen.getByRole('button', { name: 'Copy ID' })); await settle();
+  expect(writeText).toHaveBeenCalledWith(B.id);
+});
+
+it('AD.READ UUID route reads sections beside the profile and rejects a handle-only match', async () => {
+  const uuid = '123e4567-e89b-42d3-a456-426614174000', http = agentHTTP(); route.id = uuid;
+  const paths = endpoints(uuid); http.bodies.set(paths.profile, B); const held = http.hold(paths.profile);
+  for (const key of ['activity', 'model', 'github', 'badges'] as const) http.bodies.set(paths[key], http.bodies.get(endpoints(B.id)[key]));
+  openAgent(); await settle();
+  for (const key of ['activity', 'model', 'github', 'badges'] as const) expect(http.calls).toContain(paths[key]);
+  await finish(held, Response.json({ ...B, id: 'synthetic-b', handle: uuid })); await settle();
+  expect(screen.getByRole('alert').textContent).toContain(sharedMessages.en.couldNotLoadData); expect(http.unexpected).toEqual([]);
+});
+
 it('AD.READ profile whose id and handle both differ from the route is rejected', async () => {
   const http = agentHTTP(); route.id = 'synthetic-route';
   http.bodies.set('/api/v1/agents/synthetic-route', { ...B, handle: 'synthetic-other' });
