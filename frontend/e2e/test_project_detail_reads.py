@@ -86,6 +86,10 @@ def reach_tab(test, target, **native_args):
     for _ in range(steps):
         test.page.keyboard.press(key)
     expect(target).to_be_focused()
+    if native_args.get("measure", True) and hasattr(test, "targets"):
+        test.place(target)
+        test.focus.append(target.evaluate(FOCUS))
+        test.targets.append(target.evaluate(TARGET))
 
 
 class ProjectReadsHTTP(OwnershipHTTP):
@@ -210,9 +214,8 @@ class ProjectDetailReadTests(BrowserFixture, unittest.TestCase):
         self.targets.append(target.evaluate(TARGET))
 
     def select(self, index):
-        reach_tab(self, self.button(index))
         before = list(self.http.calls)
-        self.page.keyboard.press("Enter")
+        reach_tab(self, self.button(index))
         self.settle()
         self.assertEqual(self.http.calls, before)
         for key in (4, 5, 6):

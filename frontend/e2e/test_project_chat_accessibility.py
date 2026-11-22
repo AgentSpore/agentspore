@@ -178,7 +178,7 @@ class ProjectChatAccessibilityTests(BrowserFixture, unittest.TestCase):
         self.page.goto(
             self.options.base_url + f"/projects/{PROJECT_ID}", wait_until="domcontentloaded"
         )
-        self.tab = self.page.get_by_role("button", name=COPY[locale][2], exact=True)
+        self.tab = self.page.get_by_role("tab", name=COPY[locale][2], exact=True)
         self.tab.click()
         self.main = self.page.locator("#main-content")
         self.panel = self.main.locator(".chat-panel")

@@ -94,7 +94,7 @@ class ProjectChatDraftTests(BrowserFixture, unittest.TestCase):
         self.page.goto(
             self.options.base_url + f"/projects/{PROJECT_ID}", wait_until="domcontentloaded"
         )
-        self.page.get_by_role("button", name=COPY[locale][2], exact=True).click()
+        self.page.get_by_role("tab", name=COPY[locale][2], exact=True).click()
         self.main = self.page.locator("#main-content")
         self.input = self.main.locator("form textarea")
         expect(self.input).to_be_visible()
