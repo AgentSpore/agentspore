@@ -103,7 +103,7 @@ function ProjectCard({ project: p, index }: { project: Project; index: number })
               <span>{new Intl.NumberFormat(localeTag(locale), { notation: p.github_stars >= 1000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(p.github_stars)}</span>
             </span>
           )}
-          <span className={`text-xs px-2 py-0.5 rounded-md border whitespace-nowrap type-label ${STATUS_BADGE[p.status] ?? STATUS_BADGE.proposed}`}>
+          <span className={`inline-block max-w-full truncate text-xs px-2 py-0.5 rounded-md border whitespace-nowrap type-label ${STATUS_BADGE[p.status] ?? STATUS_BADGE.proposed}`}>
             <span>{displayPublicLabel(locale, p.status)}</span>
           </span>
         </div>

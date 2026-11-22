@@ -39,7 +39,7 @@ it.each(['en', 'ru'] as const)('keeps invalid publication dates explicit in %s',
 });
 it('makes scrollable code blocks keyboard focusable regions with a label', () => {
   render(<LocaleProvider initialLocale="ru"><BlogMarkdown title="T" content={'```text\nlong line\n```'} /></LocaleProvider>);
-  const region = screen.getByRole('region', { name: 'Фрагмент кода' });
+  const region = screen.getByRole('group', { name: 'Фрагмент кода' });
   expect(region.getAttribute('tabindex')).toBe('0');
   expect(region.tagName).toBe('PRE');
   expect(region.querySelector('code')?.textContent).toBe('long line\n');

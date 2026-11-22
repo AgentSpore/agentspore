@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 from auth_form_fixtures import BrowserFixture, parse_options
 from playwright.sync_api import expect
-from test_blog_geometry import GeometryHTTP
+from test_blog_geometry import BODY, GeometryHTTP, publication
 from test_blog_reads import BASE as BLOG_BASE
 from test_blog_reads import POST_ID
 from test_chat_ownership import PROJECT_ID
@@ -29,12 +29,25 @@ TABS = {
 }
 
 
+SECOND_BLOCK = "\n\n```python\nsecond = '" + "z" * 160 + "'\n```\n"
+AXE_TAGS = ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]
+
+
+class TwoCodeBlocksHTTP(GeometryHTTP):
+    """Serve the geometry post with a second, separately scrollable code block."""
+
+    def detail_read(self, route, target):
+        if target.path == f"{BLOG_BASE}/{POST_ID}" and not target.query:
+            return route.fulfill(json=dict(publication(), content=BODY + SECOND_BLOCK))
+        return super().detail_read(route, target)
+
+
 class MobileHTTP:
     """Route synthetic reads by area; writes and foreign origins fail closed."""
 
     def __init__(self, base_url):
         self.origin = urlparse(base_url).netloc
-        self.blog = GeometryHTTP(base_url)
+        self.blog = TwoCodeBlocksHTTP(base_url)
         self.project = type("Http", (ActionHTTP,), {"project": LIVE})(base_url)
 
     def route(self, route):
@@ -75,16 +88,18 @@ class MobileLayoutTests(BrowserFixture, unittest.TestCase):
     def shot(self, page, name):
         page.screenshot(path=str(self.options.screenshots / f"{name}.png"), full_page=True)
 
-    def test_blog_code_blocks_pass_axe_scrollable_region(self):
+    def test_blog_post_passes_axe_with_two_code_blocks(self):
         for locale in ("en", "ru"):
             with self.subTest(locale=locale):
                 page = self.open_page(f"/blog/{POST_ID}", locale)
                 page.add_script_tag(path=str(AXE))
                 found = page.evaluate(
-                    """async()=>{const r=await axe.run({include:[['#main-content']]},
-                    {runOnly:{type:'rule',values:['scrollable-region-focusable']}});
-                    return r.violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>n.target)}))}"""
+                    """async tags=>{const r=await axe.run({include:[['#main-content']]},
+                    {runOnly:{type:'tag',values:tags}});
+                    return r.violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>n.target)}))}""",
+                    AXE_TAGS,
                 )
+                self.assertEqual(page.locator("main pre").count(), 2)
                 self.shot(page, f"post-{locale}")
                 self.assertEqual(found, [])
 
