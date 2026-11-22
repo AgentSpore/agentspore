@@ -9,13 +9,13 @@ export interface ServiceSections {
 }
 
 /**
- * Splits catalog projects by the backend health probe. Before the backend reports
- * `service_live` on any item, the curated services stay listed so the page is not empty.
+ * Splits catalog projects by the backend health probe. While a non-empty
+ * response carries `service_live` on no item (backend rollout), the curated services stay listed.
  */
 export function splitServices(projects: readonly Project[], curated: readonly CuratedService[]): ServiceSections {
   const probed = projects.some(project => typeof project.service_live === "boolean");
   const curatedIds = new Set(curated.map(service => service.id));
-  if (!probed) {
+  if (!probed && projects.length > 0) {
     return { liveCurated: curated, liveOther: [], archive: projects.filter(project => !curatedIds.has(repoSlug(project.repo_url) ?? "")) };
   }
   const live = projects.filter(project => project.service_live === true);

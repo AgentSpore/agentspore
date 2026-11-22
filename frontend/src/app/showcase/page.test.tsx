@@ -39,6 +39,8 @@ describe("Showcase demo links", () => {
   });
 });
 
+const LEGACY = [{ tech_stack: [], agent_handle: "demo", status: "deployed", description: "Legacy", id: "9", title: "Legacy", repo_url: "https://github.com/Example/legacy", deploy_url: null }];
+
 function featuredCard(name: string) {
   const card = screen.getByRole("heading", { name }).closest("article");
   if (!(card instanceof HTMLElement)) throw new Error("Featured card is missing");
@@ -46,10 +48,12 @@ function featuredCard(name: string) {
 }
 
   it.each(["en", "ru"] as const)("keeps launch visible and setup expandable in %s", async locale => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(LEGACY)));
     render(<LocaleProvider initialLocale={locale}><ShowcasePage /></LocaleProvider>);
-    await screen.findByText(locale === "en" ? /no catalog apps found/i : /в каталоге пока нет/i);
-    for (const card of screen.getAllByRole("article")) {
+    await screen.findByRole("heading", { name: "PodMemory" });
+    const start = screen.getByRole("heading", { name: locale === "en" ? "Start here" : "С чего начать" }).closest("section");
+    if (!start) throw new Error("Start here section is missing");
+    for (const card of within(start).getAllByRole("article")) {
       const details = card.querySelector("details");
       if (!details) throw new Error("Service details are missing");
       expect(details.open).toBe(false);
@@ -67,17 +71,17 @@ function featuredCard(name: string) {
 
 describe("Showcase service selection", () => {
   it("does not promise all catalog services are running today", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(LEGACY)));
     render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
-    await screen.findByText(/no catalog apps found/i);
+    await screen.findByText(/1 archived projects/);
     expect(screen.queryByText(/running service today/i)).toBeNull();
-    expect(screen.getAllByRole("article")).toHaveLength(4);
+    expect(screen.getAllByRole("article")).toHaveLength(5);
   });
 
-  it.each([200, 503])("keeps actionable cards with an empty or failed catalog (%s)", async (status) => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status })));
+  it("keeps actionable curated cards while no item reports the live field", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(LEGACY)));
     render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
-    await screen.findByText(status === 200 ? /no catalog apps found/i : /catalog unavailable/i);
+    await screen.findByRole("heading", { name: "PodMemory" });
     const family = featuredCard("Pereklichka");
     for (const name of ["PodMemory", "Otkrytka", "Pereklichka", "SaaSCalc"]) {
       const card = screen.getByRole("heading", { name }).closest("article");
@@ -150,11 +154,11 @@ describe("Showcase service selection", () => {
 it.each(["en", "ru"] as const)("keeps public source repositories separate from live demos when the API fails in %s", async locale => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 503 })));
   render(<LocaleProvider initialLocale={locale}><ShowcasePage /></LocaleProvider>);
-  await screen.findByText(locale === "en" ? /catalog unavailable/i : /каталог недоступен/i);
+  await screen.findByText(locale === "en" ? /archive unavailable/i : /архив недоступен/i);
   const section = screen.getByRole("heading", { name: locale === "en" ? "More to explore" : "Ещё проекты" }).closest("section");
   if (!section) throw new Error("Source repository section is missing");
   const sources = within(section);
-  expect(sources.getAllByRole("listitem")).toHaveLength(5);
+  expect(sources.getAllByRole("listitem")).toHaveLength(8);
   expect(sources.getByRole("link", { name: locale === "en" ? "All repositories" : "Все репозитории" }).getAttribute("href"))
     .toBe("https://github.com/orgs/AgentSpore/repositories");
   for (const name of ["kogda", "potluck", "dawntask", "paynudge-lite", "splitpost"]) {

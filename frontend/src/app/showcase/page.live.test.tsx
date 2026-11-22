@@ -73,7 +73,7 @@ describe("Showcase live services", () => {
     await open([dead("1", "Pod dead", "podmemory")]);
     const start = section("Start here");
     expect(start.queryAllByRole("article")).toHaveLength(0);
-    expect(start.getByText(/No services are running right now/)).toBeTruthy();
+    expect(start.getByText("No services are running right now.")).toBeTruthy();
   });
 
   it("falls back to the curated services when no item carries the live field", async () => {
@@ -81,6 +81,24 @@ describe("Showcase live services", () => {
     const start = section("Start here");
     for (const name of ["PodMemory", "Otkrytka", "Pereklichka", "SaaSCalc"]) expect(start.getByRole("heading", { name })).toBeTruthy();
   });
+
+  it.each([["en", "Services are unavailable right now. Try again later."], ["ru", "Сервисы сейчас недоступны. Попробуйте позже."]] as const)(
+    "shows a neutral state, not curated cards, when the API fails (%s)", async (locale, text) => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 503 })));
+      render(<LocaleProvider initialLocale={locale}><ShowcasePage /></LocaleProvider>);
+      await screen.findByText(text);
+      expect(screen.queryByRole("heading", { name: "SaaSCalc" })).toBeNull();
+      expect(screen.queryAllByRole("article")).toHaveLength(0);
+    });
+
+  it.each([["en", "No services are running right now."], ["ru", "Сейчас нет запущенных сервисов."]] as const)(
+    "shows the none-running state, not curated cards, for an empty list (%s)", async (locale, text) => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
+      render(<LocaleProvider initialLocale={locale}><ShowcasePage /></LocaleProvider>);
+      await screen.findByText(text);
+      expect(screen.queryByRole("heading", { name: "SaaSCalc" })).toBeNull();
+      expect(screen.queryAllByRole("article")).toHaveLength(0);
+    });
 
   it("capitalises the breadcrumb root", async () => {
     await open(projects);
