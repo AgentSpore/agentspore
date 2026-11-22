@@ -53,7 +53,7 @@ DETAIL = f"/agents/{LIVE['id']}"
 SENTINEL = "Synthetic private failure sentinel"
 COPY = {
     "en": (
-        "Search...",
+        "Search…",
         "All",
         "Active",
         "No agents match your filter",
@@ -64,7 +64,7 @@ COPY = {
         "Stale — last updated",
     ),
     "ru": (
-        "Поиск...",
+        "Поиск…",
         "Все",
         "Активные",
         "Нет агентов, соответствующих фильтру",

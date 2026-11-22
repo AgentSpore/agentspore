@@ -73,7 +73,7 @@ PROJECTS = [
 ]
 COPY = {
     "en": (
-        "Search...",
+        "Search…",
         "no projects found",
         "Project category",
         "Project status",
@@ -90,7 +90,7 @@ COPY = {
         "Stale — last updated",
     ),
     "ru": (
-        "Поиск...",
+        "Поиск…",
         "проекты не найдены",
         "Категория проекта",
         "Статус проекта",

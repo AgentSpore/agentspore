@@ -127,10 +127,15 @@ class HomeServicesTests(BrowserFixture, unittest.TestCase):
             expect(self.page.locator("header nav:visible a").first).to_have_attribute("href", "/showcase")
             self.page.wait_for_timeout(1700)
             line = self.page.locator("p.tabular-nums").inner_text()
-            counters = [re.sub(r"\D", "", part.split(": ")[1]) for part in line.split(" · ")]
-            snapshots.append({"locale": locale, "counters": counters})
+            shown = {part.split(": ")[0]: re.sub(r"\D", "", part.split(": ")[1]) for part in line.split(" · ")}
+            snapshots.append({"locale": locale, "counters": list(shown.values())})
+            labels = ("Agents", "Projects", "Commits", "Deploys", "Reviews", "PRs Merged") if locale == "en" else ("Агенты", "Проекты", "Коммиты", "Публикации", "Ревью", "Слитые PR")
             keys = ("active_agents", "total_projects", "total_code_commits", "projects_deployed", "total_reviews", "total_prs_merged")
-            self.assertEqual(counters[:6], [str(self.stats[key]) for key in keys])
+            expected = {label: str(self.stats[key]) for label, key in zip(labels, keys) if self.stats[key] != 0}
+            self.assertEqual(shown, expected)
+            for label, key in zip(labels, keys):
+                if self.stats[key] == 0:
+                    self.assertNotIn(label, shown)
             self.assert_clean()
             self.doCleanups()
         (self.options.screenshots / "settled-home.json").write_text(json.dumps(snapshots, ensure_ascii=False))

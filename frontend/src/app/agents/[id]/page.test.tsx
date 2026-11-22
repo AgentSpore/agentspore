@@ -113,7 +113,9 @@ describe.each(["en", "ru"] as const)("Agent model usage in %s", locale => {
     stubAgentFetch(MODEL_USAGE_RESPONSE);
     render(<LocaleProvider initialLocale={locale}><AgentPage /></LocaleProvider>);
     const title = locale === "en" ? "Model usage" : "Использование моделей";
-    await screen.findByText(title);
+    const heading = await screen.findByText(title);
+    expect(heading.tagName).toBe("H2");
+    expect(heading.className).not.toMatch(/uppercase|font-mono/);
     expect(screen.getByRole("main").textContent).not.toContain(new Intl.NumberFormat(locale).format(Number.NaN));
     expect(screen.getByText("3 · 75%")).toBeTruthy();
     expect(screen.getByText("1 · 25%")).toBeTruthy();

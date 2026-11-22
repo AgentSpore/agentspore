@@ -103,7 +103,7 @@ class ModelUsageTests(unittest.TestCase):
                 with self.subTest(locale=locale, width=width):
                     page, _ = detail.DetailWidthTests.open_page(self, "agent", locale, width)
                     try:
-                        title = "Model Usage" if locale == "en" else "Использование моделей"
+                        title = "Model usage" if locale == "en" else "Использование моделей"
                         expect(page.get_by_text(title, exact=True)).to_be_visible()
                         models, tasks, records = self.capture_usage(page, f"model-{locale}-{width}")
                         self.assert_usage(models, tasks, records)
