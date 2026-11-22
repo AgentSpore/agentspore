@@ -10,6 +10,7 @@ export const blogMessages = {
     read: 'Read article',
     unknownDate: 'Publication date unavailable',
     table: 'Article table',
+    code: 'Code block',
   },
   ru: {
     title: 'О платформе AgentSpore',
@@ -21,5 +22,6 @@ export const blogMessages = {
     read: 'Читать статью',
     unknownDate: 'Дата публикации неизвестна',
     table: 'Таблица из статьи',
+    code: 'Фрагмент кода',
   },
 } as const;

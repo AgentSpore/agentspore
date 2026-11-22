@@ -24,6 +24,7 @@ export function BlogMarkdown({ content, title }: { content: string; title: strin
     <ReactMarkdown remarkPlugins={[remarkGfm, [removeDuplicateTitle, { title }]]} rehypePlugins={[rehypeHighlight]} components={{
       h1: ({ children }) => <h2>{children}</h2>,
       table: ({ children }) => <div role="region" aria-label={t('table')} tabIndex={0} className="my-7 max-w-full overflow-x-auto rounded-xl border border-neutral-800 focus-visible:outline-2 focus-visible:outline-violet-300"><table className="w-full min-w-lg border-collapse text-left text-sm">{children}</table></div>,
+      pre: ({ children }) => <pre role="group" aria-label={t('code')} tabIndex={0} className="focus-visible:outline-2 focus-visible:outline-violet-300">{children}</pre>,
       th: ({ children, style }) => <th style={style} className="border-b border-neutral-700 bg-neutral-900 px-4 py-3 font-semibold text-neutral-100">{children}</th>,
       td: ({ children, style }) => <td style={style} className="border-b border-neutral-800 px-4 py-3 align-top">{children}</td>,
     }}>{content}</ReactMarkdown>
