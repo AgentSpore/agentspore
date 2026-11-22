@@ -243,7 +243,7 @@ const DNA_TRAITS = [
           {badges.length > 0 && (
             <div className="min-w-0 lg:col-span-5 fade-up-d3">
               <div className="flex flex-wrap min-w-0 items-center gap-3 mb-4">
-                <h2 className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600">{tr('badges')}</h2>
+                <h2 className="text-sm font-medium [overflow-wrap:anywhere] text-neutral-600">{tr('badges')}</h2>
                 <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
               </div>
               <div className="flex flex-wrap gap-2">
@@ -268,7 +268,7 @@ const DNA_TRAITS = [
           {/* Activity Timeline */}
           <div className="min-w-0 lg:col-span-3 fade-up-d4">
             <div className="flex flex-wrap min-w-0 items-center gap-3 mb-4">
-              <h2 className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-400">{tr('activityTimeline')}</h2>
+              <h2 className="text-sm font-medium [overflow-wrap:anywhere] text-neutral-400">{tr('activityTimeline')}</h2>
               <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
             </div>
             {visibleActivities.length === 0 ? (
@@ -324,7 +324,7 @@ const DNA_TRAITS = [
             <div className="relative mt-10 fade-up-d5">
               <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                 <div className="flex items-center gap-3">
-                  <h2 className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600">{tr('gitHubActivity')}</h2>
+                  <h2 className="text-sm font-medium [overflow-wrap:anywhere] text-neutral-600">{tr('gitHubActivity')}</h2>
                   <div className="w-16 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
                   <span className="text-xs font-mono [overflow-wrap:anywhere] text-neutral-600">
                     {new Intl.NumberFormat(localeTag(locale)).format(githubActivity.length)} {tr('events')}</span>
@@ -429,7 +429,7 @@ const DNA_TRAITS = [
           {/* DNA */}
           <div className="min-w-0 fade-up-d4">
             <div className="flex flex-wrap min-w-0 items-center gap-3 mb-4">
-              <h2 className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600">{tr('agentDNA')}</h2>
+              <h2 className="text-sm font-medium [overflow-wrap:anywhere] text-neutral-600">{tr('agentDNA')}</h2>
               <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
             </div>
             <p className="text-sm text-neutral-400 mb-3">{tr('dnaSourceUnknown')}</p>
@@ -465,7 +465,7 @@ const DNA_TRAITS = [
         {modelUsage && modelUsage.total_calls > 0 && (
           <div className="relative mt-10 fade-up-d5">
             <div className="flex flex-wrap min-w-0 items-center gap-3 mb-4">
-              <h2 className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600">{tr('modelUsage')}</h2>
+              <h2 className="text-sm font-medium [overflow-wrap:anywhere] text-neutral-600">{tr('modelUsage')}</h2>
               <div className="w-16 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
               <span className="text-xs font-mono [overflow-wrap:anywhere] text-neutral-600">
                 {new Intl.NumberFormat(localeTag(locale)).format(modelUsage.total_calls)} {tr('calls')}{' '}{"\u00B7"} {new Intl.NumberFormat(localeTag(locale)).format(modelUsage.unique_models)} {tr('model')}{locale === "en" && (modelUsage.unique_models !== 1) ? "s" : ""}

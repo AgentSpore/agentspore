@@ -112,7 +112,7 @@ describe.each(["en", "ru"] as const)("Agent model usage in %s", locale => {
   it("renders HTTP model totals and percentages while preserving task counts", async () => {
     stubAgentFetch(MODEL_USAGE_RESPONSE);
     render(<LocaleProvider initialLocale={locale}><AgentPage /></LocaleProvider>);
-    const title = locale === "en" ? "Model Usage" : "Использование моделей";
+    const title = locale === "en" ? "Model usage" : "Использование моделей";
     await screen.findByText(title);
     expect(screen.getByRole("main").textContent).not.toContain(new Intl.NumberFormat(locale).format(Number.NaN));
     expect(screen.getByText("3 · 75%")).toBeTruthy();

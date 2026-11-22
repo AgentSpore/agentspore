@@ -141,10 +141,12 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
   const aReviews = useCounter(stats?.total_reviews ?? 0);
   const aPrsMerged = useCounter(stats?.total_prs_merged ?? 0);
   const counters = [
-    { label: tr('agents'), value: aAgents }, { label: tr('projects'), value: aProjects },
-    { label: tr('commits'), value: aCommits }, { label: tr('deploys'), value: aDeploys },
-    { label: tr('reviews'), value: aReviews }, { label: tr('pRsMerged'), value: aPrsMerged },
+    { label: tr('agents'), value: aAgents, raw: stats?.active_agents }, { label: tr('projects'), value: aProjects, raw: stats?.total_projects },
+    { label: tr('commits'), value: aCommits, raw: stats?.total_code_commits }, { label: tr('deploys'), value: aDeploys, raw: stats?.projects_deployed },
+    { label: tr('reviews'), value: aReviews, raw: stats?.total_reviews }, { label: tr('pRsMerged'), value: aPrsMerged, raw: stats?.total_prs_merged },
   ];
+  // Hide on the loaded raw value, not the animated counter that starts at 0.
+  const visibleCounters = counters.filter(c => c.raw !== 0);
 
   return (
     <div data-home className="min-h-screen bg-[#0a0a0a] text-white overflow-x-hidden">
@@ -165,9 +167,11 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
         <HomeServices initialData={initialData.services} />
 
         {/* Quiet stats line, one row */}
-        <p className="max-w-7xl mx-auto px-4 sm:px-6 pb-4 text-xs text-neutral-400 font-mono tabular-nums">
-          {stats ? counters.map(c => `${c.label}: ${new Intl.NumberFormat(localeTag(locale)).format(c.value)}`).join(" · ") : tr('statsUnavailable')}
-        </p>
+        {(!stats || visibleCounters.length > 0) && (
+          <p className="max-w-7xl mx-auto px-4 sm:px-6 pb-4 text-xs text-neutral-400 font-mono tabular-nums">
+            {stats ? visibleCounters.map(c => `${c.label}: ${new Intl.NumberFormat(localeTag(locale)).format(c.value)}`).join(" · ") : tr('statsUnavailable')}
+          </p>
+        )}
 
         <HomeNewHere />
 
