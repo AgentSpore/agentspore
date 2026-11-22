@@ -63,10 +63,10 @@ export function ShowcaseCard({ project: p, index, language }: { project: Project
     <article className="group project-card relative flex min-w-0 flex-col gap-3 overflow-hidden rounded-xl border border-neutral-800/50 bg-neutral-900/30 p-5 backdrop-blur-sm transition-all duration-300 hover:border-neutral-700/60"
       style={{ animationDelay: `${index * 60}ms` }}>
       <div className="flex items-center gap-3">
-        <ServiceThumb><span className="text-2xl font-semibold uppercase">{p.title.trim().charAt(0)}</span></ServiceThumb>
+        <ServiceThumb><span className="text-2xl font-semibold uppercase">{Array.from(p.title.trim())[0] ?? ""}</span></ServiceThumb>
         <div className="min-w-0">
           <h3 className="whitespace-normal text-sm font-medium leading-snug text-neutral-100 [overflow-wrap:anywhere] group-hover:text-white">
-            {href ? <a data-card-link href={href} target="_blank" rel="noopener noreferrer" className={`inline-flex min-h-11 items-center rounded ${FOCUS} ${STRETCH}`}>{p.title}</a> : p.title}
+            {href ? <a data-card-link href={href} target="_blank" rel="noopener noreferrer" className={`inline-flex min-h-11 items-center rounded ${FOCUS} ${STRETCH}`}>{p.title}<span className="sr-only">: {href === p.repo_url ? copy.repo : copy.demo}</span></a> : p.title}
           </h3>
           {repoPath && <span className="mt-1 block whitespace-normal font-mono text-xs tracking-wide text-neutral-600 [overflow-wrap:anywhere]">{repoPath}</span>}
         </div>

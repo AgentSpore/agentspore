@@ -22,7 +22,7 @@ const PROJECTS = [
 async function renderPage(locale: "en" | "ru") {
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(PROJECTS), { status: 200 })));
   render(<LocaleProvider initialLocale={locale}><ShowcasePage /></LocaleProvider>);
-  await screen.findByRole("heading", { name: "Live Verdict" });
+  await screen.findByRole("heading", { name: /^Live Verdict/ });
 }
 
 describe("Showcase cards", () => {
@@ -45,14 +45,14 @@ describe("Showcase cards", () => {
   it("points a catalog card at the live demo, else the source", async () => {
     await renderPage("en");
     const hrefOf = (name: string) => screen.getByRole("link", { name }).getAttribute("href");
-    expect(hrefOf("Live Verdict")).toBe("https://live.example.test/x");
-    expect(hrefOf("Repo Only")).toBe("https://github.com/Example/reviewray");
+    expect(hrefOf("Live Verdict: live demo")).toBe("https://live.example.test/x");
+    expect(hrefOf("Repo Only: repo")).toBe("https://github.com/Example/reviewray");
   });
 
   it("does not repeat a featured service in the catalog", async () => {
     await renderPage("en");
-    expect(screen.queryByRole("heading", { name: "Duplicate Otkrytka" })).toBeNull();
-    expect(screen.queryByRole("heading", { name: "Duplicate Calc" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: /^Duplicate Otkrytka/ })).toBeNull();
+    expect(screen.queryByRole("heading", { name: /^Duplicate Calc/ })).toBeNull();
     const names = screen.getAllByRole("heading", { level: 3 }).map(h => h.textContent?.toLowerCase());
     for (const featured of ["otkrytka", "podmemory", "saascalc"]) {
       expect(names.filter(name => name === featured)).toHaveLength(1);
@@ -61,9 +61,9 @@ describe("Showcase cards", () => {
 
   it("uses a localized fallback for empty or other-language descriptions", async () => {
     await renderPage("en");
-    const emptyCard = screen.getByRole("heading", { name: "Empty Dawn" }).closest("article");
+    const emptyCard = screen.getByRole("heading", { name: /^Empty Dawn/ }).closest("article");
     expect(emptyCard?.textContent).toContain("The author has not added a description yet.");
-    const ruCard = screen.getByRole("heading", { name: "Russian Vibe" }).closest("article");
+    const ruCard = screen.getByRole("heading", { name: /^Russian Vibe/ }).closest("article");
     expect(ruCard?.textContent).not.toContain("Сервис для проверки");
     expect(ruCard?.textContent).toContain("Description is available in the project, in another language.");
   });

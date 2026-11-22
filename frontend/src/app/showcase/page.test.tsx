@@ -28,21 +28,21 @@ describe("Showcase demo links", () => {
   it("withdraws SignSafe from the curated showcase", async () => {
     mockProjects();
     render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
-    await screen.findByRole("heading", { name: "Live Verdict" });
+    await screen.findByRole("heading", { name: /^Live Verdict/ });
     expect(screen.queryByRole("heading", { name: "SignSafe" })).toBeNull();
   });
 
   it("hides archived or missing deployments and preserves the real live URL", async () => {
     mockProjects();
     render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
-    const heading = await screen.findByRole("heading", { name: "Live Verdict" });
+    const heading = await screen.findByRole("heading", { name: /^Live Verdict/ });
     const card = heading.closest(".project-card");
     if (!(card instanceof HTMLElement)) throw new Error("Live project card is missing");
-    expect(within(card).getByRole("link", { name: "Live Verdict" }).getAttribute("href"))
+    expect(within(card).getByRole("link", { name: "Live Verdict: live demo" }).getAttribute("href"))
       .toBe("https://actual.example.test/app");
     expect(screen.getAllByRole("link", { name: "repo" })).toHaveLength(1);
     expect(document.querySelector('a[href="https://old.example.test"]')).toBeNull();
-    expect(screen.getByRole("link", { name: "Archived Verdict" }).getAttribute("href"))
+    expect(screen.getByRole("link", { name: "Archived Verdict: repo" }).getAttribute("href"))
       .toBe("https://github.com/Example/verdict");
   });
 });
@@ -121,7 +121,7 @@ describe("Showcase service selection", () => {
   it("switches page and service instructions to Russian without losing URLs", async () => {
     mockProjects();
     render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
-    await screen.findByRole("heading", { name: "Live Verdict" });
+    await screen.findByRole("heading", { name: /^Live Verdict/ });
     fireEvent.click(screen.getByRole("button", { name: "Русский" }));
     expect(screen.getByRole("button", { name: "Русский" }).getAttribute("aria-pressed")).toBe("true");
     const family = featuredCard("Перекличка");
@@ -131,7 +131,7 @@ describe("Showcase service selection", () => {
     expect(screen.getByRole("heading", { name: "Каталог проектов" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "English" }));
     expect(screen.getByRole("heading", { name: "Pereklichka" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Live Verdict" }).getAttribute("href"))
+    expect(screen.getByRole("link", { name: "Live Verdict: live demo" }).getAttribute("href"))
       .toBe("https://actual.example.test/app");
   });
 
@@ -139,11 +139,11 @@ describe("Showcase service selection", () => {
     mockProjects();
     const transport = vi.mocked(fetch);
     render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
-    await screen.findByRole("heading", { name: "Live Verdict" });
+    await screen.findByRole("heading", { name: /^Live Verdict/ });
     transport.mockResolvedValueOnce(new Response("[]", { status: 503 }));
     await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
     expect(await screen.findByRole("status")).toHaveProperty("textContent", expect.stringContaining("Stale"));
-    expect(screen.getByRole("heading", { name: "Live Verdict" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /^Live Verdict/ })).toBeTruthy();
     expect(featuredCard("Pereklichka").getByRole("link", { name: "Read setup guide" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await act(async () => {});
@@ -175,7 +175,7 @@ describe("Showcase repository list", () => {
   it("does not repeat a repository that already appears in the project catalog", async () => {
     mockProjects();
     render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
-    await screen.findByRole("heading", { name: "Live Verdict" });
+    await screen.findByRole("heading", { name: /^Live Verdict/ });
     const names = screen.getAllByRole("heading", { level: 3 }).map(h => h.textContent);
     expect(names.filter(name => name === "otkrytka")).toHaveLength(0);
     expect(names).toContain("kogda");

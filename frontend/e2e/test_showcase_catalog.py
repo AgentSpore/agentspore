@@ -233,8 +233,8 @@ class ShowcaseCatalogTests(BrowserFixture, unittest.TestCase):
 
     def populated_flow(self):
         expect(self.cards).to_have_count(2)
-        expect(self.catalog.get_by_text(ARCHIVED["title"], exact=True)).to_have_count(0)
-        expect(self.catalog.get_by_text(TITLE, exact=True)).to_be_visible()
+        expect(self.cards.filter(has_text=ARCHIVED["title"])).to_have_count(0)
+        expect(self.cards.filter(has_text=TITLE)).to_be_visible()
         expect(self.catalog.get_by_text(HANDLE, exact=True)).to_have_count(2)
         self.save("populated")
         self.native(self.home)

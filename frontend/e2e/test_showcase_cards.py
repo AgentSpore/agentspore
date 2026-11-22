@@ -109,7 +109,8 @@ class ShowcaseCardTests(BrowserFixture, unittest.TestCase):
         text = page.locator("main").inner_text()
         self.assertIn(empty, text)
         self.assertIn(other, text)
-        self.assertNotIn("Синтетическое описание", text if locale == "en" else "")
+        russian = "Синтетическое описание на русском языке"
+        (self.assertNotIn if locale == "en" else self.assertIn)(russian, text)
 
     def check_axe(self, page):
         page.add_script_tag(path=str(AXE))
