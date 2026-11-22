@@ -5,6 +5,7 @@ import unittest
 from argparse import Namespace
 from urllib.parse import parse_qs, urlparse
 
+import funnel_beacon
 from auth_form_fixtures import AuthHTTP, BrowserFixture, parse_options
 from playwright.sync_api import expect
 from test_agents_list import METRICS
@@ -71,6 +72,8 @@ class BlogReadHTTP(AuthHTTP):
         target = urlparse(route.request.url)
         if target.scheme != "http" or target.netloc != self.origin:
             return self.reject(route)
+        if funnel_beacon.answer(route, target):
+            return None
         if target.path.startswith("/api/"):
             return self.read(route, target)
         return super().route(route)

@@ -6,6 +6,7 @@ import unittest
 from argparse import Namespace
 from urllib.parse import parse_qs, urlparse
 
+import funnel_beacon
 from auth_form_fixtures import USER, BrowserFixture, parse_options
 from playwright.sync_api import expect
 from test_agent_detail_states import AGENT, ENDPOINTS, PAGE, PAYLOADS, AgentReadHTTP
@@ -51,10 +52,25 @@ COPY = {
 
 
 class BlogHTTP(AgentReadHTTP):
+    def accepts_page(self, request, target):
+        """Production builds prefetch each visible card's post page; allow exactly that."""
+        query = parse_qs(target.query, keep_blank_values=True)
+        if (
+            request.method == "GET"
+            and target.path in {f"/blog/{p['id']}" for p in POSTS}
+            and request.headers.get("rsc") == "1"
+            and request.headers.get("next-router-prefetch") == "1"
+            and set(query) == {"_rsc"}
+        ):
+            return True
+        return super().accepts_page(request, target)
+
     def route(self, route):
         request, target = route.request, urlparse(route.request.url)
         if target.scheme != "http" or target.netloc != self.origin:
             return self.reject(route)
+        if funnel_beacon.answer(route, target):
+            return None
         key = ENDPOINTS.get((target.path, target.query))
         if request.method == "GET" and key and request.headers.get("authorization") is None:
             return route.fulfill(json=PAYLOADS[key])
@@ -247,8 +263,11 @@ class AgentBlogTests(BrowserFixture, unittest.TestCase):
         expect(self.blog.get_by_text(COPY[self.locale][2], exact=True)).to_have_count(0)
         self.retry(self.blog)
         self.complete("read", empty=True)
-        expect(self.blog.get_by_text(COPY[self.locale][2], exact=True)).to_be_visible()
-        self.save("confirmed-empty")
+        # A confirmed-empty first page hides the whole blog section (AgentBlog returns null).
+        expect(self.blog).to_have_count(0)
+        expect(self.page.locator("#main-content").get_by_text(COPY[self.locale][2], exact=True)).to_have_count(0)
+        self.assertEqual(self.http.unexpected, [])
+        self.assertEqual(self.errors, [])
         self.page.reload(wait_until="domcontentloaded")
         self.held(1)
         self.complete("read")
