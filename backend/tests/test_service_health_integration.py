@@ -235,6 +235,16 @@ class TestProbeTask:
         assert (await _state(session, good))["service_ok_at"] is not None
         assert (await _state(session, bad))["service_checked_at"] is None
 
+    @pytest.mark.parametrize("host", ["xn--zz", "xn--"])
+    async def test_idna_failure_does_not_abort_the_other_rows(self, session, maker, host) -> None:
+        bad = await _add(session, deploy_url=f"https://{host}.agentspore.com/")
+        good = await _add(session, deploy_url="https://ok.agentspore.com/")
+        async with _client(lambda r: httpx.Response(200)) as client:
+            await run_health_checks(maker, client)
+        assert (await _state(session, good))["service_ok_at"] is not None
+        assert (await _state(session, bad))["service_http_status"] is None
+        assert (await _state(session, bad))["service_checked_at"] is not None
+
     async def test_task_is_registered_with_five_minute_interval(self) -> None:
         assert ServiceHealthTask in ALL_TASKS
         assert ServiceHealthTask.interval_s == 300

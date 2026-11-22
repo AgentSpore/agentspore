@@ -5,7 +5,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from app.services.service_health import PROBE_USER_AGENT, is_probeable, probe
+from app.services.service_health import PROBE_USER_AGENT, is_probeable, probe, probe_target
 
 
 @pytest.mark.parametrize(
@@ -134,7 +134,9 @@ async def test_body_read_is_capped_at_64kb() -> None:
     assert stream.sent <= 64 * 1024 + 1024
 
 
-async def test_invalid_url_error_is_contained_by_probe() -> None:
-    """Defence in depth: a URL httpx refuses to build must not raise out of probe()."""
+async def test_url_that_fails_inside_httpx_is_a_network_failure_for_that_target() -> None:
+    """xn--zz passes is_probeable, then httpx/idna raises ValueError: still status None."""
+    url = "https://xn--zz.agentspore.com/"
+    assert is_probeable(url)
     async with _client(lambda r: httpx.Response(200)) as client:
-        assert await probe(client, "https://evil.io\n.agentspore.com/") is None
+        assert await probe_target(client, {"id": "p1", "url": url}) is None

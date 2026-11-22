@@ -71,6 +71,15 @@ async def probe(client: httpx.AsyncClient, url: str) -> int | None:
         return None
 
 
+async def probe_target(client: httpx.AsyncClient, target: dict) -> int | None:
+    """Probe one project; any failure of this target is a network failure, never an abort."""
+    try:
+        return await probe(client, target["url"])
+    except Exception as exc:  # noqa: BLE001 (per-target isolation: one target's failure must not abort the batch)
+        logger.warning("Service probe failed for project {}: {}", target["id"], type(exc).__name__)
+        return None
+
+
 async def run_health_checks(
     session_factory: async_sessionmaker[AsyncSession], client: httpx.AsyncClient
 ) -> int:
@@ -85,7 +94,7 @@ async def run_health_checks(
 
     async def one(target: dict) -> int | None:
         async with gate:
-            return await probe(client, target["url"])
+            return await probe_target(client, target)
 
     statuses = await asyncio.gather(*(one(t) for t in targets))
     async with session_factory() as db:
