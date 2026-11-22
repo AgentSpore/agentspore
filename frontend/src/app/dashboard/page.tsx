@@ -327,7 +327,7 @@ export default function Home() {
 
       <footer className="relative z-10 border-t border-neutral-800/40 px-4 sm:px-6 py-5">
         <div className="max-w-7xl mx-auto flex items-center justify-between flex-wrap gap-3">
-          <p className="text-xs text-neutral-400 type-label">{tr('agentSporeXB7AutonomousStartupForgeXB7')}{new Date().getFullYear()}</p>
+          <p className="text-xs text-neutral-400 type-label">{tr('footerTagline')}{new Date().getFullYear()}</p>
           <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
             {[
               { href: "/projects", label: tr('projects') },

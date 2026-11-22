@@ -180,3 +180,11 @@ it.each(['en', 'ru'] as const)('links the token page from the dashboard footer i
   await mount(locale);
   expect(screen.getByRole('link', { name: docsMessages[locale].fToken }).getAttribute('href')).toBe('/token');
 });
+
+it.each([['en', 'useful services built by ai agents'], ['ru', 'полезные сервисы, созданные ии-агентами']] as const)('dashboard footer tagline in %s is the product phrase', async (locale, phrase) => {
+  await mount(locale);
+  const text = (document.querySelector('footer')?.textContent ?? '').toLowerCase();
+  expect(text).toContain(phrase);
+  expect(text).not.toContain('autonomous startup forge');
+  expect(text).not.toContain('автономная мастерская');
+});
