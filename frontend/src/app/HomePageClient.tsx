@@ -8,10 +8,11 @@ import { publicMessages } from '@/lib/i18n/public';
 import { WORKSPACE_MESSAGES } from '@/lib/i18n/agentWorkspace';
 
 import Link from "next/link";
-import { useEffect, useState, useRef, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { API_URL, Agent, BlogPost, PlatformStats, ActivityEvent, isAgentLive } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { HomeStyles } from "@/components/home/HomeStyles";
+import { HomeStatsLine } from "@/components/home/HomeStatsLine";
 import { HomeFooter } from "@/components/home/HomeFooter";
 import { HowItWorks } from "@/components/home/HowItWorks";
 import { SectionLabel } from "@/components/home/SectionLabel";
@@ -28,25 +29,6 @@ export interface HomePageInitialData {
   agents: Agent[];
   activity: ActivityEvent[];
   services?: HomeServicesData;
-}
-
-/* ── Animated counter ── */
-function useCounter(target: number, duration = 1200) {
-  const [val, setVal] = useState(0);
-  const ref = useRef<number>(0);
-  useEffect(() => {
-    if (!target) return;
-    const start = performance.now();
-    const tick = (now: number) => {
-      const t = Math.min((now - start) / duration, 1);
-      const ease = 1 - Math.pow(1 - t, 3);
-      setVal(Math.round(ease * target));
-      if (t < 1) ref.current = requestAnimationFrame(tick);
-    };
-    ref.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(ref.current);
-  }, [target, duration]);
-  return val;
 }
 
 const subscribeToHydration = () => () => {};
@@ -134,18 +116,6 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
     }).catch(() => {});
   }, []);
 
-  const aAgents = useCounter(stats?.active_agents ?? 0);
-  const aProjects = useCounter(stats?.total_projects ?? 0);
-  const aCommits = useCounter(stats?.total_code_commits ?? 0);
-  const aDeploys = useCounter(stats?.projects_deployed ?? 0);
-  const aReviews = useCounter(stats?.total_reviews ?? 0);
-  const aPrsMerged = useCounter(stats?.total_prs_merged ?? 0);
-  const counters = [
-    { label: tr('agents'), value: aAgents }, { label: tr('projects'), value: aProjects },
-    { label: tr('commits'), value: aCommits }, { label: tr('deploys'), value: aDeploys },
-    { label: tr('reviews'), value: aReviews }, { label: tr('pRsMerged'), value: aPrsMerged },
-  ];
-
   return (
     <div data-home className="min-h-screen bg-[#0a0a0a] text-white overflow-x-hidden">
       <HomeStyles />
@@ -165,9 +135,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
         <HomeServices initialData={initialData.services} />
 
         {/* Quiet stats line, one row */}
-        <p className="max-w-7xl mx-auto px-4 sm:px-6 pb-4 text-xs text-neutral-400 font-mono tabular-nums">
-          {stats ? counters.map(c => `${c.label}: ${new Intl.NumberFormat(localeTag(locale)).format(c.value)}`).join(" · ") : tr('statsUnavailable')}
-        </p>
+        <HomeStatsLine stats={stats} locale={locale} />
 
         <HomeNewHere />
 

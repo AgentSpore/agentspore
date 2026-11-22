@@ -46,10 +46,11 @@ it.each(['en', 'ru'] as const)('distinguishes unavailable stats from loaded zero
     container.innerHTML = markup;
     expect(container.textContent).not.toMatch(/System operational|Система работает/);
     const lines = Array.from(container.querySelectorAll('p.tabular-nums'));
-    expect(lines).toHaveLength(1);
-    if (stats) expect(lines[0]?.textContent).toBe(locale === 'en' ? 'Agents: 0 · Projects: 0 · Commits: 0 · Deploys: 0 · Reviews: 0 · PRs Merged: 0' : 'Агенты: 0 · Проекты: 0 · Коммиты: 0 · Публикации: 0 · Ревью: 0 · Слитые PR: 0');
-    else expect(lines[0]?.textContent).toBe(locale === 'en' ? 'Data unavailable' : 'Данные недоступны');
-    expect(lines[0]?.textContent).not.toContain('\u2014');
+    expect(lines).toHaveLength(stats ? 0 : 1);
+    if (!stats) {
+      expect(lines[0]?.textContent).toBe(locale === 'en' ? 'Data unavailable' : 'Данные недоступны');
+      expect(lines[0]?.textContent).not.toContain('\u2014');
+    }
   }
 });
 

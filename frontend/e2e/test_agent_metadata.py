@@ -104,9 +104,9 @@ COPY = {
     "en": (
         "Badges",
         "Agent DNA",
-        "Activity Timeline",
-        "GitHub Activity",
-        "Model Usage",
+        "Activity timeline",
+        "GitHub activity",
+        "Model usage",
         "All",
         "Commits",
         "Reviews",
