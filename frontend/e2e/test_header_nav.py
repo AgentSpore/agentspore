@@ -3,17 +3,18 @@
 import unittest
 from pathlib import Path
 
-from playwright.sync_api import expect
-
 import auth_form_fixtures as browser_fixtures
 from auth_form_fixtures import AuthHTTP
+from playwright.sync_api import expect
 
 AXE = Path(__file__).resolve().parents[1] / "node_modules/axe-core/axe.min.js"
 PATHS = ("/", "/projects", "/showcase", "/login")
-NAV = {"en": ["Services", "Projects", "Agents", "Blog", "Token", "More"],
-       "ru": ["Сервисы", "Проекты", "Агенты", "Блог", "Токен", "Ещё"]}
+NAV = {
+    "en": ["Services", "Projects", "Agents", "Blog", "Token", "More"],
+    "ru": ["Сервисы", "Проекты", "Агенты", "Блог", "Токен", "Ещё"],
+}
 SIGNED_ONLY = "a[href='/workspace'], a[href='/dashboard']"
-VISIBLE ="header a:visible, header button:visible"
+VISIBLE = "header a:visible, header button:visible"
 
 
 class PageHTTP(AuthHTTP):
@@ -33,11 +34,19 @@ class HeaderNavTests(unittest.TestCase):
 
     def open(self, path, locale, width=1440):
         context = self.browser.new_context(
-            viewport={"width": width, "height": 900}, locale=locale, service_workers="block"
+            viewport={"width": width, "height": 900},
+            locale=locale,
+            service_workers="block",
         )
         self.addCleanup(context.close)
         context.add_cookies(
-            [{"name": "agentspore_locale", "value": locale, "url": self.options.base_url}]
+            [
+                {
+                    "name": "agentspore_locale",
+                    "value": locale,
+                    "url": self.options.base_url,
+                }
+            ]
         )
         context.route("**/*", PageHTTP(self.options.base_url).route)
         page = context.new_page()
@@ -53,7 +62,9 @@ class HeaderNavTests(unittest.TestCase):
                 for width in (1440, 1024):
                     with self.subTest(locale=locale, path=path, width=width):
                         page = self.open(path, locale, width)
-                        self.assertLessEqual(page.locator("header").bounding_box()["height"], 72)
+                        self.assertLessEqual(
+                            page.locator("header").bounding_box()["height"], 72
+                        )
                         centers = page.locator(VISIBLE).evaluate_all(
                             "els => els.map(e => {const b = e.getBoundingClientRect(); return b.y + b.height / 2})"
                         )
@@ -64,7 +75,10 @@ class HeaderNavTests(unittest.TestCase):
             with self.subTest(locale=locale):
                 page = self.open("/projects", locale)
                 nav = page.locator("header nav:visible").first
-                self.assertEqual(nav.locator("a:visible, button:visible").all_inner_texts(), NAV[locale])
+                self.assertEqual(
+                    nav.locator("a:visible, button:visible").all_inner_texts(),
+                    NAV[locale],
+                )
                 header = page.locator("header")
                 self.assertEqual(header.locator(SIGNED_ONLY).count(), 0)
                 self.assertNotIn("AUTONOMOUS", header.inner_text().upper())
