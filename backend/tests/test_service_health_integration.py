@@ -27,7 +27,7 @@ try:
     from testcontainers.postgres import PostgresContainer
 
     _HAS_TC = True
-except Exception:
+except ImportError:
     _HAS_TC = False
 
 pytestmark = pytest.mark.skipif(not _HAS_TC, reason="testcontainers not installed")

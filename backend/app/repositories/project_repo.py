@@ -13,6 +13,32 @@ _SERVICE_LIVE_SQL = """
                    p.service_ok_at"""
 
 
+def _project_row_to_dict(row) -> dict:
+    """Public project shape shared by the list and detail endpoints."""
+    return {
+        "id": str(row["id"]),
+        "title": row["title"],
+        "description": row["description"] or "",
+        "category": row["category"] or "other",
+        "status": row["status"],
+        "votes_up": row["votes_up"],
+        "votes_down": row["votes_down"],
+        "score": row["score"],
+        "deploy_url": row["deploy_url"],
+        "repo_url": row["repo_url"],
+        "tech_stack": list(row["tech_stack"] or []),
+        "hackathon_id": str(row["hackathon_id"]) if row["hackathon_id"] else None,
+        "creator_agent_id": str(row["creator_agent_id"]) if row["creator_agent_id"] else None,
+        "agent_name": row["agent_name"] or "Unknown author",
+        "agent_handle": row["agent_handle"] or "",
+        "github_stars": row["github_stars"] or 0,
+        "service_live": row["service_live"],
+        "service_ok_at": row["service_ok_at"].isoformat() if row["service_ok_at"] else None,
+        "created_at": str(row["created_at"]),
+        "recovery_provenance": row.get("recovery_provenance"),
+    }
+
+
 async def list_projects(
     db: AsyncSession,
     *,
@@ -57,31 +83,7 @@ async def list_projects(
         params,
     )
 
-    projects = []
-    for row in result.mappings():
-        projects.append({
-            "id": str(row["id"]),
-            "title": row["title"],
-            "description": row["description"] or "",
-            "category": row["category"] or "other",
-            "status": row["status"],
-            "votes_up": row["votes_up"],
-            "votes_down": row["votes_down"],
-            "score": row["score"],
-            "deploy_url": row["deploy_url"],
-            "repo_url": row["repo_url"],
-            "tech_stack": list(row["tech_stack"] or []),
-            "hackathon_id": str(row["hackathon_id"]) if row["hackathon_id"] else None,
-            "creator_agent_id": str(row["creator_agent_id"]) if row["creator_agent_id"] else None,
-            "agent_name": row["agent_name"] or "Unknown author",
-            "agent_handle": row["agent_handle"] or "",
-            "github_stars": row["github_stars"] or 0,
-            "service_live": row["service_live"],
-            "service_ok_at": row["service_ok_at"].isoformat() if row["service_ok_at"] else None,
-            "created_at": str(row["created_at"]),
-            "recovery_provenance": row.get("recovery_provenance"),
-        })
-    return projects
+    return [_project_row_to_dict(row) for row in result.mappings()]
 
 
 async def get_project_by_id(db: AsyncSession, project_id: UUID) -> dict | None:
@@ -102,28 +104,7 @@ async def get_project_by_id(db: AsyncSession, project_id: UUID) -> dict | None:
     row = result.mappings().first()
     if not row:
         return None
-    return {
-        "id": str(row["id"]),
-        "title": row["title"],
-        "description": row["description"] or "",
-        "category": row["category"] or "other",
-        "status": row["status"],
-        "votes_up": row["votes_up"],
-        "votes_down": row["votes_down"],
-        "score": row["score"],
-        "deploy_url": row["deploy_url"],
-        "repo_url": row["repo_url"],
-        "tech_stack": list(row["tech_stack"] or []),
-        "hackathon_id": str(row["hackathon_id"]) if row["hackathon_id"] else None,
-        "creator_agent_id": str(row["creator_agent_id"]) if row["creator_agent_id"] else None,
-        "agent_name": row["agent_name"] or "Unknown author",
-        "agent_handle": row["agent_handle"] or "",
-        "github_stars": row["github_stars"] or 0,
-        "service_live": row["service_live"],
-        "service_ok_at": row["service_ok_at"].isoformat() if row["service_ok_at"] else None,
-        "created_at": str(row["created_at"]),
-            "recovery_provenance": row.get("recovery_provenance"),
-    }
+    return _project_row_to_dict(row)
 
 
 async def project_exists(db: AsyncSession, project_id: UUID) -> bool:
