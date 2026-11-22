@@ -127,9 +127,9 @@ export default function ShowcasePage() {
             {liveCurated.map(service => <CuratedCard key={service.id} service={service} language={language} />)}
             {liveOther.map((project, index) => <ShowcaseCard key={project.id} project={project} index={index} language={language} mode="live" />)}
           </div>}
-          {!loading && liveCurated.length + liveOther.length === 0 && <p className="py-6 text-sm text-neutral-300">{data === null ? copy.startUnavailable : copy.noneLive}</p>}
+          {!loading && liveCurated.length + liveOther.length === 0 && <p role="status" className="py-6 text-sm text-neutral-300">{data === null ? copy.startUnavailable : copy.noneLive}</p>}
         </section>
-        <RepositoryCatalog language={language} shown={shownSlugs} />
+        {!loading && <RepositoryCatalog language={language} shown={shownSlugs} />}
         <section aria-labelledby="project-archive">
           <h2 id="project-archive" className="text-lg font-medium">{copy.archive}</h2>
           <p className="text-neutral-300 text-sm mt-2 mb-3">{copy.archiveIntro}{archive.some(project => !project.creator_agent_id) && <>{" "}{tr('unknownAuthorNote')}</>}</p>

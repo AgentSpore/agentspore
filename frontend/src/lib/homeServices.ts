@@ -2,7 +2,7 @@ import type { Project } from "./api";
 import type { Locale } from "./i18n/locale";
 import { CURATED_SERVICES, type CuratedService } from "@/app/showcase/curatedServices";
 
-export type HomeServiceProject = Pick<Project, "id" | "title" | "description" | "status" | "repo_url" | "deploy_url">;
+export type HomeServiceProject = Pick<Project, "id" | "title" | "description" | "status" | "repo_url" | "deploy_url" | "service_live">;
 export interface HomeServicesData {
   status: "loading" | "ready" | "error";
   projects: HomeServiceProject[];
@@ -35,6 +35,7 @@ function parseHomeProject(row: unknown): HomeServiceProject {
   if (typeof status !== "string") throw new Error("Invalid project catalog");
   return {
     id, title, status,
+    ...(typeof row.service_live === "boolean" && { service_live: row.service_live }),
     description: optionalCatalogText(row.description) ?? "",
     repo_url: optionalCatalogText(row.repo_url),
     deploy_url: optionalCatalogText(row.deploy_url),
@@ -47,9 +48,14 @@ export function parseHomeProjects(value: unknown): HomeServiceProject[] {
   return value.map(parseHomeProject);
 }
 
-/** Only actual deployed API entries with safe application links belong on the homepage. */
+/**
+ * Only running services with safe application links belong on the homepage: the health probe
+ * decides once any item reports it, else (backend rollout) the deployed status does.
+ */
 export function visibleHomeServices(projects: HomeServiceProject[]): HomeServiceProject[] {
-  return projects.filter(project => project.status === "deployed" && homeServiceUrl(project.deploy_url)).slice(0, 6);
+  const probed = projects.some(project => typeof project.service_live === "boolean");
+  const running = (project: HomeServiceProject) => probed ? project.service_live === true : project.status === "deployed";
+  return projects.filter(project => running(project) && homeServiceUrl(project.deploy_url)).slice(0, 6);
 }
 
 /** Reuse instructions only for an exact AgentSpore repository, never a similar external name. */

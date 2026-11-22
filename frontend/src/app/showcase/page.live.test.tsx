@@ -44,7 +44,31 @@ describe("Showcase live services", () => {
     expect(start.queryByRole("heading", { name: "Otkrytka" })).toBeNull();
     expect(start.queryByRole("heading", { name: /Otkrytka dead/ })).toBeNull();
     expect(archive.getByRole("heading", { name: /^Otkrytka dead/ })).toBeTruthy();
-    expect(archive.queryByRole("heading", { name: "PodMemory" })).toBeNull();
+    expect(archive.queryByRole("heading", { name: /Pod live/ })).toBeNull();
+  });
+
+  it("keeps an item without the live field out of Start here when another item reports it", async () => {
+    await open([live("1", "Pod live", "podmemory"), { ...base, id: "7", title: "Legacy Tool", repo_url: "https://github.com/Example/legacytool", deploy_url: "https://legacy.example.test" }]);
+    expect(section("Start here").queryByRole("heading", { name: /Legacy Tool/ })).toBeNull();
+    expect(document.querySelector('a[href="https://legacy.example.test"]')).toBeNull();
+    expect(section("Project archive").getByRole("link", { name: "Legacy Tool: repo" }).getAttribute("href")).toBe("https://github.com/Example/legacytool");
+  });
+
+  it("shows only a skeleton in Start here, and no repository list, until the first response", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
+    const start = section("Start here");
+    expect(start.queryAllByRole("article")).toHaveLength(0);
+    expect(start.queryByText(/No services are running|unavailable right now/)).toBeNull();
+    expect(document.querySelectorAll(".skeleton-shimmer").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("heading", { name: "More to explore" })).toBeNull();
+  });
+
+  it("announces the empty and error states as status messages", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
+    render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
+    const message = await screen.findByText("No services are running right now.");
+    expect(message.getAttribute("role")).toBe("status");
   });
 
   it("renders a live project without curated copy as a generic card with its demo link", async () => {

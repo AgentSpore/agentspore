@@ -21,6 +21,13 @@ describe("homepage service boundary", () => {
     const valid = Array.from({ length: 8 }, (_, i) => ({ ...project, id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}` }));
     expect(visibleHomeServices([{ ...project, status: "historical" }, { ...project, status: "archived" }, { ...project, deploy_url: "javascript:bad" }, ...valid])).toEqual(valid.slice(0, 6));
   });
+  it("uses service_live for the homepage once any item reports it", () => {
+    const live = { ...project, id: "00000000-0000-4000-8000-0000000000a1", service_live: true };
+    const dead = { ...project, id: "00000000-0000-4000-8000-0000000000a2", service_live: false };
+    const unreported = { ...project, id: "00000000-0000-4000-8000-0000000000a3" };
+    expect(visibleHomeServices([dead, unreported, live])).toEqual([live]);
+    expect(parseHomeProjects([{ ...project, service_live: true }, { ...project, service_live: "yes" }]).map(p => p.service_live)).toEqual([true, undefined]);
+  });
   it("matches curated instructions only to the exact platform repository", () => {
     expect(curatedHomeService(project, "en")?.purpose).toContain("backup");
     for (const repo_url of ["https://github.com/elsewhere/podmemory", "https://github.com/AgentSpore/podmemory-fake", "https://github.com/AgentSpore/podmemory?next=bad", "https://github.com.evil.test/AgentSpore/podmemory"]) {
