@@ -93,7 +93,7 @@ class ShowcaseCardTests(BrowserFixture, unittest.TestCase):
     def check_no_repeats(self, page):
         titles = [t.strip().lower() for t in page.locator("main h3").all_text_contents()]
         self.assertEqual(len(titles), len(set(titles)), titles)
-        self.assertFalse(DUPLICATES & set(page.locator("main h3").all_text_contents()))
+        self.assertFalse(any(d in t for t in page.locator("main h3").all_text_contents() for d in DUPLICATES), titles)
         sources = page.locator('main a[href^="https://github.com/AgentSpore/"]').evaluate_all("els => els.map(e => e.href)")
         self.assertFalse([h for h in sources if h.rsplit("/", 1)[-1] in ("otkrytka", "podmemory", "saascalc")], sources)
 
@@ -105,9 +105,9 @@ class ShowcaseCardTests(BrowserFixture, unittest.TestCase):
         page.wait_for_timeout(300)
         self.assertEqual(page.evaluate(THUMBS), before)
         self.assertLess(page.evaluate("window.__cls"), 0.1)
-        empty, other = FALLBACKS[locale]
         text = page.locator("main").inner_text()
-        self.assertTrue(empty in text and other in text)
+        for fallback in FALLBACKS[locale]:
+            self.assertIn(fallback, text)
         (self.assertNotIn if locale == "en" else self.assertIn)("Синтетическое описание на русском языке", text)
 
     def check_axe(self, page):

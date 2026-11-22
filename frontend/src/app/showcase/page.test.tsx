@@ -29,7 +29,7 @@ describe("Showcase demo links", () => {
     mockProjects();
     render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
     await screen.findByRole("heading", { name: /^Live Verdict/ });
-    expect(screen.queryByRole("heading", { name: "SignSafe" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: /^SignSafe/ })).toBeNull();
   });
 
   it("hides archived or missing deployments and preserves the real live URL", async () => {
