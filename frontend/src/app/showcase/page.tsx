@@ -13,30 +13,11 @@ import { usePolledResource } from "@/hooks/usePolledResource";
 import { CURATED_SERVICES, SHOWCASE_COPY, type ShowcaseLanguage } from "./curatedServices";
 import { repoSlug } from "./descriptionText";
 import { CuratedCard, ShowcaseCard } from "./ShowcaseCards";
+import { splitServices } from "./serviceSections";
 import { REPOSITORY_CATALOG } from "./repositoryCatalog";
 import { ServiceMark } from "./ServiceThumb";
 
 const POLL_INTERVAL_MS = 30000;
-
-// INVARIANT: entries are added only after manual verification of a live request
-// against the deployed app — never derive this list from `status` or any
-// automated signal. Curation, not a query result.
-const SHOWCASE_SLUGS = [
-  "otkrytka",
-  "paynudge-lite",
-  "freezewise",
-  "reviewray",
-  "saascalc",
-  "verdict",
-  "dawntask",
-  "vibecheck",
-  "decaytracker",
-  "podmemory",
-  "quotedby",
-  "agentcap",
-  "tokensaver",
-  "betabridge",
-];
 
 function DotGrid() {
   return (
@@ -107,7 +88,7 @@ function RepositoryCatalog({ language, shown }: { language: ShowcaseLanguage; sh
   );
 }
 
-function ProjectCatalog({ projects, loading, error, language }: {
+function ProjectArchive({ projects, loading, error, language }: {
   projects: Project[]; loading: boolean; error: Error | null; language: ShowcaseLanguage;
 }) {
   const copy = SHOWCASE_COPY[language];
@@ -115,7 +96,7 @@ function ProjectCatalog({ projects, loading, error, language }: {
   if (!projects.length) return <p className="py-12 text-neutral-300 text-sm">{error ? copy.unavailable : copy.empty}</p>;
   return (
     <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
-      {projects.map((project, index) => <ShowcaseCard key={project.id} project={project} index={index} language={language} />)}
+      {projects.map((project, index) => <ShowcaseCard key={project.id} project={project} index={index} language={language} mode="archive" />)}
     </div>
   );
 }
@@ -128,11 +109,8 @@ export default function ShowcasePage() {
   const { data, error, loading, lastUpdated, refetch } = usePolledResource(fetchShowcaseProjects, {
     intervalMs: POLL_INTERVAL_MS,
   });
-  const featuredIds = new Set(CURATED_SERVICES[language].map(service => service.id));
-  const showcased = (data ?? []).filter(project => {
-    const slug = repoSlug(project.repo_url);
-    return slug !== null && SHOWCASE_SLUGS.includes(slug) && !featuredIds.has(slug);
-  });
+  const { liveCurated, liveOther, archive } = splitServices(data ?? [], CURATED_SERVICES[language]);
+  const shownSlugs = new Set([...liveCurated.map(service => service.id), ...[...liveOther, ...archive].map(project => repoSlug(project.repo_url) ?? "")]);
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white relative">
       <DotGrid />
@@ -145,19 +123,21 @@ export default function ShowcasePage() {
         <ServicesHero language={language} />
         <section aria-labelledby="selected-services" className="mb-12">
           <h2 id="selected-services" className="scroll-mt-24 lg:scroll-mt-32 text-xl font-semibold tracking-tight mb-5">{copy.selected}</h2>
-          <div className="grid lg:grid-cols-2 gap-6">
-            {CURATED_SERVICES[language].map(service => <CuratedCard key={service.id} service={service} language={language} />)}
-          </div>
+          {loading ? <SkeletonList items={4} /> : <div className="grid lg:grid-cols-2 gap-6">
+            {liveCurated.map(service => <CuratedCard key={service.id} service={service} language={language} />)}
+            {liveOther.map((project, index) => <ShowcaseCard key={project.id} project={project} index={index} language={language} mode="live" />)}
+          </div>}
+          {!loading && liveCurated.length + liveOther.length === 0 && <p role="status" className="py-6 text-sm text-neutral-300">{data === null ? copy.startUnavailable : copy.noneLive}</p>}
         </section>
-        <RepositoryCatalog language={language} shown={new Set([...featuredIds, ...showcased.map(project => repoSlug(project.repo_url) ?? "")])} />
-        <section aria-labelledby="project-catalog">
-          <h2 id="project-catalog" className="text-lg font-medium">{copy.catalog}</h2>
-          <p className="text-neutral-300 text-sm mt-2 mb-3">{copy.catalogIntro}{showcased.some(project => !project.creator_agent_id) && <>{" "}{tr('unknownAuthorNote')}</>}</p>
+        {!loading && <RepositoryCatalog language={language} shown={shownSlugs} />}
+        <section aria-labelledby="project-archive">
+          <h2 id="project-archive" className="text-lg font-medium">{copy.archive}</h2>
+          <p className="text-neutral-300 text-sm mt-2 mb-3">{copy.archiveIntro}{archive.some(project => !project.creator_agent_id) && <>{" "}{tr('unknownAuthorNote')}</>}</p>
           <div className="flex flex-wrap items-center gap-4 mb-5">
-            {data !== null && <span className="text-sm text-neutral-400">{showcased.length} {copy.apps}</span>}
+            {data !== null && <span className="text-sm text-neutral-400">{archive.length} {copy.apps}</span>}
             <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} />
           </div>
-          <ProjectCatalog projects={showcased} loading={loading} error={error} language={language} />
+          <ProjectArchive projects={archive} loading={loading} error={error} language={language} />
         </section>
         <VisitorHint />
       </main>

@@ -19,19 +19,13 @@ function mockProjects() {
     { ...base, id: "1", title: "SignSafe", repo_url: "https://github.com/Example/signsafe", status: "archived", deploy_url: "https://old.example.test" },
     { ...base, id: "2", title: "Archived Verdict", repo_url: "https://github.com/Example/verdict", status: "archived", deploy_url: "https://old.example.test" },
     { ...base, id: "3", title: "No URL", repo_url: "https://github.com/Example/otkrytka", status: "active", deploy_url: null },
-    { ...base, id: "4", title: "Live Verdict", repo_url: "https://github.com/Example/verdict", status: "deployed", deploy_url: "https://actual.example.test/app" },
-  ];
+    { ...base, id: "4", title: "Live Verdict", repo_url: "https://github.com/Example/verdict", status: "deployed", deploy_url: "https://actual.example.test/app", service_live: true },
+    ...["podmemory", "otkrytka", "pereklichka", "saascalc"].map((slug, index) => ({ ...base, id: `s${index}`, title: `Live ${slug}`, repo_url: `https://github.com/Example/${slug}`, status: "deployed", deploy_url: `https://${slug}.example.test`, service_live: true })),
+  ].map(project => ({ service_live: false, ...project }));
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(projects), { status: 200 })));
 }
 
 describe("Showcase demo links", () => {
-  it("withdraws SignSafe from the curated showcase", async () => {
-    mockProjects();
-    render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
-    await screen.findByRole("heading", { name: /^Live Verdict/ });
-    expect(screen.queryByRole("heading", { name: /^SignSafe/ })).toBeNull();
-  });
-
   it("hides archived or missing deployments and preserves the real live URL", async () => {
     mockProjects();
     render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
@@ -45,16 +39,21 @@ describe("Showcase demo links", () => {
   });
 });
 
+const LEGACY = [{ tech_stack: [], agent_handle: "demo", status: "deployed", description: "Legacy", id: "9", title: "Legacy", repo_url: "https://github.com/Example/legacy", deploy_url: null }];
+
 function featuredCard(name: string) {
   const card = screen.getByRole("heading", { name }).closest("article");
   if (!(card instanceof HTMLElement)) throw new Error("Featured card is missing");
   return within(card);
 }
 
-  it.each(["en", "ru"] as const)("keeps launch visible and setup expandable in %s", locale => {
-    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+  it.each(["en", "ru"] as const)("keeps launch visible and setup expandable in %s", async locale => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(LEGACY)));
     render(<LocaleProvider initialLocale={locale}><ShowcasePage /></LocaleProvider>);
-    for (const card of screen.getAllByRole("article")) {
+    await screen.findByRole("heading", { name: "PodMemory" });
+    const start = screen.getByRole("heading", { name: locale === "en" ? "Start here" : "С чего начать" }).closest("section");
+    if (!start) throw new Error("Start here section is missing");
+    for (const card of within(start).getAllByRole("article")) {
       const details = card.querySelector("details");
       if (!details) throw new Error("Service details are missing");
       expect(details.open).toBe(false);
@@ -71,17 +70,18 @@ function featuredCard(name: string) {
   });
 
 describe("Showcase service selection", () => {
-  it("does not promise all catalog services are running today", () => {
-    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+  it("does not promise all catalog services are running today", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(LEGACY)));
     render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
+    await screen.findByText(/1 archived projects/);
     expect(screen.queryByText(/running service today/i)).toBeNull();
-    expect(screen.getAllByRole("article")).toHaveLength(4);
+    expect(screen.getAllByRole("article")).toHaveLength(5);
   });
 
-  it.each([200, 503])("keeps actionable cards with an empty or failed catalog (%s)", async (status) => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status })));
+  it("keeps actionable curated cards while no item reports the live field", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(LEGACY)));
     render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
-    await screen.findByText(status === 200 ? /no catalog apps found/i : /catalog unavailable/i);
+    await screen.findByRole("heading", { name: "PodMemory" });
     const family = featuredCard("Pereklichka");
     for (const name of ["PodMemory", "Otkrytka", "Pereklichka", "SaaSCalc"]) {
       const card = screen.getByRole("heading", { name }).closest("article");
@@ -126,7 +126,7 @@ describe("Showcase service selection", () => {
     expect(family.getByRole("link", { name: "Прочитать инструкцию" }).getAttribute("href"))
       .toBe("https://github.com/AgentSpore/pereklichka/blob/4dc195d40aadca40b3eaa2e8425ec051107d6be2/docs/user-guide.md");
     expect(family.getByText("Не рассчитывайте на семейные отчёты или экстренную помощь. Голосовой разговор независимо не проверен.")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Каталог проектов" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Архив проектов" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "English" }));
     expect(screen.getByRole("heading", { name: "Pereklichka" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Live Verdict: live demo" }).getAttribute("href"))
@@ -154,11 +154,11 @@ describe("Showcase service selection", () => {
 it.each(["en", "ru"] as const)("keeps public source repositories separate from live demos when the API fails in %s", async locale => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 503 })));
   render(<LocaleProvider initialLocale={locale}><ShowcasePage /></LocaleProvider>);
-  await screen.findByText(locale === "en" ? /catalog unavailable/i : /каталог недоступен/i);
+  await screen.findByText(locale === "en" ? /archive unavailable/i : /архив недоступен/i);
   const section = screen.getByRole("heading", { name: locale === "en" ? "More to explore" : "Ещё проекты" }).closest("section");
   if (!section) throw new Error("Source repository section is missing");
   const sources = within(section);
-  expect(sources.getAllByRole("listitem")).toHaveLength(5);
+  expect(sources.getAllByRole("listitem")).toHaveLength(8);
   expect(sources.getByRole("link", { name: locale === "en" ? "All repositories" : "Все репозитории" }).getAttribute("href"))
     .toBe("https://github.com/orgs/AgentSpore/repositories");
   for (const name of ["kogda", "potluck", "dawntask", "paynudge-lite", "splitpost"]) {

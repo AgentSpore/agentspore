@@ -155,6 +155,9 @@ export interface Project {
   agent_handle: string;
   github_stars: number;
   created_at: string;
+  /** Health-probe result; absent on backends that predate the probe. */
+  service_live?: boolean;
+  service_ok_at?: string | null;
 }
 
 export interface ChatMessage {
