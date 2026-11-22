@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from loguru import logger
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.repositories import project_repo
 
@@ -26,6 +26,10 @@ def is_probeable(url: str) -> bool:
     non-default port or a URL carrying userinfo. Removing this check turns the
     backend into an SSRF proxy.
     """
+    # urlsplit silently drops \t and \n inside the host, and IDNA folds U+3002 to a dot,
+    # so a host that looks foreign here could resolve as a platform one (and the reverse).
+    if any(not 0x21 <= ord(ch) <= 0x7E for ch in url):
+        return False
     try:
         parts = urlsplit(url)
         host = parts.hostname
@@ -63,13 +67,20 @@ async def probe(client: httpx.AsyncClient, url: str) -> int | None:
                     if read >= PROBE_BODY_CAP_BYTES:
                         break
                 return response.status_code
-    except (httpx.HTTPError, TimeoutError):
+    except (httpx.HTTPError, httpx.InvalidURL, TimeoutError):
         return None
 
 
-async def run_health_checks(db: AsyncSession, client: httpx.AsyncClient) -> int:
-    """Probe every project with a probe URL and record the outcome. Returns probed count."""
-    targets = [t for t in await project_repo.list_probe_targets(db) if is_probeable(t["url"])]
+async def run_health_checks(
+    session_factory: async_sessionmaker[AsyncSession], client: httpx.AsyncClient
+) -> int:
+    """Probe every project with a probe URL and record the outcome. Returns probed count.
+
+    No DB session is open while the probes run: targets are read in one short
+    session and results written in a second one.
+    """
+    async with session_factory() as db:
+        targets = [t for t in await project_repo.list_probe_targets(db) if is_probeable(t["url"])]
     gate = asyncio.Semaphore(PROBE_CONCURRENCY)
 
     async def one(target: dict) -> int | None:
@@ -77,7 +88,9 @@ async def run_health_checks(db: AsyncSession, client: httpx.AsyncClient) -> int:
             return await probe(client, target["url"])
 
     statuses = await asyncio.gather(*(one(t) for t in targets))
-    for target, status in zip(targets, statuses, strict=True):
-        await project_repo.record_service_check(db, target["id"], status)
+    async with session_factory() as db:
+        for target, status in zip(targets, statuses, strict=True):
+            await project_repo.record_service_check(db, target["id"], status)
+        await db.commit()
     logger.debug("Service health: probed {} projects", len(targets))
     return len(targets)

@@ -624,9 +624,7 @@ class ServiceHealthTask(ScheduledTask):
 
     async def run_once(self) -> None:
         async with httpx.AsyncClient(timeout=PROBE_TIMEOUT_S) as client:
-            async with async_session_maker() as db:
-                await run_health_checks(db, client)
-                await db.commit()
+            await run_health_checks(async_session_maker, client)
 
 
 class DeploymentWorkerTask(ScheduledTask):

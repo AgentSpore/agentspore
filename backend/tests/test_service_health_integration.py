@@ -91,9 +91,14 @@ async def engine(pg_url):
     await eng.dispose()
 
 
+@pytest.fixture
+def maker(engine) -> async_sessionmaker[AsyncSession]:
+    return async_sessionmaker(engine, expire_on_commit=False)
+
+
 @pytest_asyncio.fixture
-async def session(engine) -> AsyncSession:
-    async with async_sessionmaker(engine, expire_on_commit=False)() as s:
+async def session(maker) -> AsyncSession:
+    async with maker() as s:
         yield s
 
 
@@ -162,7 +167,7 @@ async def migrated(engine, session):
 
 @pytest.mark.usefixtures("migrated")
 class TestProbeTask:
-    async def test_2xx_sets_ok_5xx_keeps_it_and_error_nulls_status(self, session) -> None:
+    async def test_2xx_sets_ok_5xx_keeps_it_and_error_nulls_status(self, session, maker) -> None:
         ok = await _add(session, deploy_url="https://ok.agentspore.com/")
         bad = await _add(session, deploy_url="https://bad.agentspore.com/")
         down = await _add(session, deploy_url="https://down.agentspore.com/")
@@ -176,8 +181,7 @@ class TestProbeTask:
             raise httpx.ConnectTimeout("t", request=request)
 
         async with _client(handler) as client:
-            assert await run_health_checks(session, client) == 3
-        await session.commit()
+            assert await run_health_checks(maker, client) == 3
 
         s_ok = await _state(session, ok)
         s_bad = await _state(session, bad)
@@ -188,19 +192,19 @@ class TestProbeTask:
         assert s_down["service_ok_at"] is None and s_down["service_http_status"] is None
         assert s_down["service_checked_at"] is not None
 
-    async def test_failure_after_success_keeps_previous_ok_at(self, session) -> None:
+    async def test_failure_after_success_keeps_previous_ok_at(self, session, maker) -> None:
         pid = await _add(session, deploy_url="https://a.agentspore.com/")
         async with _client(lambda r: httpx.Response(200)) as client:
-            await run_health_checks(session, client)
-        await session.commit()
+            await run_health_checks(maker, client)
         first = (await _state(session, pid))["service_ok_at"]
         async with _client(lambda r: httpx.Response(500)) as client:
-            await run_health_checks(session, client)
-        await session.commit()
+            await run_health_checks(maker, client)
         after = await _state(session, pid)
         assert after["service_ok_at"] == first and after["service_http_status"] == 500
 
-    async def test_health_url_wins_and_foreign_urls_get_no_request_no_write(self, session) -> None:
+    async def test_health_url_wins_and_foreign_urls_get_no_request_no_write(
+        self, session, maker
+    ) -> None:
         bot = await _add(
             session,
             deploy_url="https://t.me/bot",
@@ -215,13 +219,21 @@ class TestProbeTask:
             return httpx.Response(200)
 
         async with _client(handler) as client:
-            assert await run_health_checks(session, client) == 1
+            assert await run_health_checks(maker, client) == 1
         await session.commit()
 
         assert requested == ["https://pereklichka.agentspore.com/privacy"]
         assert (await _state(session, bot))["service_ok_at"] is not None
         for pid in (foreign, no_url):
             assert (await _state(session, pid))["service_checked_at"] is None
+
+    async def test_unbuildable_url_does_not_abort_the_other_rows(self, session, maker) -> None:
+        bad = await _add(session, deploy_url="https://evil.io\n.agentspore.com/")
+        good = await _add(session, deploy_url="https://ok.agentspore.com/")
+        async with _client(lambda r: httpx.Response(200)) as client:
+            await run_health_checks(maker, client)
+        assert (await _state(session, good))["service_ok_at"] is not None
+        assert (await _state(session, bad))["service_checked_at"] is None
 
     async def test_task_is_registered_with_five_minute_interval(self) -> None:
         assert ServiceHealthTask in ALL_TASKS

@@ -41,6 +41,11 @@ def test_allowed_hosts_are_probeable(url: str) -> None:
         "https://agentspore.com./",
         "https://.agentspore.com/",
         "ftp://agentspore.com/",
+        "https://evil.io\n.agentspore.com/",
+        "https://evil.io\t.agentspore.com/",
+        "https://evil.io\u3002.agentspore.com/",
+        "https://agentspore.com /",
+        "https://\u0430gentspore.com/",
         "https:///agentspore.com",
         "t.me/bot",
         "",
@@ -127,3 +132,9 @@ async def test_body_read_is_capped_at_64kb() -> None:
     async with _client(lambda r: httpx.Response(200, stream=stream)) as client:
         assert await probe(client, "https://agentspore.com/h") == 200
     assert stream.sent <= 64 * 1024 + 1024
+
+
+async def test_invalid_url_error_is_contained_by_probe() -> None:
+    """Defence in depth: a URL httpx refuses to build must not raise out of probe()."""
+    async with _client(lambda r: httpx.Response(200)) as client:
+        assert await probe(client, "https://evil.io\n.agentspore.com/") is None
