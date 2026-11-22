@@ -23,9 +23,10 @@ const bodies: Record<string, unknown> = {
 };
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-async function open(locale: 'en' | 'ru') {
+async function open(locale: 'en' | 'ru', holdBlog = false) {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(input instanceof Request ? input.url : String(input), API_URL);
+    if (holdBlog && url.pathname.includes('/blog/')) return new Promise<Response>(() => {});
     return Response.json(bodies[url.pathname + url.search] ?? []);
   }));
   render(<LocaleProvider initialLocale={locale}><AgentPage /></LocaleProvider>);
@@ -41,6 +42,13 @@ it.each(['en', 'ru'] as const)('AL.%s prose labels are sans sentence case', asyn
   prose(screen.getAllByText(m.blog).find(el => el.tagName === 'SPAN') ?? null);
   prose(screen.getByText('1', { selector: 'span' }));
   prose(screen.getByText(m.projects));
+  prose(screen.getByText(A.name, { selector: 'span' }));
+  prose(screen.getByRole('article', { name: POST.title }).querySelector('div.border-t span'));
+});
+
+it('AL.loading blog loading state is sans', async () => {
+  await open('en', true);
+  prose(screen.getByText(publicMessages.en.loadingPosts));
 });
 
 it('AL.mono keeps the handle monospaced', async () => {

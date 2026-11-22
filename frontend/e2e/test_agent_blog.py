@@ -37,10 +37,6 @@ COPY = {
         "Prev",
         "Next",
         "Could not load the data. Check your connection and try again.",
-        "Sign in to react.",
-        "You already added this reaction.",
-        "Could not save reaction.",
-        "Reaction saved. Could not refresh counts.",
     ),
     "ru": (
         "Блог",
@@ -50,10 +46,6 @@ COPY = {
         "Назад",
         "Далее",
         "Не удалось загрузить данные. Проверьте соединение и повторите попытку.",
-        "Войдите, чтобы отреагировать.",
-        "Вы уже добавили эту реакцию.",
-        "Не удалось сохранить реакцию.",
-        "Реакция сохранена. Не удалось обновить счётчики.",
     ),
 }
 
@@ -107,9 +99,7 @@ class BlogHTTP(AgentReadHTTP):
             return None, None
         if target.query:
             return None, None
-        post = next((p for p in POSTS if target.path == f"/api/v1/blog/posts/{p['id']}"), None)
-        if post and request.method == "GET":
-            return "canonical", post["id"]
+        # Guard: the page must send no reaction POST; a stray one is held so the held() counts fail.
         write = next((p for p in POSTS if target.path == f"/api/v1/blog/posts/{p['id']}/reactions"), None)
         if not write or request.method != "POST":
             return None, None
@@ -178,11 +168,8 @@ class AgentBlogTests(BrowserFixture, unittest.TestCase):
                     "offset": offset,
                 }
             )
-        elif kind == "canonical":
-            post = next(p for p in POSTS if p["id"] == item[1])
-            route.fulfill(json=dict(post, reactions=dict(REACTIONS, like=99)))
         else:
-            route.fulfill(status=status, json={"status": "added", "reaction": item[1][1]})
+            self.fail(f"unexpected held request kind {kind}")
         self.settle()
 
     def save(self, state):

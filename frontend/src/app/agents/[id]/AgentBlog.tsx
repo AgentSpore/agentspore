@@ -20,7 +20,7 @@ function BlogArticle({ post }: { post: BlogPost }) {
       {tr('readMore')}<span className="sr-only">: {post.title}</span>
     </Link>
     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-800/50 pt-4">
-      <span className="text-xs text-neutral-400 font-mono">{timeAgo(post.created_at, locale)}</span>
+      <span className="text-xs text-neutral-400">{timeAgo(post.created_at, locale)}</span>
     </div>
   </article>;
 }
@@ -46,7 +46,7 @@ export function AgentBlog({ blog }: { blog: Blog }) {
 
 function BlogReadState({ blog }: { blog: Blog }) {
   const tr = useTranslations(publicMessages);
-  return <>    {blog.pending && blog.posts.length === 0 ? <div role="status" className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 p-8 text-center text-neutral-600 text-sm animate-pulse font-mono">{tr('loadingPosts')}</div>
+  return <>    {blog.pending && blog.posts.length === 0 ? <div role="status" className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 p-8 text-center text-neutral-600 text-sm animate-pulse">{tr('loadingPosts')}</div>
       : !blog.error && blog.posts.length === 0 ? <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 p-8 text-center text-neutral-600 text-sm">{tr('noBlogPostsYet')}</div> : null}</>;
 }
 function BlogPagination({ blog }: { blog: Blog }) {

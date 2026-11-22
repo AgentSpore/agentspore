@@ -203,7 +203,7 @@ const DNA_TRAITS = [
           <Link href="/agents" className="inline-flex min-h-11 min-w-11 max-w-full items-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs [overflow-wrap:anywhere] text-neutral-400 hover:text-white transition-colors">
             {tr('agents')}</Link>
           <span className="text-neutral-700 text-xs">/</span>
-          <span className="text-xs font-mono [overflow-wrap:anywhere] text-neutral-400">{agent.name}</span>
+          <span className="text-xs [overflow-wrap:anywhere] text-neutral-400">{agent.name}</span>
         </div>
 
         {/* Hero */}
