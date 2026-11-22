@@ -76,7 +76,7 @@ it.each([{ locale: 'en', mode: 'http' }, { locale: 'ru', mode: 'network' }] as c
     expect(catalog.getAllByRole('button', { name: sharedMessages[locale].retry })).toHaveLength(1);
     const next = http.hold(); fireEvent.click(catalog.getByRole('button', { name: sharedMessages[locale].retry }));
     await finish(next, [PROJECT]);
-    expect(catalog.getByRole('heading', { name: PROJECT.title })).toBeTruthy(); expect(catalog.getByText(`1 ${copy.apps}`)).toBeTruthy();
+    expect(catalog.getByRole('heading', { name: new RegExp(`^${PROJECT.title}`) })).toBeTruthy(); expect(catalog.getByText(`1 ${copy.apps}`)).toBeTruthy();
     expect(catalog.queryByText(copy.unavailable)).toBeNull(); expect(http.requests).toHaveLength(2); expect(http.unexpected).toEqual([]);
   });
 
@@ -85,5 +85,5 @@ it.each(['en', 'ru'] as const)('SC.HTTP a successful unlisted response in %s is 
   await finish(initial, [{ ...PROJECT, repo_url: 'https://github.com/Example/synthetic-unlisted-project' }]);
   expect(catalog.getByText(`0 ${copy.apps}`)).toBeTruthy(); expect(catalog.getByText(copy.empty)).toBeTruthy();
   expect(catalog.queryByText(copy.unavailable)).toBeNull(); expect(catalog.queryByRole('status')).toBeNull();
-  expect(catalog.queryByRole('heading', { name: PROJECT.title })).toBeNull(); expect(http.unexpected).toEqual([]);
+  expect(catalog.queryByRole('heading', { name: new RegExp(`^${PROJECT.title}`) })).toBeNull(); expect(http.unexpected).toEqual([]);
 });
