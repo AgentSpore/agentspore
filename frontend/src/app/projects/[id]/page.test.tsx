@@ -8,17 +8,17 @@ vi.mock("@/components/Header", () => ({ Header: () => null }));
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-function mockProject(status: string, deployUrl: string | null, recovered = false) {
+function mockProject(status: string, deployUrl: string | null, recovered = false, extra: Record<string, unknown> = {}, members: unknown[] = []) {
   const project = {
     id: "demo-project", title: "Example Project", description: "Synthetic demo fixture",
     category: "tools", status, repo_url: "https://github.com/Example/demo",
     deploy_url: deployUrl, tech_stack: [], agent_name: "Demo", agent_handle: "demo",
     creator_agent_id: recovered ? null : "demo-agent", recovery_provenance: recovered ? { source: "github_public_history", repository_url: "https://github.com/Example/demo" } : null, votes_up: 0, votes_down: 0,
-    created_at: "2026-10-01T00:00:00Z",
+    created_at: "2026-10-01T00:00:00Z", ...extra,
   };
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
     const body = input.endsWith("/ownership") ? null
-      : input.endsWith("/contributors") ? { contributors: [] } : project;
+      : input.endsWith("/contributors") ? { contributors: members } : project;
     return new Response(JSON.stringify(body), { status: 200 });
   }));
 }
@@ -31,15 +31,15 @@ describe("Project demo link", () => {
     mockProject(status, url);
     render(<ProjectPage />);
     await screen.findByRole("heading", { name: "Example Project" });
-    expect(screen.queryByRole("link", { name: "Demo" })).toBeNull();
-    expect(screen.getByRole("link", { name: "GitHub" }).getAttribute("href"))
+    expect(screen.queryByRole("link", { name: "Open service" })).toBeNull();
+    expect(screen.getByRole("link", { name: "View source" }).getAttribute("href"))
       .toBe("https://github.com/Example/demo");
   });
 
   it("uses the real deployment URL instead of the project title", async () => {
     mockProject("deployed", "https://actual.example.test/app");
     render(<ProjectPage />);
-    const link = await screen.findByRole("link", { name: "Demo" });
+    const link = await screen.findByRole("link", { name: "Open service" });
     expect(link.getAttribute("href")).toBe("https://actual.example.test/app");
   });
 });
@@ -65,5 +65,26 @@ it('keeps the repository and avoids a fabricated agent link for recovered projec
   expect(screen.getByText('Unknown author')).toBeTruthy();
   expect(screen.getByText('Imported history')).toBeTruthy();
   expect(container.querySelector('a[href="/agents/null"]')).toBeNull();
-  expect(screen.getByRole('link', { name: 'GitHub' }).getAttribute('href')).toBe('https://github.com/Example/demo');
+  expect(screen.getByRole('link', { name: 'View source' }).getAttribute('href')).toBe('https://github.com/Example/demo');
+});
+
+describe("Project zero metrics", () => {
+  it("hides vote counts and contributors while all are zero", async () => {
+    mockProject("active", null);
+    render(<ProjectPage />);
+    await screen.findByRole("heading", { name: "Example Project" });
+    expect(screen.getByRole("button", { name: /upvote/i }).textContent).toBe("↑");
+    expect(screen.getByRole("button", { name: /downvote/i }).textContent).toBe("↓");
+    expect(screen.queryByText("Contributors", { selector: "div" })).toBeNull();
+  });
+
+  it("shows real votes and contributors once any is non-zero", async () => {
+    const member = { id: "c1", user_id: "u1", user_name: "Member", role: "contributor", contribution_points: 1, joined_at: "2026-10-01T00:00:00Z" };
+    mockProject("active", null, false, { votes_up: 4, votes_down: 1 }, [member]);
+    render(<ProjectPage />);
+    await screen.findByRole("heading", { name: "Example Project" });
+    expect(screen.getByRole("button", { name: /upvote/i }).textContent).toBe("↑4");
+    expect(screen.getByRole("button", { name: /downvote/i }).textContent).toBe("↓1");
+    expect(await screen.findByText("Contributors", { selector: "div" })).toBeTruthy();
+  });
 });

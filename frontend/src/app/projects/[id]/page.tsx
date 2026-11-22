@@ -20,6 +20,7 @@ import { useProjectReads } from "./useProjectReads";
 import { useProjectVote } from "./useProjectVote";
 import { useProjectJoin } from "./useProjectJoin";
 import { ProjectLoginModal } from "./ProjectLoginModal";
+import { ProjectPrimaryAction } from "./ProjectPrimaryAction";
 import { FetchError } from "@/components/FetchError";
 import { clearAuthSession, getAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 
@@ -67,6 +68,7 @@ function VoteButtons({ title, state }: { title: string; state: ReturnType<typeof
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
   const { up, down, voting, error, vote } = state;
+  const showCounts = up + down > 0;
   return (
     <div className="order-first sm:order-none col-span-2 sm:col-span-1 min-w-0 bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4">
       <div className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">{tr('votes')}</div>
@@ -76,14 +78,14 @@ function VoteButtons({ title, state }: { title: string; state: ReturnType<typeof
           disabled={voting}
           className="min-h-11 min-w-11 max-w-full [overflow-wrap:anywhere] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono transition-all hover:bg-emerald-500/10 text-emerald-400 border border-neutral-800/50 hover:border-emerald-500/30 disabled:opacity-50"
         >
-          <span aria-hidden="true">↑</span>{new Intl.NumberFormat(localeTag(locale)).format(up)}
+          <span aria-hidden="true">↑</span>{showCounts && new Intl.NumberFormat(localeTag(locale)).format(up)}
         </button>
         <button
           onClick={() => void vote(-1)} aria-label={tr('downvoteProject', { title })}
           disabled={voting}
           className="min-h-11 min-w-11 max-w-full [overflow-wrap:anywhere] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono transition-all hover:bg-red-500/10 text-red-400 border border-neutral-800/50 hover:border-red-500/30 disabled:opacity-50"
         >
-          <span aria-hidden="true">↓</span>{new Intl.NumberFormat(localeTag(locale)).format(down)}
+          <span aria-hidden="true">↓</span>{showCounts && new Intl.NumberFormat(localeTag(locale)).format(down)}
         </button>
       </div>
       {voting && <p role="status" className="mt-2 text-sm text-neutral-400">{tr('loading')}</p>}
@@ -395,30 +397,18 @@ function ProjectDetails({ projectId }: { projectId: string }) {
             <div className="min-w-0 w-full sm:flex-1">
               <p className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600 mb-3">{tr('project')}</p>
               <h1 className="text-2xl font-semibold text-white tracking-tight [overflow-wrap:anywhere]">{project.title}</h1>
-              <p className="text-neutral-500 text-sm mt-2 font-mono [overflow-wrap:anywhere]">
+              <p className="text-neutral-500 text-sm mt-2 font-mono">
                 {project.creator_agent_id ? <>{tr('by')}{" "}<Link href={`/agents/${project.creator_agent_id}`}
                   className="text-violet-400 hover:text-violet-300 transition-colors [overflow-wrap:anywhere]">
                   @{project.agent_handle || project.agent_name}
                 </Link></> : <span>{tr('unknownAuthor')}</span>}
                 <span className="text-neutral-700 mx-2">|</span>
-                <span className="text-neutral-500">{displayPublicLabel(locale, project.category)}</span>
+                <span className="text-neutral-500 [overflow-wrap:anywhere]">{displayPublicLabel(locale, project.category)}</span>
                 <span className="text-neutral-700 mx-2">|</span>
-                <span className={`capitalize ${STATUS_COLOR[project.status] ?? "text-neutral-500"}`}>{displayPublicLabel(locale, project.status)}</span>
+                <span className={`capitalize whitespace-nowrap ${STATUS_COLOR[project.status] ?? "text-neutral-500"}`}>{displayPublicLabel(locale, project.status)}</span>
               </p>
               {project.recovery_provenance && <p className="mt-1 text-xs text-neutral-400">{tr('importedHistory')}</p>}
-            </div>
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
-              {project.status !== "archived" && project.deploy_url && (
-                <a href={project.deploy_url} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex min-h-11 min-w-11 max-w-full items-center justify-center text-xs text-emerald-400 hover:text-emerald-300 bg-emerald-500/5 border border-emerald-500/20 hover:border-emerald-500/40 px-3.5 py-1.5 rounded-lg font-mono transition-all">
-                  {tr('demo2')}</a>
-              )}
-              {project.repo_url && (
-                <a href={project.repo_url} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex min-h-11 min-w-11 max-w-full items-center justify-center text-xs text-neutral-400 hover:text-white bg-neutral-800/30 border border-neutral-800/50 hover:border-neutral-700/60 px-3.5 py-1.5 rounded-lg font-mono transition-all">
-                  GitHub
-                </a>
-              )}
+              <ProjectPrimaryAction deployUrl={project.deploy_url} repoUrl={project.repo_url} archived={project.status === "archived"} />
             </div>
           </div>
 
@@ -468,10 +458,12 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                 <div className="text-sm text-neutral-200 font-mono">{timeAgo(project.created_at, locale)}</div>
               </div>
               <VoteButtons title={project.title} state={voteState} />
-              <div className="stat-card min-w-0 bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4">
-                <div className="text-xs font-mono uppercase tracking-wide text-neutral-600 mb-2">{tr('contributors')}</div>
-                <div className="text-sm text-neutral-200 font-mono">{reads.contributors.data ? new Intl.NumberFormat(localeTag(locale)).format(contributors.length) : "—"}</div>
-              </div>
+              {contributors.length > 0 && (
+                <div className="stat-card min-w-0 bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4">
+                  <div className="text-xs font-mono uppercase tracking-wide text-neutral-600 mb-2">{tr('contributors')}</div>
+                  <div className="text-sm text-neutral-200 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(contributors.length)}</div>
+                </div>
+              )}
             </div>
           </div>
         )}
