@@ -214,7 +214,7 @@ const DNA_TRAITS = [
               {agent.handle && (
                 <span className="text-sm text-neutral-500 font-mono [overflow-wrap:anywhere]">@{agent.handle}</span>
               )}
-              <span className="text-xs px-2.5 py-1 rounded-full bg-neutral-900/30 text-neutral-400 border border-neutral-800/50 font-mono [overflow-wrap:anywhere] uppercase tracking-[0.1em]">
+              <span className="text-xs px-2.5 py-1 rounded-full bg-neutral-900/30 text-neutral-400 border border-neutral-800/50 [overflow-wrap:anywhere]">
                 {displayPublicLabel(locale, agent.specialization)}
               </span>
             </div>
@@ -253,7 +253,7 @@ const DNA_TRAITS = [
                     <span className="text-base">{badge.icon}</span>
                     <div className="min-w-0 [overflow-wrap:anywhere]">
                       <div className="text-xs font-medium leading-normal">{badge.name}</div>
-                      <div className="text-xs text-neutral-600 mt-0.5 capitalize font-mono [overflow-wrap:anywhere]">{badge.rarity}</div>
+                      <div className="text-xs text-neutral-600 mt-0.5 capitalize [overflow-wrap:anywhere]">{badge.rarity}</div>
                     </div>
                     {/* Tooltip */}
                     <div className="absolute bottom-full left-0 mb-2 px-2 py-1.5 bg-[#0a0a0a] border border-neutral-800/50 rounded-lg text-xs text-neutral-300 w-max max-w-full whitespace-normal [overflow-wrap:anywhere] opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 backdrop-blur-sm">
@@ -286,7 +286,7 @@ const DNA_TRAITS = [
                       </div>
                       <div className="flex-1 min-w-0 basis-40">
                         <div className="flex flex-wrap items-center gap-2 mb-0.5">
-                          <span className={`text-xs px-1.5 py-0.5 rounded ${meta.bg} ${meta.color} font-medium font-mono [overflow-wrap:anywhere]`}>
+                          <span className={`text-xs px-1.5 py-0.5 rounded ${meta.bg} ${meta.color} font-medium [overflow-wrap:anywhere]`}>
                             {ev.action_type === "task_claimed" ? tr("activityTaskClaimedLabel")
                               : ev.action_type === "task_completed" ? tr("activityTaskCompletedLabel")
                               : displayPublicLabel(locale, meta.label)}
@@ -363,7 +363,7 @@ const DNA_TRAITS = [
                       {/* Content */}
                       <div className="flex-1 min-w-0 basis-40">
                         <div className="flex flex-wrap items-center gap-2 mb-0.5 flex-wrap">
-                          <span className={`text-xs px-1.5 py-0.5 rounded font-medium font-mono [overflow-wrap:anywhere] ${meta.bg} ${meta.color}`}>
+                          <span className={`text-xs px-1.5 py-0.5 rounded font-medium [overflow-wrap:anywhere] ${meta.bg} ${meta.color}`}>
                             {displayPublicLabel(locale, meta.label)}
                           </span>
                           {item.project_title && (
@@ -450,7 +450,7 @@ const DNA_TRAITS = [
                       <div className="h-full rounded-full transition-all duration-700 dna-bar"
                         style={{ width: `${(val / 10) * 100}%`, background: color, boxShadow: `0 0 8px ${color}60` }} />
                     </div>
-                    <div className="flex gap-3 justify-between mt-1 text-xs text-neutral-600 font-mono [overflow-wrap:anywhere]">
+                    <div className="flex gap-3 justify-between mt-1 text-xs text-neutral-600 [overflow-wrap:anywhere]">
                       <span className="min-w-0 max-w-[48%]">{lo}</span><span className="min-w-0 max-w-[48%] text-right">{hi}</span>
                     </div>
                   </div>
@@ -528,7 +528,7 @@ const DNA_TRAITS = [
                     return (
                       <div key={`${entry.task_type}-${entry.model}`}
                         className="flex flex-wrap min-w-0 items-center gap-3 px-3 py-2 rounded-lg bg-neutral-900/50 border border-neutral-800/40 hover:border-neutral-700/60 transition-all duration-200">
-                        <span className={`text-xs px-1.5 py-0.5 rounded font-medium font-mono [overflow-wrap:anywhere] uppercase tracking-wide shrink-0 ${cls}`}>
+                        <span className={`text-xs px-1.5 py-0.5 rounded font-medium [overflow-wrap:anywhere] shrink-0 ${cls}`}>
                           {entry.task_type}
                         </span>
                         <span className="text-xs text-neutral-400 font-mono [overflow-wrap:anywhere] min-w-0 flex-1 basis-32" title={entry.model}>
