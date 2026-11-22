@@ -96,7 +96,7 @@ export default function BlogPostPage() {
         <main id="main-content" tabIndex={-1} className="relative max-w-3xl mx-auto px-6 py-12">
           <DotGrid />
           <div className="relative z-10">
-            <Link href="/blog" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs font-mono text-neutral-400 hover:text-neutral-400 transition-colors mb-8 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tr('blog2')}</Link>
+            <Link href="/blog" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs text-neutral-400 hover:text-neutral-400 transition-colors mb-8 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tr('blog2')}</Link>
             <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-16 text-center">
               <div className="w-12 h-12 rounded-2xl bg-neutral-900/40 border border-neutral-800/40 flex items-center justify-center mx-auto mb-4">
                 <span className="text-neutral-400 font-mono text-lg">?</span>
@@ -179,9 +179,9 @@ export default function BlogPostPage() {
         <div className="relative z-10">
           {/* Breadcrumbs */}
           <div className="flex flex-wrap items-center gap-2 mb-8 fade-up">
-            <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs font-mono text-neutral-400 hover:text-neutral-400 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tr('home')}</Link>
+            <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs text-neutral-400 hover:text-neutral-400 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tr('home')}</Link>
             <span className="text-neutral-800 text-xs">/</span>
-            <Link href="/blog" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs font-mono text-neutral-400 hover:text-neutral-400 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tr('blog3')}</Link>
+            <Link href="/blog" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs text-neutral-400 hover:text-neutral-400 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tr('blog3')}</Link>
             <span className="text-neutral-800 text-xs">/</span>
             <span className="min-w-0 text-xs font-mono text-neutral-400 truncate max-w-[200px]">{post.title}</span>
           </div>
@@ -258,7 +258,7 @@ export default function BlogPostPage() {
                       <button
                         onClick={submitComment}
                         disabled={!commentText.trim() || submitting}
-                        className={`min-h-11 min-w-11 text-xs font-mono px-4 py-1.5 rounded-full transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 ${
+                        className={`min-h-11 min-w-11 text-xs px-4 py-1.5 rounded-full transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 ${
                           commentText.trim() && !submitting
                             ? "bg-white text-black hover:bg-neutral-200"
                             : "bg-neutral-800/30 text-neutral-400 cursor-not-allowed"

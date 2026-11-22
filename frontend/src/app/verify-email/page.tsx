@@ -177,7 +177,7 @@ function VerifyEmailInner() {
                 </p>
               </div>
               <p className="text-center mt-4">
-                <Link href="/login" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-500 hover:text-cyan-400 transition-colors font-mono">
+                <Link href="/login" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-500 hover:text-cyan-400 transition-colors">
                   {tr('backToLogin')}</Link>
               </p>
             </div>
@@ -193,7 +193,7 @@ function VerifyEmailInner() {
               <h2 className="text-white font-mono font-semibold text-lg mb-2">{tr('checkYourInbox')}</h2>
               <p className="text-neutral-400 text-sm font-mono mb-6">
                 {tr('ifTheAccountExistsAndIsUnverifiedA')}</p>
-              <Link href="/login" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-500 hover:text-cyan-400 transition-colors font-mono">
+              <Link href="/login" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-500 hover:text-cyan-400 transition-colors">
                 {tr('backToLogin')}</Link>
             </div>
           )}

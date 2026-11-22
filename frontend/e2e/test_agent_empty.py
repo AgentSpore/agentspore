@@ -22,8 +22,17 @@ COPY = {
 }
 
 
+UUID = "3f2b8c1e-5d4a-4e7b-9a10-2c6d8e0f1a2b"
+EVENT = {
+    "id": "e1", "agent_id": AGENT["id"], "agent_name": AGENT["name"], "action_type": "code_commit",
+    "description": "Synthetic commit", "project_id": UUID, "metadata": {}, "ts": "2026-11-22T08:00:00Z",
+}
+
+
 class EmptyHTTP(AuthHTTP):
     """Serve the zero-activity agent and one long blog post; abort router prefetches silently."""
+
+    activity = []
 
     def route(self, route):
         request, target = route.request, urlparse(route.request.url)
@@ -40,7 +49,7 @@ class EmptyHTTP(AuthHTTP):
             empty = {"github-activity": {"activities": [], "total": 0}}.get(target.path.rsplit("/", 1)[1], [])
             return route.fulfill(json=empty)
         if request.method == "GET" and target.path == "/api/v1/activity":
-            return route.fulfill(json=[])
+            return route.fulfill(json=self.activity)
         if request.method == "GET" and target.path.startswith("/api/v1/blog/agents/"):
             return route.fulfill(json={"posts": [], "total": 0, "limit": 10, "offset": 0})
         if request.method == "GET" and target.path == BASE and query.get("limit") == ["20"]:
@@ -52,13 +61,14 @@ class EmptyStateTests(unittest.TestCase):
     setUpClass = classmethod(browser_fixtures.BrowserFixture.setUpClass.__func__)
     tearDownClass = classmethod(browser_fixtures.BrowserFixture.tearDownClass.__func__)
 
-    def open(self, path, locale, size, name):
+    def open(self, path, locale, size, name, activity=()):
         context = self.browser.new_context(
             viewport={"width": size[0], "height": size[1]}, service_workers="block"
         )
         self.addCleanup(context.close)
         context.add_cookies([{"name": "agentspore_locale", "value": locale, "url": self.options.base_url}])
         self.http = EmptyHTTP(self.options.base_url)
+        self.http.activity = list(activity)
         context.route("**/*", self.http.route)
         page = context.new_page()
         page.set_default_timeout(7000)
@@ -86,9 +96,20 @@ class EmptyStateTests(unittest.TestCase):
                     page = self.open(PAGE, locale, size, "agent-empty")
                     expect(page.get_by_text(title, exact=True)).to_be_visible()
                     expect(page.get_by_role("link", name=link, exact=True)).to_have_attribute("href", "/showcase")
+                    column = page.locator(".lg\\:col-span-3.fade-up-d4").bounding_box()
+                    card = page.get_by_text(title, exact=True).locator("xpath=..").bounding_box()
+                    self.assertAlmostEqual(card["x"], column["x"], delta=1)
                     tiles = page.locator(".stat-card .font-mono").first
                     self.assertEqual(page.locator(".stat-card").count(), 0, tiles)
                     self.assert_axe_clean(page)
+
+    def test_activity_project_id_link_stays_small_mono(self):
+        page = self.open(PAGE, "en", VIEWPORTS["desktop"], "agent-activity-id", activity=[EVENT])
+        link = page.locator(f'a[href="/projects/{UUID}"]')
+        expect(link).to_be_visible()
+        style = link.evaluate("el => { const s = getComputedStyle(el); return {f: s.fontFamily, z: s.fontSize}; }")
+        self.assertRegex(style["f"], "(?i)mono")
+        self.assertEqual(style["z"], "12px")
 
     def test_blog_list_excerpt_and_no_reactions(self):
         for locale in COPY:

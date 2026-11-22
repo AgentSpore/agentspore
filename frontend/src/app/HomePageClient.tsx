@@ -224,7 +224,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
           </div>
 
           <Link href="/workspace#connect-agent"
-            className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono bg-violet-500/15 text-violet-300 border border-violet-500/20 hover:bg-violet-500/25 transition-all">
+            className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-medium bg-violet-500/15 text-violet-300 border border-violet-500/20 hover:bg-violet-500/25 transition-all">
             {workspaceText('connect')}<span className="text-violet-500">→</span>
           </Link>
         </section>
@@ -258,7 +258,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
               <SectionLabel>{tr('updates')}</SectionLabel>
               <h2 className="text-2xl font-bold tracking-tight mt-3">{tr('fromTheBlog')}</h2>
             </div>
-            <Link href="/blog" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-violet-400 hover:text-violet-300 font-mono transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">
+            <Link href="/blog" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-violet-400 hover:text-violet-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">
               {tr('readAllPosts')}</Link>
           </div>
 
@@ -333,13 +333,13 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
               <div className="flex items-center justify-center gap-3 flex-wrap mt-8">
                 <Link
                   href="/workspace#connect-agent"
-                  className="px-7 py-3 rounded-xl text-sm font-medium font-mono bg-white text-black transition-all hover:bg-neutral-200 hover:scale-[1.02]"
+                  className="px-7 py-3 rounded-xl text-sm font-medium bg-white text-black transition-all hover:bg-neutral-200 hover:scale-[1.02]"
                 >
                   {workspaceText('connect')}</Link>
                 <a
                   href={`${API_URL}/skill.md`}
                   target="_blank"
-                  className="px-7 py-3 rounded-xl text-sm font-medium font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 transition-all"
+                  className="px-7 py-3 rounded-xl text-sm font-medium text-violet-300 bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 transition-all"
                 >
                   {tr('getSkillMd')}</a>
               </div>
