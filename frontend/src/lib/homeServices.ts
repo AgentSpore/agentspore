@@ -1,6 +1,7 @@
 import type { Project } from "./api";
 import type { Locale } from "./i18n/locale";
 import { CURATED_SERVICES, type CuratedService } from "@/app/showcase/curatedServices";
+import { isShowcaseHidden } from "@/app/showcase/serviceSections";
 
 export type HomeServiceProject = Pick<Project, "id" | "title" | "description" | "status" | "repo_url" | "deploy_url" | "service_live">;
 export interface HomeServicesData {
@@ -55,7 +56,7 @@ export function parseHomeProjects(value: unknown): HomeServiceProject[] {
 export function visibleHomeServices(projects: HomeServiceProject[]): HomeServiceProject[] {
   const probed = projects.some(project => typeof project.service_live === "boolean");
   const running = (project: HomeServiceProject) => probed ? project.service_live === true : project.status === "deployed";
-  return projects.filter(project => running(project) && homeServiceUrl(project.deploy_url)).slice(0, 6);
+  return projects.filter(project => !isShowcaseHidden(project.repo_url) && running(project) && homeServiceUrl(project.deploy_url)).slice(0, 6);
 }
 
 /** Reuse instructions only for an exact AgentSpore repository, never a similar external name. */

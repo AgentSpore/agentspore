@@ -21,6 +21,11 @@ describe("homepage service boundary", () => {
     const valid = Array.from({ length: 8 }, (_, i) => ({ ...project, id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}` }));
     expect(visibleHomeServices([{ ...project, status: "historical" }, { ...project, status: "archived" }, { ...project, deploy_url: "javascript:bad" }, ...valid])).toEqual(valid.slice(0, 6));
   });
+  it("never lists Nuvistela on the homepage, live or deployed", () => {
+    const nuvistela = { ...project, id: "00000000-0000-4000-8000-0000000000b1", repo_url: "https://github.com/AgentSpore/nuvistela", deploy_url: "https://nuvistela.example.test" };
+    expect(visibleHomeServices([{ ...nuvistela, service_live: true }, { ...project, service_live: true }])).toEqual([{ ...project, service_live: true }]);
+    expect(visibleHomeServices([nuvistela, project])).toEqual([project]);
+  });
   it("uses service_live for the homepage once any item reports it", () => {
     const live = { ...project, id: "00000000-0000-4000-8000-0000000000a1", service_live: true };
     const dead = { ...project, id: "00000000-0000-4000-8000-0000000000a2", service_live: false };
