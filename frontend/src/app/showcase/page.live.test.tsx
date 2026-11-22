@@ -60,7 +60,7 @@ describe("Showcase live services", () => {
     const start = section("Start here");
     expect(start.queryAllByRole("article")).toHaveLength(0);
     expect(start.queryByText(/No services are running|unavailable right now/)).toBeNull();
-    expect(document.querySelectorAll(".skeleton-shimmer").length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "Start here" }).closest("section")?.querySelectorAll(".skeleton-shimmer").length).toBeGreaterThan(0);
     expect(screen.queryByRole("heading", { name: "More to explore" })).toBeNull();
   });
 
