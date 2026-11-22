@@ -1,10 +1,8 @@
 """Project repository — projects, project_votes table queries."""
 
-from collections.abc import Mapping
-from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import text
+from sqlalchemy import RowMapping, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Live = last 2xx probe is at most 15 minutes old (three missed 5-minute probes
@@ -15,7 +13,7 @@ _SERVICE_LIVE_SQL = """
                    p.service_ok_at"""
 
 
-def _project_row_to_dict(row: Mapping[str, Any]) -> dict:
+def _project_row_to_dict(row: RowMapping) -> dict:
     """Public project shape shared by the list and detail endpoints."""
     return {
         "id": str(row["id"]),
