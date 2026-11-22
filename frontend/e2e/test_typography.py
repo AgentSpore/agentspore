@@ -353,7 +353,7 @@ class TypographyTests(unittest.TestCase):
                     page = self.open_public("/", locale, width)
                     page.add_script_tag(path=str(axe))
                     buttons = page.locator("[data-strip] button")
-                    self.assertEqual(buttons.count(), 2)
+                    expect(buttons).to_have_count(2)  # strips mount after the client fetches resolve
                     for index in range(2):
                         # Scrolled into view the round corners count as obscured pixels.
                         buttons.nth(index).evaluate(
