@@ -53,6 +53,10 @@ function DotGrid() {
   );
 }
 
+const STAT_COLUMNS: Record<number, string> = {
+  0: "md:grid-cols-1", 1: "md:grid-cols-1", 2: "md:grid-cols-2", 3: "md:grid-cols-3", 4: "md:grid-cols-4", 5: "md:grid-cols-5",
+};
+
 type AuthState = "loading" | "anon" | "zero-agents" | "has-agents";
 
 function useDashboardAuth(): AuthState {
@@ -109,6 +113,16 @@ export default function Home() {
   const cCommits = useCounter(stats?.total_code_commits ?? 0);
   const cDeploys = useCounter(stats?.projects_deployed ?? 0);
   const cPrsMerged = useCounter(stats?.total_prs_merged ?? 0);
+
+  const allStatTiles = [
+    { value: cAgents,  label: tr('activeAgents'),  Icon: AgentsIcon, color: "#4ade80", raw: stats?.active_agents },
+    { value: cProjects, label: tr('projectsBuilt'), Icon: ProjectsIcon, color: "#818cf8", raw: stats?.total_projects },
+    { value: cCommits, label: tr('codeCommits'),    Icon: CommitsIcon, color: "#22d3ee", raw: stats?.total_code_commits },
+    { value: cDeploys, label: tr('liveDeploys'),    Icon: DeploysIcon, color: "#fb923c", raw: stats?.projects_deployed },
+    { value: cPrsMerged, label: tr('pRsMerged'),    Icon: PullRequestsIcon, color: "#c084fc", raw: stats?.total_prs_merged },
+  ];
+  // Zero metrics stay hidden until non-zero; while stats are unknown every tile shows its skeleton.
+  const statTiles = stats ? allStatTiles.filter(t => t.raw !== 0) : allStatTiles;
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date().toLocaleTimeString(localeTag(locale))), 1000);
@@ -193,15 +207,9 @@ export default function Home() {
         </div>
 
         {/* ── Stats ─────────────────────────────────────────────── */}
-        {(stats || !error) && <section id="stats" className="grid grid-cols-2 md:grid-cols-5 gap-2.5 sm:gap-3 fade-up-d1">
-          {[
-            { value: cAgents,  label: tr('activeAgents'),  Icon: AgentsIcon, color: "#4ade80", raw: stats?.active_agents },
-            { value: cProjects, label: tr('projectsBuilt'), Icon: ProjectsIcon, color: "#818cf8", raw: stats?.total_projects },
-            { value: cCommits, label: tr('codeCommits'),    Icon: CommitsIcon, color: "#22d3ee", raw: stats?.total_code_commits },
-            { value: cDeploys, label: tr('liveDeploys'),    Icon: DeploysIcon, color: "#fb923c", raw: stats?.projects_deployed },
-            { value: cPrsMerged, label: tr('pRsMerged'),    Icon: PullRequestsIcon, color: "#c084fc", raw: stats?.total_prs_merged },
-          ].map((s, i) => (
-            <div key={s.label} className="stat-card last:col-span-2 md:last:col-span-1 bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-3.5 sm:p-5 hover:border-neutral-700/80 transition-all backdrop-blur-sm"
+        {(stats || !error) && <section id="stats" className={`grid grid-cols-2 ${STAT_COLUMNS[statTiles.length] ?? STAT_COLUMNS[5]} gap-2.5 sm:gap-3 fade-up-d1`}>
+          {statTiles.map((s, i) => (
+            <div key={s.label} className={`stat-card ${statTiles.length % 2 === 1 ? "last:col-span-2 md:last:col-span-1" : ""} bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-3.5 sm:p-5 hover:border-neutral-700/80 transition-all backdrop-blur-sm`}
               style={{ "--stat-color": s.color, animationDelay: `${i * 0.06}s` } as React.CSSProperties}>
               <div className="flex items-start justify-between mb-3">
                 <span className="text-lg" style={{ color: s.color }}><s.Icon /></span>
