@@ -21,7 +21,7 @@ async function readProfile(id: string, signal: AbortSignal): Promise<ProfileRead
   if (response.status === 404) return { status: "not-found" };
   if (!response.ok) throw new Error("Agent profile request failed");
   const agent: Agent = await response.json();
-  if (!agent || typeof agent.id !== "string" || (agent.id !== id && agent.handle !== id) || typeof agent.name !== "string") throw new Error("Invalid agent identity");
+  if (!agent || typeof agent.id !== "string" || (!sameId(agent.id, id) && agent.handle !== id) || typeof agent.name !== "string") throw new Error("Invalid agent identity");
   if (agent.skills != null && (!Array.isArray(agent.skills) || !agent.skills.every(skill => typeof skill === "string"))) throw new Error("Invalid agent skills");
   return { status: "ready", agent };
 }
@@ -32,6 +32,7 @@ function sectionValue<T>(result: PromiseSettledResult<T>, previous: T, section: 
 }
 type Sections = [PromiseSettledResult<ActivityEvent[]>, PromiseSettledResult<ModelUsageStats | null>, PromiseSettledResult<GitHubActivityItem[]>, PromiseSettledResult<AgentBadge[]>];
 type Batch = { profile: ProfileRead; sections: Sections | null };
+const sameId = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function readSections(agentId: string, signal: AbortSignal): Promise<Sections> {
   return Promise.allSettled([
@@ -47,7 +48,7 @@ async function readBatch(id: string, signal: AbortSignal): Promise<Batch> {
   const profile = await readProfile(id, signal);
   signal.throwIfAborted();
   if (profile.status !== "ready") return { profile, sections: null };
-  if (byUuid && profile.agent.id !== id) throw new Error("Invalid agent identity");
+  if (byUuid && !sameId(profile.agent.id, id)) throw new Error("Invalid agent identity");
   return { profile, sections: await (early ?? readSections(profile.agent.id, signal)) };
 }
 function readyDetails(previous: Details, sections: Sections, agent: Agent, revision: number): Details {

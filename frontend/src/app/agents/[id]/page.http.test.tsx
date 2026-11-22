@@ -7,18 +7,18 @@ import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
 import { publicMessages } from '@/lib/i18n/public';
 import { sharedMessages } from '@/lib/i18n/shared';
 
-const route = vi.hoisted(() => ({ id: 'synthetic-a' }));
+const route = vi.hoisted(() => ({ id: '00000000-0000-4000-8000-00000000000a' }));
 vi.mock('next/navigation', () => ({ useParams: () => route, useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock('@/components/Header', () => ({ Header: () => null }));
 type Locale = 'en' | 'ru';
 const NOW = '2026-10-20T12:00:00Z';
 const PRIVATE_FAILURE = 'Synthetic internal agent read failure';
 const PARTIAL = { en: 'Some profile sections could not be loaded.', ru: 'Не удалось загрузить некоторые разделы профиля.' };
-const A: Agent = { id: 'synthetic-a', name: 'Synthetic Agent A', handle: 'synthetic-a', agent_type: 'external',
+const A: Agent = { id: '00000000-0000-4000-8000-00000000000a', name: 'Synthetic Agent A', handle: 'synthetic-a', agent_type: 'external',
   model_provider: 'synthetic', model_name: 'synthetic', specialization: 'programmer', skills: [], karma: 0,
   projects_created: 0, code_commits: 0, reviews_done: 0, last_heartbeat: null, is_active: true, created_at: NOW,
   dna_risk: 5, dna_speed: 5, dna_verbosity: 5, dna_creativity: 5, bio: null, fork_count: 0, is_hosted: false };
-const B: Agent = { ...A, id: 'synthetic-b', name: 'Synthetic Agent B', handle: 'synthetic-b' };
+const B: Agent = { ...A, id: '00000000-0000-4000-8000-00000000000b', name: 'Synthetic Agent B', handle: 'synthetic-b' };
 const MODEL: ModelUsageStats = { total_calls: 0, unique_models: 0, by_model: [], by_task: [] };
 function activity(id: string): ActivityEvent[] { return [{ id: `activity-${id}`, action_type: 'code_commit', description: `Activity ${id}`, ts: NOW }]; }
 function github(id: string): { activities: GitHubActivityItem[] } { return { activities: [{ id: `github-${id}`, action_type: 'code_commit', description: `Commit ${id}`, created_at: NOW }] }; }
@@ -101,7 +101,7 @@ it('AD.READ UUID route reads sections beside the profile and rejects a handle-on
   for (const key of ['activity', 'model', 'github', 'badges'] as const) http.bodies.set(paths[key], http.bodies.get(endpoints(B.id)[key]));
   openAgent(); await settle();
   for (const key of ['activity', 'model', 'github', 'badges'] as const) expect(http.calls).toContain(paths[key]);
-  await finish(held, Response.json({ ...B, id: 'synthetic-b', handle: uuid })); await settle();
+  await finish(held, Response.json({ ...B, id: 'synthetic-other-id', handle: uuid })); await settle();
   expect(screen.getByRole('alert').textContent).toContain(sharedMessages.en.couldNotLoadData); expect(http.unexpected).toEqual([]);
 });
 
@@ -197,4 +197,12 @@ it('AD.READ same-agent partial Retry retains the current blog page instead of re
   fireEvent.click(screen.getByRole('button', { name: sharedMessages.en.retry })); await settle();
   expect(screen.getByRole('heading', { name: A.name })).toBeTruthy(); expect(screen.getByText('Page two retained')).toBeTruthy();
   expect(http.calls.filter(path => path === paths.blog)).toHaveLength(initialReads); expect(http.unexpected).toEqual([]);
+});
+
+it('AD.READ uppercase UUID route matches the lowercase profile id', async () => {
+  const http = agentHTTP(); route.id = B.id.toUpperCase();
+  const upper = endpoints(route.id);
+  for (const key of ['profile', 'activity', 'model', 'github', 'badges'] as const) http.bodies.set(upper[key], http.bodies.get(endpoints(B.id)[key]));
+  openAgent(); await settle();
+  expect(screen.getByRole('heading', { name: B.name })).toBeTruthy(); expect(http.unexpected).toEqual([]);
 });
