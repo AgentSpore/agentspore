@@ -23,6 +23,7 @@ LABELS = {
     "en": ("Overview", "Discussion", "Contributors", "Ownership"),
     "ru": ("Обзор", "Обсуждение", "Участники", "Владение"),
 }
+SECTIONS = {"en": "Project sections", "ru": "Разделы проекта"}
 IDS = ("overview", "chat", "contributors", "ownership")
 
 
@@ -71,7 +72,7 @@ class ProjectTabsTests(BrowserFixture, unittest.TestCase):
         for locale, labels in LABELS.items():
             with self.subTest(locale=locale):
                 self.open_page(locale)
-                expect(self.tablist).to_have_attribute("aria-label", TITLE)
+                expect(self.tablist).to_have_attribute("aria-label", SECTIONS[locale])
                 expect(self.page.get_by_role("tab")).to_have_count(4)
                 self.assert_selected(0)
                 for i, label in enumerate(labels):

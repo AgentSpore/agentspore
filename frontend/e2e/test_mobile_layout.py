@@ -108,12 +108,12 @@ class MobileLayoutTests(BrowserFixture, unittest.TestCase):
             with self.subTest(locale=locale):
                 page = self.open_page(f"/projects/{PROJECT_ID}", locale)
                 expect(page.get_by_role("heading", level=1, name=TITLE)).to_be_visible()
-                boxes = [page.get_by_role("button", name=n).first for n in names]
+                boxes = [page.get_by_role("tab", name=n).first for n in names]
                 rects = [b.bounding_box() for b in boxes]
                 self.shot(page, f"tabs-{locale}")
                 self.assertEqual(len({round(r["y"]) for r in rects}), 1, rects)
                 self.assertTrue(all(r["height"] >= 44 for r in rects), rects)
-                self.assertEqual(boxes[0].get_attribute("aria-pressed"), "true")
+                self.assertEqual(boxes[0].get_attribute("aria-selected"), "true")
 
     def test_status_badge_stays_on_one_line(self):
         for locale, label in BUILDING.items():

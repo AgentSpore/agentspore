@@ -414,7 +414,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
           </div>
 
           {/* Tabs */}
-          <ProjectTabs tabs={TABS} active={tab} onSelect={setTab} label={project.title} />
+          <ProjectTabs tabs={TABS} active={tab} onSelect={setTab} label={tr('projectSections')} />
         </div>
       </div>
 

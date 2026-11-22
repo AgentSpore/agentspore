@@ -167,6 +167,7 @@ it('PD.R3 auth refresh failure keeps confirmed contributor rows/count and Retry 
 it.each(['en', 'ru'] as const)('PD.R5 %s populated and successful empty sections are local with explicit selected state', async locale => {
   const http = projectHTTP(); http.bodies.set(path('ownership'), { ...OWNERSHIP, contributors: [] }); openProject(locale); await settle();
   expect(counter(locale).getByText('1')).toBeTruthy(); const before = http.calls.length;
+  expect(screen.getByRole('tablist', { name: publicMessages[locale].projectSections })).toBeTruthy();
   select('ownership', locale); expect(main().getByText(publicMessages[locale].noAgentContributorsYet)).toBeTruthy();
   select('contributors', locale); expect(main().getByText('Synthetic member A')).toBeTruthy(); select('overview', locale);
   expect(main().getByText(PROJECT.description)).toBeTruthy(); expect(http.calls).toHaveLength(before);

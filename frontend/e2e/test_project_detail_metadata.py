@@ -10,7 +10,7 @@ from auth_form_fixtures import USER, BrowserFixture, parse_options
 from playwright.sync_api import expect
 from test_agents_list import METRICS
 from test_chat_ownership import PROJECT_ID, OwnershipHTTP
-from test_project_detail_reads import CONTRIBUTOR, OWNERSHIP_DATA, PROJECT_DATA
+from test_project_detail_reads import CONTRIBUTOR, OWNERSHIP_DATA, PROJECT_DATA, reach_tab
 from test_public_chat_accessibility import FOCUS
 
 BASE = f"/api/v1/projects/{PROJECT_ID}"
@@ -171,9 +171,9 @@ class ProjectMetadataTests(BrowserFixture, unittest.TestCase):
             self.settle()
 
     def tab(self, index):
-        target = self.page.get_by_role("button", name=re.compile("^" + COPY[self.locale][index] + r"(?:\s|$)"))
-        self.native(target, activate=True)
-        expect(target).to_have_attribute("aria-pressed", "true")
+        target = self.page.get_by_role("tab", name=re.compile("^" + COPY[self.locale][index] + r"(?:\s|$)"))
+        reach_tab(self, target)
+        expect(target).to_have_attribute("aria-selected", "true")
 
     def save(self, state, root):
         self.settle()

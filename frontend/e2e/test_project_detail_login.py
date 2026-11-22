@@ -11,7 +11,7 @@ from auth_form_fixtures import PASSWORD, USER, BrowserFixture, parse_options
 from playwright.sync_api import expect
 from test_agents_list import METRICS
 from test_chat_ownership import PROJECT_ID, OwnershipHTTP
-from test_project_detail_reads import CONTRIBUTOR, OWNERSHIP_DATA, PROJECT_DATA, TARGET
+from test_project_detail_reads import CONTRIBUTOR, OWNERSHIP_DATA, PROJECT_DATA, TARGET, reach_tab
 from test_public_chat_accessibility import FOCUS
 
 BASE = f"/api/v1/projects/{PROJECT_ID}"
@@ -138,9 +138,8 @@ class ProjectLoginTests(BrowserFixture, unittest.TestCase):
         self.page.goto(self.options.base_url + f"/projects/{PROJECT_ID}", wait_until="domcontentloaded")
         self.main = self.page.locator("#main-content")
         expect(self.page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
-        tab = self.page.get_by_role("button", name=re.compile("^" + COPY[locale][0] + r"(?:\s|$)"))
-        self.native(tab, measure=False)
-        self.page.keyboard.press("Enter")
+        tab = self.page.get_by_role("tab", name=re.compile("^" + COPY[locale][0] + r"(?:\s|$)"))
+        reach_tab(self, tab, measure=False)
         self.opener = self.main.get_by_role("button", name=COPY[locale][1], exact=True)
         expect(self.opener).to_be_visible()
         self.settle()

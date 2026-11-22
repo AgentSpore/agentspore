@@ -68,6 +68,26 @@ TARGET = """el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el),bound
         contained:bounds.every(b=>r.left>=b.left&&r.right<=b.right),in_view:r.top>=Math.max(0,header)&&r.bottom<=innerHeight};}"""
 
 
+def reach_tab(test, target, **native_args):
+    """Tab to the selected tab (roving tabindex), then jump to target by Home/End plus arrows, like a keyboard user.
+
+    Arrow keys activate each tab on the way, so the route avoids passing through Discussion (it fetches chat).
+    """
+    test.native(test.page.locator("[role=tab][aria-selected=true]"), **native_args)
+    if target.evaluate("el=>el===document.activeElement"):
+        return
+    position, count = target.evaluate("el=>[[...el.parentElement.children].indexOf(el), el.parentElement.children.length]")
+    if position < count / 2:
+        test.page.keyboard.press("Home")
+        steps, key = position, "ArrowRight"
+    else:
+        test.page.keyboard.press("End")
+        steps, key = count - 1 - position, "ArrowLeft"
+    for _ in range(steps):
+        test.page.keyboard.press(key)
+    expect(target).to_be_focused()
+
+
 class ProjectReadsHTTP(OwnershipHTTP):
     def __init__(self, base_url):
         super().__init__(base_url, "project")
@@ -150,7 +170,7 @@ class ProjectDetailReadTests(BrowserFixture, unittest.TestCase):
         self.settle()
 
     def button(self, index):
-        return self.page.get_by_role("button", name=re.compile("^" + COPY[self.locale][index] + r"(?:\s|$)"))
+        return self.page.get_by_role("tab", name=re.compile("^" + COPY[self.locale][index] + r"(?:\s|$)"))
 
     def save(self, state, root=None):
         self.settle()
@@ -190,13 +210,13 @@ class ProjectDetailReadTests(BrowserFixture, unittest.TestCase):
         self.targets.append(target.evaluate(TARGET))
 
     def select(self, index):
-        self.native(self.button(index))
+        reach_tab(self, self.button(index))
         before = list(self.http.calls)
         self.page.keyboard.press("Enter")
         self.settle()
         self.assertEqual(self.http.calls, before)
         for key in (4, 5, 6):
-            expect(self.button(key)).to_have_attribute("aria-pressed", "true" if key == index else "false")
+            expect(self.button(key)).to_have_attribute("aria-selected", "true" if key == index else "false")
 
     def retry(self, kind):
         notice = self.main.get_by_role("alert")

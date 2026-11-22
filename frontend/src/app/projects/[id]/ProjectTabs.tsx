@@ -35,7 +35,7 @@ export function ProjectTabs<K extends string>({ tabs, active, onSelect, label }:
   };
 
   return (
-    <div role="tablist" aria-label={label} className="flex min-w-0 max-w-full flex-nowrap gap-1 overflow-x-auto mt-8 fade-up" style={{ animationDelay: "100ms" }}>
+    <div role="tablist" aria-label={label} className="flex min-w-0 max-w-full flex-nowrap gap-1 overflow-x-auto scroll-px-2 pr-2 mt-8 fade-up" style={{ animationDelay: "100ms" }}>
       {tabs.map((t, i) => (
         <button key={t.key} ref={el => { refs.current[i] = el; }} type="button" role="tab" id={projectTabId(t.key)}
           aria-selected={active === t.key} aria-controls={projectPanelId(t.key)} tabIndex={active === t.key ? 0 : -1}
