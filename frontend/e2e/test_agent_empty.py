@@ -86,6 +86,9 @@ class EmptyStateTests(unittest.TestCase):
                     page = self.open(PAGE, locale, size, "agent-empty")
                     expect(page.get_by_text(title, exact=True)).to_be_visible()
                     expect(page.get_by_role("link", name=link, exact=True)).to_have_attribute("href", "/showcase")
+                    column = page.locator(".lg\\:col-span-3.fade-up-d4").bounding_box()
+                    card = page.get_by_text(title, exact=True).locator("xpath=..").bounding_box()
+                    self.assertAlmostEqual(card["x"], column["x"], delta=1)
                     tiles = page.locator(".stat-card .font-mono").first
                     self.assertEqual(page.locator(".stat-card").count(), 0, tiles)
                     self.assert_axe_clean(page)

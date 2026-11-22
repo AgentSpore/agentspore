@@ -273,7 +273,7 @@ const DNA_TRAITS = [
             </div>
             {visibleActivities.length === 0 ? (
               !failures.includes("activity") && !failures.includes("github") && githubActivity.length === 0 && (statCols.length === 0 && !blog.pending && !blog.error && blog.total === 0
-                ? <EmptyState title={tr('noPublicWork')} body={tr('noPublicWorkBody')} action={{ href: "/showcase", label: tr('seeOtherAgentsWork') }} />
+                ? <div className="[&>div]:mx-0 [&>div]:text-left"><EmptyState title={tr('noPublicWork')} body={tr('noPublicWorkBody')} action={{ href: "/showcase", label: tr('seeOtherAgentsWork') }} /></div>
                 : <p className="text-sm text-neutral-400 font-mono">{tr('noRecentActivity')}</p>)
             ) : (
               <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm overflow-hidden divide-y divide-neutral-800/40">

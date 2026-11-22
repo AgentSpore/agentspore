@@ -6,6 +6,8 @@ python test_typography.py --base-url http://127.0.0.1:3000 \
 
 import json
 import unittest
+from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import urlparse
 
 import auth_form_fixtures as browser_fixtures
@@ -25,6 +27,58 @@ PROBES = """() => {
         }
     }
     document.body.append(holder);
+}"""
+ROOT = Path(__file__).resolve().parents[1]
+PUBLIC_PAGES = ("/", "/projects", "/showcase", "/agents", "/blog", "/login")
+PUBLIC_API = {
+    "/api/v1/agents/stats": {
+        "total_agents": 3, "active_agents": 3, "total_projects": 5, "total_code_commits": 360,
+        "total_reviews": 12, "projects_deployed": 3, "total_repos_created": 5, "total_prs_merged": 8,
+    },
+    "/api/v1/blog/posts": {"posts": []},
+    "/api/v1/activity": [{
+        "id": "e1", "agent_id": "a1", "agent_name": "Synthetic", "action_type": "code_commit",
+        "description": "Synthetic commit", "project_id": None, "metadata": {},
+        "ts": "2026-11-22T08:00:00Z",
+    }],
+    "/api/v1/oauth/providers": {"github": False, "google": False},
+}
+
+
+def live_agents():
+    """One agent with a fresh heartbeat so the home marquee renders."""
+    return [{
+        "id": "a1", "name": "Synthetic", "handle": "synthetic", "agent_type": "hosted",
+        "model_provider": "x", "model_name": "model", "specialization": "programmer",
+        "skills": [], "karma": 12, "projects_created": 1, "code_commits": 3, "reviews_done": 2,
+        "last_heartbeat": datetime.now(timezone.utc).isoformat(), "is_active": True,
+        "created_at": "2026-11-01T08:00:00Z", "bio": None, "fork_count": 0,
+    }]
+
+
+UI_AUDIT = """() => {
+    const visible = el => {
+        const b = el.getBoundingClientRect(), s = getComputedStyle(el);
+        return b.width > 0 && b.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
+    };
+    const labelSize = el => Math.min(...[...el.querySelectorAll('*'), el].flatMap(node =>
+        [...node.childNodes].filter(n => n.nodeType === 3 && n.textContent.trim())
+            .map(() => parseFloat(getComputedStyle(node).fontSize))));
+    const labelFamilies = el => [...el.querySelectorAll('*'), el].filter(node =>
+        !node.closest('[data-mono]') && [...node.childNodes].some(n => n.nodeType === 3 && n.textContent.trim()))
+        .map(node => getComputedStyle(node).fontFamily).join('|');
+    const offenders = [];
+    const selector = 'header a, header button, main a, main button, label, [role=tab], summary';
+    for (const el of document.querySelectorAll(selector)) {
+        const text = el.textContent.trim();
+        if (!visible(el) || !text || text.length > 40 || el.closest('[data-mono]')) continue;
+        if (el.querySelector('p, h1, h2, h3, h4, code') || el.closest('p')) continue;
+        const family = labelFamilies(el), size = labelSize(el);
+        if (/mono/i.test(family) || size < 14) {
+            offenders.push({text, family: family.slice(0, 60), size, tag: el.tagName});
+        }
+    }
+    return offenders;
 }"""
 GEOMETRY = """el => {
     const b = el.getBoundingClientRect();
@@ -179,9 +233,83 @@ class TypographyTests(unittest.TestCase):
                                 self.assert_fonts(fonts)
                             with self.subTest(property="geometry"):
                                 self.assert_geometry(page, tag)
-                            self.assertEqual(self.unexpected, [])
+                            surprises = [r for r in self.unexpected if r["url"].split("?")[0] != "/api/v1/funnel/visit"]
+                            self.assertEqual(surprises, [])
                         finally:
                             page.context.close()
+
+    def open_public(self, path, locale, width):
+        """Open a public page with held synthetic reads; the visit beacon and prefetches pass."""
+        origin = urlparse(self.options.base_url).netloc
+
+        def handle(route):
+            request, target = route.request, urlparse(route.request.url)
+            if target.netloc == origin and not target.path.startswith("/api/"):
+                route.continue_()
+            elif request.method == "POST" and target.path == "/api/v1/funnel/visit":
+                route.fulfill(status=204, headers={"access-control-allow-origin": "*"})
+            elif request.method == "GET" and target.path.startswith("/api/"):
+                body = live_agents() if target.path.endswith("/leaderboard") else PUBLIC_API.get(target.path, [])
+                route.fulfill(json=body, headers={"access-control-allow-origin": "*"})
+            else:
+                route.abort()
+
+        context = self.browser.new_context(
+            viewport={"width": width, "height": 900}, locale=locale, service_workers="block"
+        )
+        self.addCleanup(context.close)
+        context.add_cookies(
+            [{"name": "agentspore_locale", "value": locale, "url": self.options.base_url}]
+        )
+        context.route("**/*", handle)
+        page = context.new_page()
+        page.set_default_timeout(8000)
+        page.goto(self.options.base_url + path)
+        expect(page.locator("main h1").first).to_be_visible()
+        page.evaluate("document.fonts.ready")
+        page.wait_for_timeout(1500)
+        return page
+
+    def check_each_public_page(self, widths, check):
+        for path in PUBLIC_PAGES:
+            for locale in ("en", "ru"):
+                for width in widths:
+                    with self.subTest(path=path, locale=locale, width=width):
+                        check(self.open_public(path, locale, width), width)
+
+    def test_interactive_labels_are_sans_and_at_least_14px(self):
+        self.check_each_public_page(
+            (1280, 390), lambda page, width: self.assertEqual(page.evaluate(UI_AUDIT), [])
+        )
+
+    def test_no_horizontal_overflow_at_phone_widths(self):
+        self.check_each_public_page(
+            (390, 320),
+            lambda page, width: self.assertLessEqual(
+                page.evaluate("document.documentElement.scrollWidth"), width
+            ),
+        )
+
+    def test_home_has_no_axe_target_size_violations(self):
+        axe = ROOT / "node_modules/axe-core/axe.min.js"
+        for locale in ("en", "ru"):
+            for width in (1280, 390):
+                with self.subTest(locale=locale, width=width):
+                    page = self.open_public("/", locale, width)
+                    page.add_script_tag(path=str(axe))
+                    buttons = page.locator("[data-strip] button")
+                    self.assertEqual(buttons.count(), 2)
+                    for index in range(2):
+                        # Scrolled into view the round corners count as obscured pixels.
+                        buttons.nth(index).evaluate(
+                            "el => window.scrollTo(0, el.getBoundingClientRect().top + scrollY - 80)"
+                        )
+                        page.wait_for_timeout(500)
+                        result = page.evaluate(
+                            "axe.run(document, {runOnly: ['target-size']})"
+                            ".then(r => r.violations.map(v => v.nodes.map(n => n.target)))"
+                        )
+                        self.assertEqual(result, [], json.dumps(result)[:600])
 
 
 if __name__ == "__main__":
