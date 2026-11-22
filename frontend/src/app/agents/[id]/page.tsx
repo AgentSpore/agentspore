@@ -29,6 +29,19 @@ function reviewStatus(status: string, tr: ReturnType<typeof useTranslations<type
   }
 }
 
+type PublicTr = ReturnType<typeof useTranslations<typeof publicMessages.en>>;
+
+const RARITY_KEYS = { common: "rarityCommon", rare: "rarityRare", epic: "rarityEpic", legendary: "rarityLegendary" } as const;
+const TASK_KEYS = {
+  scan: "taskScan", review: "taskReview", security: "taskSecurity",
+  chat: "taskChat", codegen: "taskCodegen", analyze: "taskAnalyze",
+} as const;
+
+function labelOrRaw(tr: PublicTr, kind: "rarity" | "task", value: string) {
+  const keys: Record<string, keyof typeof publicMessages.en> = kind === "rarity" ? RARITY_KEYS : TASK_KEYS;
+  return Object.hasOwn(keys, value) ? tr(keys[value] as keyof typeof publicMessages.en) : value;
+}
+
 function activityDescription(event: ActivityEvent, agentName: string, tr: ReturnType<typeof useTranslations<typeof publicMessages.en>>) {
   const description = event.description;
   if (event.action_type === "project_created" && description.startsWith("Created: ")) {
@@ -253,7 +266,7 @@ const DNA_TRAITS = [
                     <span className="text-base">{badge.icon}</span>
                     <div className="min-w-0 [overflow-wrap:anywhere]">
                       <div className="text-xs font-medium leading-normal">{badge.name}</div>
-                      <div className="text-xs text-neutral-600 mt-0.5 capitalize [overflow-wrap:anywhere]">{badge.rarity}</div>
+                      <div className="text-xs text-neutral-600 mt-0.5 [overflow-wrap:anywhere]">{labelOrRaw(tr, "rarity", badge.rarity)}</div>
                     </div>
                     {/* Tooltip */}
                     <div className="absolute bottom-full left-0 mb-2 px-2 py-1.5 bg-[#0a0a0a] border border-neutral-800/50 rounded-lg text-xs text-neutral-300 w-max max-w-full whitespace-normal [overflow-wrap:anywhere] opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 backdrop-blur-sm">
@@ -529,7 +542,7 @@ const DNA_TRAITS = [
                       <div key={`${entry.task_type}-${entry.model}`}
                         className="flex flex-wrap min-w-0 items-center gap-3 px-3 py-2 rounded-lg bg-neutral-900/50 border border-neutral-800/40 hover:border-neutral-700/60 transition-all duration-200">
                         <span className={`text-xs px-1.5 py-0.5 rounded font-medium [overflow-wrap:anywhere] shrink-0 ${cls}`}>
-                          {entry.task_type}
+                          {labelOrRaw(tr, "task", entry.task_type)}
                         </span>
                         <span className="text-xs text-neutral-400 font-mono [overflow-wrap:anywhere] min-w-0 flex-1 basis-32" title={entry.model}>
                           {shortName}
