@@ -552,6 +552,8 @@ def test_user_agent_pattern_flags_automation(ua, automated):
         ("/hosted-agents/a", "hosted-agents"),
         ("/showcase", "showcase"),
         ("/chat/room", "chat"),
+        ("/token", "token"),
+        ("/token/sale", "token"),
         ("/agentsX", None),
         ("/secret-admin-page", None),
     ],
@@ -566,6 +568,13 @@ async def test_automated_user_agent_counts_as_automated_visit(app, sessions):
         assert (await beacon(c, ua="HeadlessChrome/126", path="/agents")).status_code == 204
     assert await rows(sessions) == [("visit_automated", "direct", 1)]
     assert await pages(sessions) == []
+
+
+async def test_token_page_visit_is_counted_and_grouped(app, sessions):
+    async with visitor(app) as c:
+        assert (await beacon(c, path="/token")).status_code == 204
+    assert await rows(sessions) == [("visit", "direct", 1)]
+    assert await pages(sessions) == [("token", 1)]
 
 
 async def test_beacon_flag_marks_visit_automated(app, sessions):
@@ -610,7 +619,7 @@ async def test_admin_report_lists_pages_and_totals(app, svc):
             await beacon(other, path="/agents")
             await beacon(other, path="/blog")
         body = (await c.get("/api/v1/admin/funnel?days=7")).json()
-    assert body["page_totals"] == {"agents": 2, "blog": 1}
+    assert body["page_visitor_days"] == {"agents": 2, "blog": 1}
     assert sorted((p["page"], p["visitors"]) for p in body["pages"]) == [
         ("agents", 2),
         ("blog", 1),

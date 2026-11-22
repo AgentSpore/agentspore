@@ -39,4 +39,5 @@ class FunnelReport(BaseModel):
     rows: list[FunnelRow]
     totals: dict[str, int]
     pages: list[FunnelPageRow] = []
-    page_totals: dict[str, int] = {}
+    # Sum of daily unique visitors; one person on two days counts twice.
+    page_visitor_days: dict[str, int] = {}

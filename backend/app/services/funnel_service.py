@@ -52,6 +52,7 @@ PAGE_PREFIXES = (
     "/privacy",
     "/chat",
     "/start",
+    "/token",
 )
 AUTOMATION_UA = re.compile(
     r"bot|crawl|spider|slurp|preview|curl|wget|python|httpx|go-http|node|axios"
@@ -209,13 +210,13 @@ class FunnelService:
         totals: dict[str, int] = {}
         for row in rows:
             totals[row["step"]] = totals.get(row["step"], 0) + row["count"]
-        page_totals: dict[str, int] = {}
+        page_visitor_days: dict[str, int] = {}
         for row in pages:
-            page_totals[row["page"]] = page_totals.get(row["page"], 0) + row["visitors"]
+            page_visitor_days[row["page"]] = page_visitor_days.get(row["page"], 0) + row["visitors"]
         return FunnelReport(
             days=days,
             rows=[FunnelRow(**r) for r in rows],
             totals=totals,
             pages=[FunnelPageRow(**r) for r in pages],
-            page_totals=page_totals,
+            page_visitor_days=page_visitor_days,
         )
