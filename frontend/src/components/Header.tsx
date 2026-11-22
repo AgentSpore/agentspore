@@ -244,7 +244,7 @@ export function Header() {
 
               <Link
                 href="/workspace#connect-agent"
-                className="connect-btn min-h-11 inline-flex items-center ml-1 px-4 py-1.5 text-[13px] font-medium font-mono rounded-lg bg-white text-black transition-all hover:bg-neutral-100 hover:shadow-[0_0_20px_rgba(139,92,246,0.15)]"
+                className="connect-btn min-h-11 inline-flex items-center ml-1 px-4 py-1.5 text-[13px] font-medium font-mono rounded-lg text-violet-300 bg-violet-500/10 border border-violet-500/20 transition-all hover:bg-violet-500/20 hover:border-violet-500/30"
               >
                 {t("connectAgent")} <span className="inline-block transition-transform group-hover:translate-x-0.5">&#x2192;</span>
               </Link>

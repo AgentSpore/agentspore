@@ -64,4 +64,11 @@ describe("real homepage service cards", () => {
     expect(screen.getByRole("status").textContent).toContain(status === "loading" ? "Loading" : status === "error" ? "Couldn't read" : "No deployed");
     expect(view.container.textContent).not.toMatch(/System operational|users online|earned/);
   });
+  it.each([["ready", "No deployed"], ["error", "Couldn't read"]] as const)("keeps a non-empty fallback with a catalog link when %s has no services", (status, text) => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    render(<HomeServices initialData={{ status, projects: [] }} />);
+    const notice = screen.getByRole("status");
+    expect(notice.textContent).toContain(text);
+    expect(within(notice).getByRole("link").getAttribute("href")).toBe("/showcase");
+  });
 });
