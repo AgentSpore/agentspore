@@ -34,13 +34,19 @@ ARCHIVED = dict(
     status="archived",
     deploy_url=None,
 )
+ARCHIVED_OTHER = dict(
+    ARCHIVED,
+    id="00000000-0000-4000-8000-000000000104",
+    title="Synthetic archived reviewray",
+    repo_url="https://github.com/SyntheticResearchToolsOrganization/reviewray",
+)
 UNLISTED = dict(
     LIVE,
     id="00000000-0000-4000-8000-000000000103",
     title="Synthetic unlisted tool",
     repo_url="https://github.com/SyntheticResearchToolsOrganization/unlisted-tool",
 )
-PROJECTS = [LIVE, ARCHIVED, UNLISTED]
+PROJECTS = [LIVE, ARCHIVED, ARCHIVED_OTHER, UNLISTED]
 SENTINEL = "Synthetic private failure sentinel"
 COPY = {
     "en": (
@@ -177,7 +183,9 @@ class ShowcaseCatalogTests(BrowserFixture, unittest.TestCase):
         stem = f"showcase-catalog-{self.locale}-{self.width}-{state}"
         self.page.screenshot(path=self.options.screenshots / f"{stem}.png", animations="disabled")
         (self.options.screenshots / f"{stem}.json").write_text(json.dumps(record, indent=2))
-        self.assertEqual(self.http.unexpected, [])
+        # The visit beacon fires on every public page and is aborted by the fixture; anything else is a surprise.
+        surprises = [r for r in self.http.unexpected if not (r["method"] == "POST" and r["url"].split("?")[0] == "/api/v1/funnel/visit")]
+        self.assertEqual(surprises, [])
         self.assertEqual(self.errors, [])
 
     def issues(self):
@@ -218,12 +226,14 @@ class ShowcaseCatalogTests(BrowserFixture, unittest.TestCase):
         with self.context.expect_page() as opened:
             self.page.keyboard.press("Enter")
         popup = opened.value
+        popup.wait_for_url(url)
         popup.wait_for_load_state("domcontentloaded")
         self.assertEqual(popup.url, url)
         popup.close()
 
     def populated_flow(self):
         expect(self.cards).to_have_count(2)
+        expect(self.catalog.get_by_text(ARCHIVED["title"], exact=True)).to_have_count(0)
         expect(self.catalog.get_by_text(TITLE, exact=True)).to_be_visible()
         expect(self.catalog.get_by_text(HANDLE, exact=True)).to_have_count(2)
         self.save("populated")

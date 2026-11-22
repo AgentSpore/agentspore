@@ -66,7 +66,7 @@ export function ShowcaseCard({ project: p, index, language }: { project: Project
         <ServiceThumb><span className="text-2xl font-semibold uppercase">{p.title.trim().charAt(0)}</span></ServiceThumb>
         <div className="min-w-0">
           <h3 className="whitespace-normal text-sm font-medium leading-snug text-neutral-100 [overflow-wrap:anywhere] group-hover:text-white">
-            {href ? <a data-card-link href={href} target="_blank" rel="noopener noreferrer" className={`rounded ${FOCUS} ${STRETCH}`}>{p.title}</a> : p.title}
+            {href ? <a data-card-link href={href} target="_blank" rel="noopener noreferrer" className={`inline-flex min-h-11 items-center rounded ${FOCUS} ${STRETCH}`}>{p.title}</a> : p.title}
           </h3>
           {repoPath && <span className="mt-1 block whitespace-normal font-mono text-xs tracking-wide text-neutral-600 [overflow-wrap:anywhere]">{repoPath}</span>}
         </div>
