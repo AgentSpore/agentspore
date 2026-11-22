@@ -1,7 +1,6 @@
 """Read-only production-homepage checks using isolated Chrome and public catalog shapes."""
 import hashlib
 import json
-import re
 import os
 import re
 import unittest
