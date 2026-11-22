@@ -37,7 +37,7 @@ it.each(["en", "ru"] as const)("keeps services primary and chat secondary in %s"
   expect(screen.getByRole("link", { name: new RegExp(services) }).getAttribute("href")).toBe("/showcase");
   expect(screen.queryByRole("link", { name: new RegExp(chat) })).toBeNull();
   expect(container.querySelector(".animate-ping")).toBeNull();
-  expect(screen.getByRole("link", { name: locale === "en" ? "Workspace" : "Рабочая область" }).getAttribute("href")).toBe("/workspace");
+  expect(screen.queryByRole("link", { name: locale === "en" ? "Workspace" : "Рабочая область" })).toBeNull();
   expect(screen.getByRole("link", { name: /Connect agent|Подключить агента/ }).getAttribute("href")).toBe("/workspace#connect-agent");
   fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "More" : "Ещё" }));
   expect(screen.getByRole("link", { name: new RegExp(chat) }).getAttribute("href")).toBe("/chat");
@@ -63,7 +63,7 @@ it.each(["en", "ru"] as const)("puts Services first in desktop and mobile main n
   expect(firstMobileLink.getAttribute("href")).toBe("/showcase");
   expect(firstMobileLink.textContent).toBe(services);
   const platform = screen.getByRole("navigation", { name: locale === "en" ? "Platform" : "Платформа" });
-  expect(within(platform).getByRole("link", { name: locale === "en" ? "Workspace" : "Рабочая область" }).getAttribute("href")).toBe("/workspace");
+  expect(within(platform).getByRole("link", { name: locale === "en" ? "Projects" : "Проекты" }).getAttribute("href")).toBe("/projects");
 });
 
 it.each(["en", "ru"] as const)("closes mobile navigation on Escape and restores focus in %s", locale => {
@@ -265,17 +265,15 @@ it.each(["en", "ru"] as const)("restores the originating disclosure when account
 });
 
 
-it.each(["en", "ru"] as const)("keeps Dashboard primary and groups all mobile routes in %s", locale => {
+it.each(["en", "ru"] as const)("groups all anonymous mobile routes in %s", locale => {
   render(<LocaleProvider initialLocale={locale}><Header /></LocaleProvider>);
-  const dashboard = locale === "en" ? "Dashboard" : "Обзор";
-  expect(screen.getByRole("link", { name: dashboard }).getAttribute("href")).toBe("/dashboard");
   fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "More" : "Ещё" }));
-  expect(screen.getAllByRole("link", { name: dashboard })).toHaveLength(1);
+  expect(screen.getAllByRole("link", { name: locale === "en" ? "Teams" : "Команды" })).toHaveLength(1);
   fireEvent.keyDown(document, { key: "Escape" });
   fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "Menu" : "Меню" }));
   const groups = [
     { name: locale === "en" ? "Services for people" : "Сервисы для людей", routes: ["/showcase"] },
-    { name: locale === "en" ? "Platform" : "Платформа", routes: ["/workspace", "/projects", "/agents", "/dashboard"] },
+    { name: locale === "en" ? "Platform" : "Платформа", routes: ["/projects", "/agents", "/token"] },
     { name: locale === "en" ? "Community and research" : "Сообщество и исследования", routes: ["/chat", "/teams", "/blog"] },
   ];
   for (const group of groups) {
@@ -324,4 +322,41 @@ it("keeps Sign In reachable in the mobile bar without opening the menu", () => {
   const { container } = render(<LocaleProvider initialLocale="en"><Header /></LocaleProvider>);
   const mobileBar = container.querySelector("div.lg\\:hidden");
   expect(mobileBar?.querySelector('a[href="/login"]')?.textContent).toBe("Sign In");
+});
+
+const ANON_PRIMARY = ["/showcase", "/projects", "/agents", "/blog", "/token"];
+const SIGNED_PRIMARY = ["/showcase", "/workspace", "/projects", "/agents", "/dashboard"];
+const desktopHrefs = (container: HTMLElement) =>
+  [...container.querySelectorAll("header nav")][0]!.querySelectorAll("a");
+
+it.each(["en", "ru"] as const)("shows anonymous visitors Services, Projects, Agents, Blog, Token without glyph prefixes in %s", locale => {
+  const { container } = render(<LocaleProvider initialLocale={locale}><Header /></LocaleProvider>);
+  const links = [...desktopHrefs(container)];
+  expect(links.map(link => link.getAttribute("href"))).toEqual(ANON_PRIMARY);
+  for (const link of links) {
+    expect(link.textContent).not.toMatch(/^[>/$!^+@~]/);
+    expect(link.querySelector("[aria-hidden]")).toBeNull();
+  }
+  expect(screen.queryByText(/Autonomous Startup Forge/i)).toBeNull();
+  expect(container.querySelectorAll("a[href='/workspace'], a[href='/dashboard']")).toHaveLength(0);
+});
+
+it("shows Workspace and Dashboard only to signed-in users, in one nav row", async () => {
+  localStorage.setItem("access_token", "synthetic-access");
+  vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(SYNTHETIC_USER)));
+  const { container } = render(<LocaleProvider initialLocale="en"><Header /></LocaleProvider>);
+  await screen.findByRole("button", { name: /Synthetic Person/ });
+  expect([...desktopHrefs(container)].map(link => link.getAttribute("href"))).toEqual(SIGNED_PRIMARY);
+  expect(container.querySelectorAll("header nav")).toHaveLength(1);
+});
+
+it.each(["en", "ru"] as const)("puts the language switch inside the mobile menu, not the mobile bar, in %s", locale => {
+  const { container } = render(<LocaleProvider initialLocale={locale}><Header /></LocaleProvider>);
+  const group = locale === "en" ? "Site language" : "Язык сайта";
+  const bar = container.querySelector("div.lg\\:hidden")!;
+  expect(within(bar as HTMLElement).queryByRole("group", { name: group })).toBeNull();
+  const toggle = screen.getByRole("button", { name: locale === "en" ? "Menu" : "Меню" });
+  fireEvent.click(toggle);
+  const panel = document.getElementById(toggle.getAttribute("aria-controls")!)!;
+  expect(within(panel).getByRole("group", { name: group })).toBeTruthy();
 });
