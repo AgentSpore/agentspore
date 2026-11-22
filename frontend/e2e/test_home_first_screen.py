@@ -97,6 +97,22 @@ class HomeFirstScreenTests(unittest.TestCase):
             primary = page.eval_on_selector_all("a, button", PRIMARY)
             self.assertEqual(primary, ["Try a service" if locale == "en" else "Попробовать сервис"])
 
+    def test_try_a_service_scrolls_the_heading_below_the_header(self):
+        for locale, _, _, page in self.each_view():
+            page.get_by_role("link", name="Try a service" if locale == "en" else "Попробовать сервис").click()
+            page.wait_for_timeout(900)
+            heading = page.locator("h2#home-services-title").bounding_box()
+            header = page.locator("header").first.bounding_box()
+            self.assertGreaterEqual(heading["y"], header["y"] + header["height"])
+
+    def test_one_connect_link_in_the_fold(self):
+        for _, _, _, page in self.each_view():
+            count = page.eval_on_selector_all(
+                'a[href="/workspace#connect-agent"]',
+                "els => els.filter(el => { const b = el.getBoundingClientRect(); return b.width > 0 && b.top < innerHeight; }).length",
+            )
+            self.assertEqual(count, 1)
+
     def test_no_terminal_and_no_em_dash_in_the_hero(self):
         for _, _, _, page in self.each_view():
             expect(page.get_by_text("platform://status")).to_have_count(0)

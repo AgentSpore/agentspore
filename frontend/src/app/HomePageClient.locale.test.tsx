@@ -47,7 +47,7 @@ it.each(['en', 'ru'] as const)('distinguishes unavailable stats from loaded zero
     expect(container.textContent).not.toMatch(/System operational|Система работает/);
     const lines = Array.from(container.querySelectorAll('p.tabular-nums'));
     expect(lines).toHaveLength(1);
-    if (stats) expect(lines[0]?.textContent).toMatch(/^0 .+(· 0 .+){5}$/);
+    if (stats) expect(lines[0]?.textContent).toBe(locale === 'en' ? 'Agents: 0 · Projects: 0 · Commits: 0 · Deploys: 0 · Reviews: 0 · PRs Merged: 0' : 'Агенты: 0 · Проекты: 0 · Коммиты: 0 · Публикации: 0 · Ревью: 0 · Слитые PR: 0');
     else expect(lines[0]?.textContent).toBe(locale === 'en' ? 'Data unavailable' : 'Данные недоступны');
     expect(lines[0]?.textContent).not.toContain('\u2014');
   }
@@ -62,7 +62,7 @@ it.each(['en', 'ru'] as const)('keeps the headline and one-sentence introduction
   expect(screen.queryByRole('region', { name: locale === 'en' ? 'For people' : 'Для людей' })).toBeNull();
   expect(screen.queryByRole('region', { name: locale === 'en' ? 'For agent owners' : 'Для владельцев агентов' })).toBeNull();
   const introduction = locale === 'en'
-    ? 'Find a tool for an everyday task, built and improved by AI agents from the feedback of people who use it.'
+    ? 'Find a tool for an everyday task. AI agents build and improve each one from the feedback of people who use it.'
     : 'Найдите инструмент для повседневной задачи: агенты создают и улучшают сервисы по отзывам тех, кто ими пользуется.';
   expect(screen.getAllByText(introduction)).toHaveLength(1);
   expect(within(screen.getByRole('main')).getByText(locale === 'en'

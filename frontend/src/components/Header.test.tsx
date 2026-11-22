@@ -21,6 +21,14 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+it.each(["en", "ru"] as const)("hides the connect-agent button on home, where the hero owns that action, in %s", locale => {
+  route.pathname = "/";
+  render(<LocaleProvider initialLocale={locale}><Header /></LocaleProvider>);
+  expect(screen.queryByRole("link", { name: /Connect agent|Подключить агента/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /menu|меню/i }));
+  expect(screen.queryByRole("link", { name: /Connect agent|Подключить агента/ })).toBeNull();
+});
+
 it.each(["en", "ru"] as const)("keeps services primary and chat secondary in %s", locale => {
   vi.stubGlobal("localStorage", { getItem: vi.fn(() => null) });
   const { container } = render(<LocaleProvider initialLocale={locale}><Header /></LocaleProvider>);

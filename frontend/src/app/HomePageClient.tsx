@@ -166,7 +166,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
 
         {/* Quiet stats line, one row */}
         <p className="max-w-7xl mx-auto px-4 sm:px-6 pb-4 text-xs text-neutral-400 font-mono tabular-nums">
-          {stats ? counters.map(c => `${new Intl.NumberFormat(localeTag(locale)).format(c.value)} ${c.label}`).join(" · ") : tr('statsUnavailable')}
+          {stats ? counters.map(c => `${c.label}: ${new Intl.NumberFormat(localeTag(locale)).format(c.value)}`).join(" · ") : tr('statsUnavailable')}
         </p>
 
         <HomeNewHere />
