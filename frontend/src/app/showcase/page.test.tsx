@@ -38,12 +38,10 @@ describe("Showcase demo links", () => {
     const heading = await screen.findByRole("heading", { name: /^Live Verdict/ });
     const card = heading.closest(".project-card");
     if (!(card instanceof HTMLElement)) throw new Error("Live project card is missing");
-    expect(within(card).getByRole("link", { name: "Live Verdict: live demo" }).getAttribute("href"))
-      .toBe("https://actual.example.test/app");
+    expect(within(card).getByRole("link", { name: "Live Verdict: live demo" }).getAttribute("href")).toBe("https://actual.example.test/app");
     expect(screen.getAllByRole("link", { name: "repo" })).toHaveLength(1);
     expect(document.querySelector('a[href="https://old.example.test"]')).toBeNull();
-    expect(screen.getByRole("link", { name: "Archived Verdict: repo" }).getAttribute("href"))
-      .toBe("https://github.com/Example/verdict");
+    expect(screen.getByRole("link", { name: "Archived Verdict: repo" }).getAttribute("href")).toBe("https://github.com/Example/verdict");
   });
 });
 
