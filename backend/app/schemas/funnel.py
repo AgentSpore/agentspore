@@ -12,6 +12,7 @@ class VisitBeacon(BaseModel):
     path: Annotated[str, Field(max_length=200)]
     utm_source: Annotated[str | None, Field(max_length=64)] = None
     referrer: str | None = None
+    automated: bool = False
 
     @field_validator("referrer")
     @classmethod
@@ -27,7 +28,15 @@ class FunnelRow(BaseModel):
     count: int
 
 
+class FunnelPageRow(BaseModel):
+    day: date
+    page: str
+    visitors: int
+
+
 class FunnelReport(BaseModel):
     days: int
     rows: list[FunnelRow]
     totals: dict[str, int]
+    pages: list[FunnelPageRow] = []
+    page_totals: dict[str, int] = {}

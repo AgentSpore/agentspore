@@ -54,6 +54,7 @@ MIGRATIONS = (
     "V109__funnel_daily.sql",
     "V114__email_ownership_proof.sql",
     "V116__welcome_beneficiary_identity.sql",
+    "V120__funnel_pages_daily.sql",
     "R__email_ownership_proof.sql",
 )
 
@@ -500,3 +501,118 @@ async def test_dedup_keys_expiry_fixed_at_creation(svc, redis):
 
     for key, expiry in aged.items():
         assert await redis.pexpiretime(key) == expiry
+
+
+CHROME = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36"
+
+
+async def pages(sessions):
+    async with sessions() as db:
+        r = await db.execute(text("SELECT page, visitors FROM funnel_pages_daily ORDER BY 1"))
+        return [tuple(x) for x in r]
+
+
+async def beacon(client, ua=CHROME, **body):
+    return await client.post(
+        "/api/v1/funnel/visit", json={"path": "/", **body}, headers={"User-Agent": ua}
+    )
+
+
+@pytest.mark.parametrize(
+    "ua,automated",
+    [
+        ("Mozilla/5.0 (X11; Linux x86_64) HeadlessChrome/126.0 Safari/537.36", True),
+        ("Mozilla/5.0 Playwright/1.48", True),
+        ("curl/8.7.1", True),
+        ("Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)", True),
+        ("python-httpx/0.27", True),
+        ("Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)", True),
+        (CHROME, False),
+        (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) Safari/604.1 Mobile/15E148",
+            False,
+        ),
+        (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:127.0) Gecko/20100101 Firefox/127.0",
+            False,
+        ),
+        ("Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/126.0 Mobile Safari/537.36", False),
+    ],
+)
+def test_user_agent_pattern_flags_automation(ua, automated):
+    assert FunnelService.is_automated(ua) is automated
+
+
+@pytest.mark.parametrize(
+    "path,page",
+    [
+        ("/", "home"),
+        ("/agents", "agents"),
+        ("/agents/x", "agents"),
+        ("/hosted-agents/a", "hosted-agents"),
+        ("/showcase", "showcase"),
+        ("/chat/room", "chat"),
+        ("/agentsX", None),
+        ("/secret-admin-page", None),
+    ],
+)
+def test_path_groups_follow_counted_prefixes(path, page):
+    assert FunnelService.page_for(path) == page
+    assert FunnelService.page_counted(path) is (page is not None)
+
+
+async def test_automated_user_agent_counts_as_automated_visit(app, sessions):
+    async with visitor(app) as c:
+        assert (await beacon(c, ua="HeadlessChrome/126", path="/agents")).status_code == 204
+    assert await rows(sessions) == [("visit_automated", "direct", 1)]
+    assert await pages(sessions) == []
+
+
+async def test_beacon_flag_marks_visit_automated(app, sessions):
+    async with visitor(app) as c:
+        assert (await beacon(c, automated=True, path="/agents")).status_code == 204
+    assert await rows(sessions) == [("visit_automated", "direct", 1)]
+    assert await pages(sessions) == []
+
+
+async def test_human_visit_fills_pages_once_per_visitor_and_page(app, sessions):
+    async with visitor(app) as c:
+        for path in ("/", "/", "/agents/x", "/agents/y", "/blog"):
+            assert (await beacon(c, path=path)).status_code == 204
+        async with visitor(app, ip="203.0.113.6") as other:
+            await beacon(other, path="/agents")
+    assert await pages(sessions) == [("agents", 2), ("blog", 1), ("home", 1)]
+    assert await rows(sessions) == [("visit", "direct", 2)]
+
+
+async def test_page_keys_and_rows_hold_no_visitor_data(app, sessions, redis):
+    async with visitor(app) as c:
+        await beacon(c, path="/agents")
+    async with sessions() as db:
+        cols = await db.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name='funnel_pages_daily' AND table_schema=current_schema()"
+            )
+        )
+        assert sorted(r[0] for r in cols) == ["day", "page", "visitors"]
+    keys = await redis.keys("funnel:*page*")
+    assert keys and not any("203.0.113.5" in k or "Chrome" in k for k in keys)
+    for key in keys:
+        assert 0 < await redis.ttl(key) <= 48 * 3600
+
+
+async def test_admin_report_lists_pages_and_totals(app, svc):
+    app.dependency_overrides[get_admin_user] = lambda: object()
+    async with visitor(app) as c:
+        await beacon(c, path="/agents")
+        async with visitor(app, ip="203.0.113.6") as other:
+            await beacon(other, path="/agents")
+            await beacon(other, path="/blog")
+        body = (await c.get("/api/v1/admin/funnel?days=7")).json()
+    assert body["page_totals"] == {"agents": 2, "blog": 1}
+    assert sorted((p["page"], p["visitors"]) for p in body["pages"]) == [
+        ("agents", 2),
+        ("blog", 1),
+    ]
+    assert body["pages"][0]["day"] == utc_today().isoformat()

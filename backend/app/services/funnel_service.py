@@ -8,6 +8,7 @@ never logged, stored or used as a Redis key.
 import hashlib
 import hmac
 import ipaddress
+import re
 import secrets
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -22,7 +23,7 @@ from app.core.config import get_settings
 from app.core.database import async_session_maker
 from app.core.domains import match_domain
 from app.repositories.funnel_repo import FunnelRepository
-from app.schemas.funnel import FunnelReport, FunnelRow
+from app.schemas.funnel import FunnelPageRow, FunnelReport, FunnelRow
 
 SOURCES = frozenset(
     {"x", "substack", "telegram", "moltbook", "mcpservers", "github", "direct", "other"}
@@ -51,6 +52,11 @@ PAGE_PREFIXES = (
     "/privacy",
     "/chat",
     "/start",
+)
+AUTOMATION_UA = re.compile(
+    r"bot|crawl|spider|slurp|preview|curl|wget|python|httpx|go-http|node|axios"
+    r"|headless|lighthouse|playwright|monitor|uptime",
+    re.IGNORECASE,
 )
 # Set once at key creation (expire nx=True, Redis >= 7), never extended: hashes die within 48 h.
 DEDUP_TTL = 48 * 3600
@@ -82,8 +88,22 @@ class FunnelService:
         return REFERRER_HOSTS.get(host, "other")
 
     @staticmethod
-    def page_counted(path: str) -> bool:
-        return path == "/" or any(path == p or path.startswith(p + "/") for p in PAGE_PREFIXES)
+    def is_automated(ua: str) -> bool:
+        return AUTOMATION_UA.search(ua) is not None
+
+    @staticmethod
+    def page_for(path: str) -> str | None:
+        """Site section of a counted path (its first segment; "/" is home), else None."""
+        if path == "/":
+            return "home"
+        for prefix in PAGE_PREFIXES:
+            if path == prefix or path.startswith(prefix + "/"):
+                return prefix[1:]
+        return None
+
+    @classmethod
+    def page_counted(cls, path: str) -> bool:
+        return cls.page_for(path) is not None
 
     async def record(self, step: str, source: str = "direct") -> None:
         """Count one event. Own session: a failure never touches the caller's transaction."""
@@ -143,32 +163,59 @@ class FunnelService:
 
     async def record_unique(self, step: str, source: str, ip: str, ua: str) -> bool:
         """Count once per visitor per day, at most IP_DAILY_CAP per IP. Redis down: not counted."""
+        if not await self._first_today(step, ip, ua):
+            return False
+        await self.record(step, source)
+        return True
+
+    async def record_page(self, page: str, ip: str, ua: str) -> bool:
+        """Count a human visitor once per day and site section, same dedup and caps as a step."""
+        if not await self._first_today(f"page:{page}", ip, ua):
+            return False
+        try:
+            async with self.session_factory() as db:
+                await FunnelRepository(db).increment_page(datetime.now(timezone.utc).date(), page)
+                await db.commit()
+        except (SQLAlchemyError, OSError) as exc:
+            logger.warning("funnel page record failed: err={}", type(exc).__name__)
+        return True
+
+    async def _first_today(self, scope: str, ip: str, ua: str) -> bool:
+        """True once per (visitor, scope, UTC day) within the per-IP cap. Redis down: False."""
         try:
             salted = await self._salted(ip, ua)
             if salted is None:
                 return False
             tag, ip_hash, digest = salted
-            seen_key = f"funnel:seen:{tag}:{step}"
+            seen_key = f"funnel:seen:{tag}:{scope}"
             # redis-py stubs type sadd as a sync/async union
             added = await self.redis.sadd(seen_key, digest)  # ty: ignore[invalid-await]
             await self.redis.expire(seen_key, DEDUP_TTL, nx=True)
             if not added:
                 return False
-            cap_key = f"funnel:ipcap:{tag}:{step}:{ip_hash}"
+            cap_key = f"funnel:ipcap:{tag}:{scope}:{ip_hash}"
             used = await self.redis.incr(cap_key)
             await self.redis.expire(cap_key, DEDUP_TTL, nx=True)
-            if used > IP_DAILY_CAP:
-                return False
+            return used <= IP_DAILY_CAP
         except (RedisError, OSError) as exc:
             logger.warning("funnel dedup unavailable: {}", type(exc).__name__)
             return False
-        await self.record(step, source)
-        return True
 
     async def report(self, db, days: int) -> FunnelReport:
         since = datetime.now(timezone.utc).date() - timedelta(days=days - 1)
-        rows = await FunnelRepository(db).rows_since(since)
+        repo = FunnelRepository(db)
+        rows = await repo.rows_since(since)
+        pages = await repo.pages_since(since)
         totals: dict[str, int] = {}
         for row in rows:
             totals[row["step"]] = totals.get(row["step"], 0) + row["count"]
-        return FunnelReport(days=days, rows=[FunnelRow(**r) for r in rows], totals=totals)
+        page_totals: dict[str, int] = {}
+        for row in pages:
+            page_totals[row["page"]] = page_totals.get(row["page"], 0) + row["visitors"]
+        return FunnelReport(
+            days=days,
+            rows=[FunnelRow(**r) for r in rows],
+            totals=totals,
+            pages=[FunnelPageRow(**r) for r in pages],
+            page_totals=page_totals,
+        )

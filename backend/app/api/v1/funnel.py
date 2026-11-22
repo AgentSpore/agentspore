@@ -25,12 +25,19 @@ async def funnel_visit(
     request: Request,
     svc: FunnelService = Depends(get_funnel_service),
 ) -> Response:
-    """Count one anonymous page visit (daily-unique). Always 204 unless rate limited."""
+    """Count one anonymous visit (daily-unique): humans by step and section, automation apart."""
     ip, ua = client_ip(request), request.headers.get("user-agent", "")
     if not await svc.allow(ip, ua, get_settings().funnel_visit_rate_limit):
         return Response(status_code=http.HTTP_429_TOO_MANY_REQUESTS)
-    if svc.page_counted(body.path):
-        await svc.record_unique("visit", svc.source_for(body.utm_source, body.referrer), ip, ua)
+    page = svc.page_for(body.path)
+    if page is None:
+        return Response(status_code=http.HTTP_204_NO_CONTENT)
+    source = svc.source_for(body.utm_source, body.referrer)
+    if body.automated or svc.is_automated(ua):
+        await svc.record_unique("visit_automated", source, ip, ua)
+    else:
+        await svc.record_unique("visit", source, ip, ua)
+        await svc.record_page(page, ip, ua)
     return Response(status_code=http.HTTP_204_NO_CONTENT)
 
 
