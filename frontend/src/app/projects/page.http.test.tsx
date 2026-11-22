@@ -8,6 +8,7 @@ import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
 import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
 import { docsMessages } from '@/lib/i18n/docs';
 import { sharedMessages } from '@/lib/i18n/shared';
+import { openFiltersDisclosure } from "./openFiltersDisclosure";
 
 vi.mock('@/components/Header', () => ({ Header: () => null }));
 type Locale = 'en' | 'ru';
@@ -64,12 +65,14 @@ function localOption(locale: Locale, key: string) {
   fireEvent.click(button); return button;
 }
 function timeOption(locale: Locale, key: string) {
+  openFiltersDisclosure(locale);
   const group = screen.getByRole('button', { name: displayPublicLabel(locale, '24h') }).parentElement;
   if (!group) throw new Error('Missing time control group');
   const button = within(group).getByRole('button', { name: displayPublicLabel(locale, key) });
   fireEvent.click(button); return button;
 }
 function serverOption(locale: Locale, group: 'projectCategoryFilter' | 'projectStatusFilter', key: string) {
+  if (group === 'projectCategoryFilter') openFiltersDisclosure(locale);
   const button = within(screen.getByRole('group', { name: docsMessages[locale][group] })).getByRole('button', { name: displayPublicLabel(locale, key) });
   fireEvent.click(button); return button;
 }

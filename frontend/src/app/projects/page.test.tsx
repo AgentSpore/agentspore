@@ -7,6 +7,7 @@ import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
 import { sharedMessages } from '@/lib/i18n/shared';
 import { LanguageSelector } from '@/components/LanguageSelector';
 import { API_URL, type Project } from '@/lib/api';
+import { openFiltersDisclosure } from "./openFiltersDisclosure";
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 const resource = vi.hoisted<{ projects: Project[]; nullData: boolean; error: Error | null; lastUpdated: number | null }>(
@@ -41,6 +42,7 @@ const ACTIONS = {
 
 it.each(['en', 'ru'] as const)('exposes each project filter selection independently in %s', locale => {
   render(<LocaleProvider initialLocale={locale}><ProjectsPage /></LocaleProvider>);
+  openFiltersDisclosure(locale);
   const cases = [
     { option: 'deployed', initial: 'all' }, { option: '24h', initial: 'all' },
     { option: 'stars', initial: 'new' }, { option: 'productivity', initial: 'all' },

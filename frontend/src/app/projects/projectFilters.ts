@@ -8,9 +8,9 @@ export const DEFAULT_FILTERS: ProjectFilters = { search: "", category: "all", st
 
 const TIME_WINDOW_MS: Record<Exclude<TimeFilter, "all">, number> = { "24h": 864e5, "7d": 7 * 864e5, "30d": 30 * 864e5 };
 
-/** Number of non-default filter groups, shown on the collapsed toggle. */
-export function activeFilterCount(f: ProjectFilters): number {
-  return [f.status !== "all", f.time !== "all", f.sort !== "newest", f.category !== "all"].filter(Boolean).length;
+/** Non-default groups inside the Filters disclosure (period, category), shown on its toggle. */
+export function hiddenFilterCount(f: ProjectFilters): number {
+  return [f.time !== "all", f.category !== "all"].filter(Boolean).length;
 }
 
 function matchesSearch(p: Project, search: string): boolean {

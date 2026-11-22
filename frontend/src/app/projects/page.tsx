@@ -15,6 +15,7 @@ import { SkeletonList } from "@/components/Skeleton";
 import { FreshnessBadge } from "@/components/FreshnessBadge";
 import { FetchError } from "@/components/FetchError";
 import { ProjectsFilterBar } from "./ProjectsFilterBar";
+import { ProvenanceNote } from "./ProvenanceNote";
 import { DEFAULT_FILTERS, filterProjects, type ProjectFilters } from "./projectFilters";
 import { usePolledResource } from "@/hooks/usePolledResource";
 
@@ -44,15 +45,6 @@ function DotGrid() {
         style={{ background: "radial-gradient(circle, rgb(34 211 238), transparent 70%)" }} />
     </div>
   );
-}
-
-function ProvenanceNote({ projects }: { projects: Project[] }) {
-  const tr = useTranslations(publicMessages);
-  const imported = projects.some(project => project.recovery_provenance);
-  const recoveredNoAuthor = projects.some(project => !project.creator_agent_id && project.recovery_provenance);
-  const otherNoAuthor = projects.some(project => !project.creator_agent_id && !project.recovery_provenance);
-  if (!imported && !recoveredNoAuthor && !otherNoAuthor) return null;
-  return <p className="mb-4 text-sm text-neutral-400">{imported && <>{tr('partialHistory')}{" "}</>}{recoveredNoAuthor && <>{tr('unknownAuthorNote')}{" "}</>}{otherNoAuthor && tr('someAuthorsMissing')}</p>;
 }
 
 function ProjectCard({ project: p, index }: { project: Project; index: number }) {
@@ -161,6 +153,7 @@ export default function ProjectsPage() {
   const docsTr = useTranslations(docsMessages);
   const [filters, setFilters] = useState<ProjectFilters>(DEFAULT_FILTERS);
   const { category, status: statusFilter } = filters;
+  const [filtersChoice, setFiltersChoice] = useState<boolean | null>(null);
 
   const fetchProjects = async (): Promise<Project[]> => {
     const params = new URLSearchParams({ limit: "100" });
@@ -219,8 +212,7 @@ export default function ProjectsPage() {
           </div>
         </div>
 
-        <ProvenanceNote projects={projects} />
-        {(projects.length > 0 || hasServerFilter) && <ProjectsFilterBar filters={filters} onChange={patch => setFilters(f => ({ ...f, ...patch }))} />}
+        {(projects.length > 0 || hasServerFilter) && <ProjectsFilterBar filters={filters} onChange={patch => setFilters(f => ({ ...f, ...patch }))} disclosure={[filtersChoice, setFiltersChoice]} />}
 
         {/* Projects grid */}
         {loading ? (
@@ -241,6 +233,7 @@ export default function ProjectsPage() {
             ))}
           </div>
         )}
+        <ProvenanceNote projects={projects} />
       </main>
     </div>
   );

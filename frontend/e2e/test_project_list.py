@@ -107,6 +107,7 @@ COPY = {
         "Устарело: последнее обновление",
     ),
 }
+FILTERS = {"en": "Filters", "ru": "Фильтры"}
 SENTINEL = "Synthetic private failure sentinel"
 METRICS = AGENT_METRICS.replace("if(painted(el)){", "if(painted(el)&&!el.closest('article')){")
 METRICS = METRICS.replace("if(!n.textContent.trim()||", "if(!n.textContent.trim()||el.closest('article')||")
@@ -255,6 +256,10 @@ class ProjectListTests(BrowserFixture, unittest.TestCase):
             expect(target).to_have_attribute("aria-pressed", "true")
 
     def controls(self):
+        toggle = self.main.get_by_role("button", name=FILTERS[self.locale])
+        if toggle.get_attribute("aria-expanded") != "true":
+            toggle.click()
+        expect(toggle).to_have_attribute("aria-expanded", "true")
         self.category = self.main.get_by_role("group", name=COPY[self.locale][2], exact=True)
         self.status = self.main.get_by_role("group", name=COPY[self.locale][3], exact=True)
         self.time = self.main.get_by_role("button", name=COPY[self.locale][7], exact=True).locator("..")
