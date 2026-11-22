@@ -5,6 +5,8 @@ export interface VisitBeacon {
   path: string;
   utm_source?: string;
   referrer?: string;
+  /** Sent only as `true` for browsers that announce automation (`navigator.webdriver`). */
+  automated?: boolean;
 }
 
 const MAX_PATH = 200;
@@ -18,6 +20,11 @@ interface BrowserSignals {
 /** True when the visitor opted out through Do Not Track or Global Privacy Control. */
 export function trackingOptOut(nav: BrowserSignals): boolean {
   return nav.doNotTrack === "1" || nav.globalPrivacyControl === true;
+}
+
+/** Marks the beacon automated when the browser reports `navigator.webdriver === true`; otherwise returns it unchanged. */
+export function flagAutomated(beacon: VisitBeacon, nav: { webdriver?: boolean }): VisitBeacon {
+  return nav.webdriver === true ? { ...beacon, automated: true } : beacon;
 }
 
 /** Private areas (admin, signed-in pages, token flows) are never reported, even to be discarded. */

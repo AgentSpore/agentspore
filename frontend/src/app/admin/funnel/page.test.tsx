@@ -118,3 +118,42 @@ it.each([
     expect(screen.getByText(text)).toBeTruthy();
   }
 });
+
+const WITH_PAGES = {
+  ...REPORT,
+  rows: [...REPORT.rows, { day: "2026-11-01", step: "visit_automated", source: "x", count: 40 }],
+  totals: { ...REPORT.totals, visit_automated: 40 },
+  pages: [
+    { day: "2026-11-01", page: "home", visitors: 6 },
+    { day: "2026-10-31", page: "home", visitors: 4 },
+    { day: "2026-11-01", page: "hosted-agents", visitors: 2 },
+    { day: "2026-11-01", page: "newthing", visitors: 1 },
+  ],
+  page_visitor_days: { home: 10, "hosted-agents": 2, newthing: 1 },
+};
+
+it.each([
+  ["en", "Sections", "Home", "Hosted agents", "Visitor-days", /one person on two days counts twice/i, "Automated visits"],
+  ["ru", "Разделы", "Главная", "Размещённые агенты", "Посетителе-дни", /один человек в два дня считается дважды/i, "Автоматические заходы"],
+] as const)("renders the sections table in %s with visitor-days total", async (locale, title, home, hosted, total, note, automated) => {
+  fetchMock.mockResolvedValue(json(200, WITH_PAGES));
+  render(<LocaleProvider initialLocale={locale}><AdminFunnelPage /></LocaleProvider>);
+  await screen.findAllByRole("table");
+  expect(screen.getByRole("heading", { name: title })).toBeTruthy();
+  const table = screen.getByRole("table", { name: title });
+  expect(within(within(table).getByRole("row", { name: new RegExp(home) })).getAllByRole("cell").map(c => c.textContent)).toEqual(["6", "4", "10"]);
+  expect(within(table).getByRole("columnheader", { name: total })).toBeTruthy();
+  expect(within(table).getByRole("row", { name: /hosted|Размещ/i })).toBeTruthy();
+  expect(within(table).getByRole("rowheader", { name: hosted })).toBeTruthy();
+  expect(within(table).getByRole("rowheader", { name: "newthing" })).toBeTruthy();
+  expect(screen.getByText(note)).toBeTruthy();
+  expect(screen.getByRole("columnheader", { name: automated })).toBeTruthy();
+});
+
+it("hides the sections table when the backend sends no pages", async () => {
+  fetchMock.mockResolvedValue(json(200, REPORT));
+  render(<AdminFunnelPage />);
+  await screen.findByRole("table");
+  expect(screen.getAllByRole("table")).toHaveLength(1);
+  expect(screen.queryByRole("heading", { name: "Sections" })).toBeNull();
+});
