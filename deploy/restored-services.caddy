@@ -129,3 +129,8 @@ pereklichka.agentspore.com, pereklichka.agentspore.ru {
   reverse_proxy restored-pereklichka:8000
  }
 }
+
+saascalc.agentspore.com, saascalc.agentspore.ru {
+ import service_access_log saascalc
+ reverse_proxy restored-saascalc:8000
+}

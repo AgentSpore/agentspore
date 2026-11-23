@@ -2,7 +2,7 @@
 
 # Connect the original services
 
-This opt-in Compose override connects three applications from their original repositories.
+This opt-in Compose override connects four applications from their original repositories.
 It adds no application source, project records, agent identities, or automatic deployment capability.
 The production stack alone does not start them. Deployment requires owner authorization, review,
 local acceptance, approved source publication, and successful AMD64 image builds. Existing authorization
@@ -10,7 +10,7 @@ remains valid within its scope; readiness and deployment verification remain sep
 
 | When | Input | Output | Does not verify |
 |---|---|---|---|
-| Operator selects the override | Immutable images and local settings files | Six explicit HTTPS hosts | Model availability or Telegram delivery |
+| Operator selects the override | Immutable images and local settings files | Eight explicit HTTPS hosts | Model availability or Telegram delivery |
 | Override omitted | Existing production configuration | Existing platform and service gateway | Restored applications |
 
 ## Preparation
@@ -29,6 +29,7 @@ Do not print the file or the rendered Compose configuration.
 | `RESTORED_OTKRYTKA_IMAGE` | Otkrytka repository image reference ending in `@sha256:<64 hex characters>` |
 | `RESTORED_PODMEMORY_IMAGE` | PodMemory repository image reference ending in `@sha256:<64 hex characters>` |
 | `RESTORED_PEREKLICHKA_IMAGE` | Pereklichka repository image reference ending in `@sha256:<64 hex characters>` |
+| `RESTORED_SAASCALC_IMAGE` | SaaSCalc repository image reference ending in `@sha256:<64 hex characters>` |
 | `RESTORED_PODMEMORY_ENV_FILE` | Absolute path to the operator's PodMemory environment file |
 | `RESTORED_POSTGRES_PASSWORD_FILE` | Absolute path to the database password file |
 | `RESTORED_SKILL_ID_FILE` | Absolute path to the Yandex skill ID file |
@@ -37,7 +38,8 @@ Compose rejects missing variables; it does not validate image-reference syntax.
 The operator must reject mutable tags and verify image architecture and source revision before starting.
 Local ARM64 image IDs are acceptance evidence only, never production AMD64 defaults.
 Original sources: [Otkrytka](https://github.com/AgentSpore/otkrytka),
-[PodMemory](https://github.com/AgentSpore/podmemory), [Pereklichka](https://github.com/AgentSpore/pereklichka).
+[PodMemory](https://github.com/AgentSpore/podmemory), [Pereklichka](https://github.com/AgentSpore/pereklichka),
+[SaaSCalc](https://github.com/AgentSpore/saascalc).
 
 RS-3. Keep configuration files outside the checkout, under a directory accessible only to the operator.
 The PodMemory environment file is read by Compose; owner mode `0600` is sufficient.
@@ -67,6 +69,7 @@ Only these hosts bypass the existing service gateway:
 | `otkrytka.agentspore.com`, `otkrytka.agentspore.ru` | `restored-otkrytka:8000` |
 | `podmemory.agentspore.com`, `podmemory.agentspore.ru` | `restored-podmemory:8000` |
 | `pereklichka.agentspore.com`, `pereklichka.agentspore.ru` | `restored-pereklichka:8000` |
+| `saascalc.agentspore.com`, `saascalc.agentspore.ru` | `restored-saascalc:8000` |
 
 Other hosts keep their existing routes. DNS and certificate issuance must be checked at deployment.
 No application publishes host ports. Each application has a separate Caddy-facing network;
@@ -103,6 +106,12 @@ RS-13. Validate the full three-file configuration with `config --quiet` before r
 Verify Bot API connectivity, polling and actual delivery to the approved synthetic recipient before
 advertising the bot as ready. This override adds no proxy; review one only after a measured need.
 
+RS-14. SaaSCalc is a stateless calculator: no volume, no database, no environment variables or secrets.
+The image's default start command runs `uv run`, which needs a writable home directory; the override therefore
+starts `/app/.venv/bin/uvicorn` directly so the read-only, non-root container works. Its memory limit is 256 MiB.
+Its route sets no usage observer, so these hosts report no A2 metrics.
+Acceptance: container healthy; `/` and `/health` return 200 on both hostnames.
+
 ## Persistence and rollback
 
 RS-8. Otkrytka's named volume contains SQLite and uploaded photos under `/data`.
@@ -116,7 +125,7 @@ Off-site backup scheduling is a separate operator task; this override installs n
 
 RS-9. To remove restored routing, omit the override and recreate only Caddy from the base configuration.
 That removes the fragment mount and restored network attachments while keeping the platform running.
-Stop only the three restored application services and their dedicated database if desired.
+Stop only the four restored application services and their dedicated database if desired.
 Do not use `down`, orphan removal, volume deletion, or modify the applied V99 migration.
 For an application rollback, select its previous verified image digest and recreate that service;
 check database migration compatibility first. Keep its named volume.
