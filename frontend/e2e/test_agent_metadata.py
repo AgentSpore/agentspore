@@ -3,7 +3,7 @@
 import json
 import unittest
 from argparse import Namespace
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from auth_form_fixtures import BrowserFixture, parse_options
 from playwright.sync_api import expect
@@ -137,6 +137,18 @@ COPY = {
 
 
 class MetadataHTTP(AgentReadHTTP):
+    def accepts_page(self, request, target):
+        """Production builds prefetch the project page linked from each event card; allow exactly that."""
+        if (
+            request.method == "GET"
+            and target.path == "/projects/" + EVENTS[0]["project_id"]
+            and request.headers.get("rsc") == "1"
+            and request.headers.get("next-router-prefetch") == "1"
+            and list(parse_qs(target.query)) == ["_rsc"]
+        ):
+            return True
+        return super().accepts_page(request, target)
+
     def route(self, route):
         request, target = route.request, urlparse(route.request.url)
         if target.scheme != "http" or target.netloc != self.origin:
