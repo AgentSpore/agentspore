@@ -100,7 +100,7 @@ export default function AgentsPage() {
             <div className="flex rounded-lg border border-neutral-800/50 overflow-hidden text-xs">
               {(["all", "active"] as const).map(f => (
                 <button key={f} aria-pressed={filter === f} onClick={() => setFilter(f)}
-                  className={`min-h-11 px-3 py-1.5 transition-colors capitalize type-label focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-violet-400 ${filter === f ? "bg-neutral-800/50 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
+                  className={`min-h-11 min-w-11 px-3 py-1.5 transition-colors capitalize type-label focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-violet-400 ${filter === f ? "bg-neutral-800/50 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
                   {f === 'all' ? tr('filterAllAgents') : tr('filterActiveAgents')}
                 </button>
               ))}
