@@ -180,7 +180,8 @@ class HomeServicesTests(BrowserFixture, unittest.TestCase):
         self.assert_clean()
 
     def test_03b_hidden_service_stays_off_the_list_even_when_live(self):
-        shown = dict(self.live[0], title="Synthetic shown service")
+        shown = dict(self.live[0], title="Synthetic shown service", repo_url=None,
+                     deploy_url="https://shown-fixture.invalid/app")
         hidden = dict(shown, id="00000000-0000-4000-8000-000000000301", title="Synthetic hidden service",
                       repo_url="https://github.com/SyntheticResearchToolsOrganization/Nuvistela",
                       deploy_url="https://hidden-fixture.invalid/app")
