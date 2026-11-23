@@ -61,8 +61,14 @@ class AuthHTTP:
         self.pending, self.requests, self.unexpected = [], [], []
 
     def reject(self, route):
-        """Keep unknown requests visible without sending them to a live service."""
+        """Keep unknown requests visible without sending them to a live service.
+
+        The well-formed visit beacon fired by every public page is answered here, so subclasses
+        that route only their own contracts do not each have to repeat it.
+        """
         request, target = route.request, urlparse(route.request.url)
+        if target.netloc == self.origin and funnel_beacon.answer(route, target):
+            return
         url = target.path + (f"?{target.query}" if target.netloc == self.origin else "")
         headers = {
             key: request.headers.get(key)

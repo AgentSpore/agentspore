@@ -16,9 +16,14 @@ SURFACE_TEXT = "els => els.flatMap(" + TEXT + ")"
 def finish_animations(page):
     """Let finite animations (toast slide-in) end so geometry is measured at rest."""
     page.evaluate(
-        "Promise.all(document.getAnimations().filter(a => "
-        "a.effect?.getComputedTiming().iterations !== Infinity)"
-        ".map(a => a.finished.catch(() => {})))"
+        """async () => {
+            const stalled = new Promise((_, fail) => setTimeout(
+                () => fail(Error("finish_animations stalled")), 7000));
+            const finite = document.getAnimations().filter(a =>
+                a instanceof CSSAnimation && Number.isFinite(a.effect?.getComputedTiming().iterations));
+            finite.forEach(a => a.finish());
+            await Promise.race([Promise.all(finite.map(a => a.finished.catch(() => {}))), stalled]);
+        }"""
     )
 
 
