@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import funnel_beacon
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Page, sync_playwright
 
 SOURCE = Path(__file__).resolve().parents[1] / "src/lib/i18n/account.ts"
 MESSAGES = json.loads(
@@ -143,7 +143,7 @@ class BrowserFixture:
         cls.playwright.stop()
 
 
-def finish_animations(page):
+def finish_animations(page: Page) -> None:
     """Let finite animations (toast slide-in) end so geometry is measured at rest."""
     page.evaluate(
         """async () => {
