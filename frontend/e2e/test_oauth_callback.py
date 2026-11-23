@@ -178,7 +178,7 @@ class OAuthCallbackTests(unittest.TestCase):
         self.assertEqual(self.http.unexpected, [])
         self.capture(page, "success")
 
-    def test_missing_pair_preserves_storage_and_profile_navigation(self):
+    def test_missing_pair_preserves_storage_and_goes_to_login(self):
         self.locale, self.width = "en", 390
         for query in ({}, {"access_token": PAIR["access_token"]},
                       {"refresh_token": PAIR["refresh_token"]}):
@@ -186,7 +186,7 @@ class OAuthCallbackTests(unittest.TestCase):
                 with self.subTest(query_keys=list(query), previous=bool(previous)):
                     page = self.open_callback(query, previous=previous)
                     try:
-                        page.wait_for_url(self.options.base_url + "/profile")
+                        page.wait_for_url(self.options.base_url + "/login")
                         expect(page.locator("main")).to_be_visible()
                         for key in PAIR:
                             self.assertEqual(
