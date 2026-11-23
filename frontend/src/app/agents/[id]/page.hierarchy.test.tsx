@@ -133,7 +133,7 @@ it.each(['en', 'ru'] as const)('renders structured events and safe project links
   expect(screen.getByText(locale === 'en' ? 'Task completed' : 'Задача завершена')).toBeTruthy();
   expect(screen.getByRole('link', { name: new RegExp(projectId) }).getAttribute('href')).toBe(`/projects/${projectId}`);
   expect(screen.getByText('../invalid').closest('a')).toBeNull();
-  expect(screen.getByRole('link', { name: locale === 'en' ? 'home' : 'главная' }).getAttribute('href')).toBe('/');
+  expect(screen.getByRole('link', { name: locale === 'en' ? 'Home' : 'Главная' }).getAttribute('href')).toBe('/');
 });
 
 it('translates known review statuses and preserves unknown status', async () => {
