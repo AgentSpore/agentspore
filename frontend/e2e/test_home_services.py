@@ -74,7 +74,7 @@ class HomeServicesTests(BrowserFixture, unittest.TestCase):
                                   "url": self.options.base_url}])
         self.page = self.context.new_page()
         self.page.set_default_timeout(8000)
-        self.page.on("pageerror", lambda _: self.errors.append({"kind": "pageerror"}))
+        self.page.on("pageerror", lambda error: self.errors.append({"kind": "pageerror", "message": str(error)[:300]}))
         self.page.on("console", lambda msg: self.errors.append({"kind": "console", "path": urlparse(msg.location.get("url", "")).path})
                      if msg.type == "error" else None)
         self.page.on("requestfailed", self.check_failed)
@@ -100,6 +100,18 @@ class HomeServicesTests(BrowserFixture, unittest.TestCase):
         self.page.goto(self.options.base_url, wait_until="domcontentloaded")
         self.section = self.page.locator('section[aria-labelledby="home-services-title"]')
         expect(self.section).to_be_visible()
+
+    def wait_hydrated(self, control):
+        """Block until React owns `control`: the layout's visit beacon is sent from a post-hydration effect.
+
+        Keyboard input before this point is dropped, so a toggle that stays closed afterwards is a real defect.
+        """
+        if not self.beacons:
+            self.page.wait_for_event("response", lambda _: bool(self.beacons))
+        self.page.wait_for_function(
+            "el => Object.keys(el).some(key => key.startsWith('__reactProps$'))",
+            arg=control.element_handle(),
+        )
 
     def check_failed(self, request):
         path = urlparse(request.url).path
@@ -163,6 +175,7 @@ class HomeServicesTests(BrowserFixture, unittest.TestCase):
             self.open_home("ru", width)
             if width < 1024:
                 toggle = self.page.locator('header button[aria-controls][aria-expanded]').last
+                self.wait_hydrated(toggle)
                 toggle.focus()
                 self.page.keyboard.press("Enter")
                 expect(toggle).to_have_attribute("aria-expanded", "true")
