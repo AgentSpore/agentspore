@@ -111,6 +111,21 @@ FILTERS = {"en": "Filters", "ru": "Фильтры"}
 SENTINEL = "Synthetic private failure sentinel"
 METRICS = AGENT_METRICS.replace("if(painted(el)){", "if(painted(el)&&!el.closest('article')){")
 METRICS = METRICS.replace("if(!n.textContent.trim()||", "if(!n.textContent.trim()||el.closest('article')||")
+OVERLAPS = """main=>{
+    const boxes=[];
+    for(const b of main.querySelectorAll('button')){
+        if(b.closest('article')||!b.getClientRects().length)continue;
+        const range=document.createRange();range.selectNodeContents(b);
+        const r=range.getBoundingClientRect();
+        if(r.width>0)boxes.push({text:b.textContent.trim(),left:r.left,right:r.right,top:r.top,bottom:r.bottom});
+    }
+    const hits=[];
+    for(let i=0;i<boxes.length;i++)for(let j=i+1;j<boxes.length;j++){
+        const a=boxes[i],c=boxes[j];
+        if(Math.min(a.right,c.right)-Math.max(a.left,c.left)>0.5&&Math.min(a.bottom,c.bottom)-Math.max(a.top,c.top)>0.5)hits.push([a.text,c.text]);
+    }
+    return hits;
+}"""
 
 
 class ProjectListHTTP(AuthHTTP):
@@ -206,6 +221,7 @@ class ProjectListTests(BrowserFixture, unittest.TestCase):
     def save(self, state):
         self.settle()
         metrics = self.main.evaluate(METRICS)
+        metrics["overlaps"] = self.main.evaluate(OVERLAPS)
         record = {
             "scope": "RR2.REM.16 route chrome only; article excluded",
             "locale": self.locale,
@@ -237,6 +253,7 @@ class ProjectListTests(BrowserFixture, unittest.TestCase):
                 if target["width"] < 44 or target["height"] < 44 or not target["contained"]:
                     issues.append({"state": record["state"], "target": target})
             issues.extend({"state": record["state"], "clip": item} for item in metrics["clipped"])
+            issues.extend({"state": record["state"], "overlap": pair} for pair in metrics["overlaps"])
             if metrics["document_width"] > self.width:
                 issues.append({"state": record["state"], "document_width": metrics["document_width"]})
         for focus in self.focus:

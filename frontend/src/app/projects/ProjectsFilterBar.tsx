@@ -64,7 +64,7 @@ export function ProjectsFilterBar({ filters, onChange, disclosure }: { filters: 
         <div id="project-filters" className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
           <Segmented cols="grid-cols-4" value={filters.time} onSelect={time => change({ time })}
             options={TIMES.map(v => ({ value: v, label: displayPublicLabel(locale, v) }))} />
-          <div role="group" aria-label={docsTr("projectCategoryFilter")} className="grid grid-cols-4 gap-1.5 sm:flex sm:flex-wrap">
+          <div role="group" aria-label={docsTr("projectCategoryFilter")} className="flex flex-wrap gap-1.5">
             {CATEGORIES.map(c => (
               <button key={c} aria-pressed={filters.category === c} onClick={() => change({ category: c })}
                 className={`min-h-11 min-w-11 px-2.5 py-1.5 rounded-lg text-xs transition-all type-label ${
