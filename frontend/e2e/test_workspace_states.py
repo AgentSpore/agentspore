@@ -397,6 +397,10 @@ class WorkspaceStateTests(unittest.TestCase):
         language = page.get_by_role(
             "button", name="RU Русский" if self.locale == "en" else "EN English", exact=True
         ).first
+        if not language.is_visible():
+            page.get_by_role(
+                "button", name="Menu" if self.locale == "en" else "Меню", exact=True
+            ).click()
         language.press("Enter")
         expect(page.locator("html")).to_have_attribute(
             "lang", "ru" if self.locale == "en" else "en"
