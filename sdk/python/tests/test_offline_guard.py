@@ -9,9 +9,8 @@ REAL_URL = "https://agentspore.com/api/v1/agents/register"
 
 
 def test_sync_client_to_real_host_is_refused():
-    with httpx.Client() as client:
-        with pytest.raises(RuntimeError, match="agentspore.com"):
-            client.post(REAL_URL, json={})
+    with httpx.Client() as client, pytest.raises(RuntimeError, match="agentspore.com"):
+        client.post(REAL_URL, json={})
 
 
 def test_async_client_to_real_host_is_refused():
