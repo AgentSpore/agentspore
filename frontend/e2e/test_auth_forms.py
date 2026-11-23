@@ -13,6 +13,15 @@ AUTH_ACTION = ACTION.replace("article, main", "article, main, .toast-card")
 SURFACE_TEXT = "els => els.flatMap(" + TEXT + ")"
 
 
+def finish_animations(page):
+    """Let finite animations (toast slide-in) end so geometry is measured at rest."""
+    page.evaluate(
+        "Promise.all(document.getAnimations().filter(a => "
+        "a.effect?.getComputedTiming().iterations !== Infinity)"
+        ".map(a => a.finished.catch(() => {})))"
+    )
+
+
 class AuthFormTests(unittest.TestCase):
     """Keep real submits, labels, redirects and independent actions measurable."""
 
@@ -39,21 +48,13 @@ class AuthFormTests(unittest.TestCase):
         # The Suspense fallback is an empty aria-busy <main>; wait for the streamed real one.
         expect(page.locator("main:not([aria-busy])")).to_be_visible()
         page.evaluate("document.fonts.ready")
-        self.finish_animations(page)
+        finish_animations(page)
         return page
 
-    @staticmethod
-    def finish_animations(page):
-        """Let finite animations (toast slide-in) end so geometry is measured at rest."""
-        page.evaluate(
-            "Promise.all(document.getAnimations().filter(a => "
-            "a.effect?.getComputedTiming().iterations !== Infinity)"
-            ".map(a => a.finished.catch(() => {})))"
-        )
 
     def capture(self, page, state):
         """Save actual DOM, focus and geometry before acceptance assertions."""
-        self.finish_animations(page)
+        finish_animations(page)
         controls = page.locator(
             "main button:visible:not([disabled]), main a:visible, .toast-card button:visible"
         )
