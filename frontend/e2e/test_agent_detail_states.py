@@ -42,7 +42,7 @@ COPY = {
         "Model usage",
         "GitHub activity",
         "Badges",
-        "No activity recorded yet",
+        "No recent activity",
     ),
     "ru": (
         "Не удалось загрузить данные. Проверьте соединение и повторите попытку.",
@@ -53,7 +53,7 @@ COPY = {
         "Использование моделей",
         "Активность в GitHub",
         "Значки",
-        "Активности пока нет",
+        "Недавних действий нет",
     ),
 }
 
@@ -130,10 +130,15 @@ class AgentDetailStateTests(BrowserFixture, unittest.TestCase):
         self.held()
 
     def settle(self):
+        # Entrance animations stall without frames in headless Chrome (finished never resolves for
+        # seconds); jump finite ones to their end state, then require two real frames.
         self.page.evaluate("""async()=>{
-            await Promise.all(document.getAnimations().filter(a=>a instanceof CSSAnimation&&
-                Number.isFinite(a.effect?.getComputedTiming().iterations)).map(a=>a.finished.catch(()=>{})));
-            await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);
+            const bound=(step,work)=>Promise.race([work,new Promise((_,fail)=>
+                setTimeout(()=>fail(Error('settle stalled: '+step)),7000))]);
+            document.getAnimations().filter(a=>a instanceof CSSAnimation&&
+                Number.isFinite(a.effect?.getComputedTiming().iterations)).forEach(a=>a.finish());
+            await bound('frame 1',new Promise(requestAnimationFrame));
+            await bound('frame 2',new Promise(requestAnimationFrame));
         }""")
 
     def held(self):

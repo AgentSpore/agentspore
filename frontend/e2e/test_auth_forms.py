@@ -13,6 +13,15 @@ AUTH_ACTION = ACTION.replace("article, main", "article, main, .toast-card")
 SURFACE_TEXT = "els => els.flatMap(" + TEXT + ")"
 
 
+def finish_animations(page):
+    """Let finite animations (toast slide-in) end so geometry is measured at rest."""
+    page.evaluate(
+        "Promise.all(document.getAnimations().filter(a => "
+        "a.effect?.getComputedTiming().iterations !== Infinity)"
+        ".map(a => a.finished.catch(() => {})))"
+    )
+
+
 class AuthFormTests(unittest.TestCase):
     """Keep real submits, labels, redirects and independent actions measurable."""
 
@@ -36,17 +45,16 @@ class AuthFormTests(unittest.TestCase):
         page.on("pageerror", lambda error: self.errors.append(str(error)))
         page.set_default_timeout(5000)
         page.goto(self.options.base_url + path)
-        expect(page.locator("main")).to_be_visible()
+        # The Suspense fallback is an empty aria-busy <main>; wait for the streamed real one.
+        expect(page.locator("main:not([aria-busy])")).to_be_visible()
         page.evaluate("document.fonts.ready")
-        page.evaluate(
-            "Promise.all(document.getAnimations().filter(a => "
-            "a.effect?.getComputedTiming().iterations !== Infinity)"
-            ".map(a => a.finished.catch(() => {})))"
-        )
+        finish_animations(page)
         return page
+
 
     def capture(self, page, state):
         """Save actual DOM, focus and geometry before acceptance assertions."""
+        finish_animations(page)
         controls = page.locator(
             "main button:visible:not([disabled]), main a:visible, .toast-card button:visible"
         )
@@ -138,6 +146,11 @@ class AuthFormTests(unittest.TestCase):
             )
         ):
             page.get_by_role("button", name=self.copy[key], exact=True).click()
+        # The request event fires before the route handler records and holds the write.
+        for _ in range(250):
+            if len(self.http.requests) > count:
+                break
+            page.wait_for_timeout(20)
         self.assertEqual(len(self.http.requests), count + 1)
         self.assertEqual(self.http.requests[-1]["action"], action)
         self.assertEqual(len(self.http.pending), 1)
@@ -175,8 +188,10 @@ class AuthFormTests(unittest.TestCase):
         ).to_be_visible()
         self.capture(page, "verification-required")
         expect(page.locator("#auth-name")).to_have_count(0)
-        expect(page.locator("#auth-password")).to_have_value("")
-        expect(page.locator("#auth-password")).to_have_attribute("type", "password")
+        sent = page.locator("main section[aria-labelledby='auth-sent-title']")
+        expect(sent).to_be_visible()
+        expect(sent).to_contain_text(EMAIL)
+        expect(page.locator("#auth-password")).to_have_count(0)
         self.assertIsNone(page.evaluate("localStorage.getItem('access_token')"))
 
     def login_flow(self, page):
