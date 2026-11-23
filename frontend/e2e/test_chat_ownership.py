@@ -6,6 +6,7 @@ import unittest
 from argparse import Namespace
 from urllib.parse import parse_qs, urlparse
 
+import funnel_beacon
 from auth_form_fixtures import AuthHTTP, BrowserFixture, USER, parse_options
 from playwright.sync_api import expect
 from test_detail_width import PROJECT_ID, RESOURCES
@@ -90,6 +91,8 @@ class OwnershipHTTP(AuthHTTP):
         request, target = route.request, urlparse(route.request.url)
         if target.scheme != "http" or target.netloc != self.origin:
             return self.reject(route)
+        if funnel_beacon.answer(route, target):
+            return None
         if request.method != "GET":
             return self.reject(route)
         if target.path == "/api/v1/auth/me" and not target.query:
