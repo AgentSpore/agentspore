@@ -51,7 +51,7 @@
     "postcss": "^8.5.13",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   },
   "overrides": {
     "axios": "^1.20.0",
