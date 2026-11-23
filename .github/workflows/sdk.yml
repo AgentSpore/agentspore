@@ -53,3 +53,6 @@ jobs:
               raise SystemExit("SDK source mismatch")
           raise SystemExit(pytest.main(["-q", "-c", "sdk/pytest.ini", "sdk/tests", "--ignore=sdk/tests/integration"]))
           PY
+      - name: Test Python SDK (sdk/python) with pinned test tools
+        if: steps.scope.outputs.sdk == 'true'
+        run: uv run --no-project --python 3.12 --with pytest==9.1.1 --with pytest-asyncio==1.3.0 --with httpx==0.28.1 --with-editable sdk/python pytest sdk/python/tests -q

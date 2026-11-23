@@ -47,7 +47,7 @@ class ScopeTests(unittest.TestCase):
         return scope.changed_files(self.repo, event, "push")
 
     def test_component_routes(self):
-        for path, expected in [("sdk/new file.py", {"sdk"}), ("frontend/page.tsx", {"frontend", "frontend_image"}), ("backend/app.py", {"backend", "telemetry", "backend_image"})]:
+        for path, expected in [("sdk/new file.py", {"sdk"}), ("sdk/python/tests/test_new.py", {"sdk"}), ("frontend/page.tsx", {"frontend", "frontend_image"}), ("backend/app.py", {"backend", "telemetry", "backend_image"})]:
             with self.subTest(path=path):
                 self.git("checkout", "-q", self.base)
                 self.write(path)
