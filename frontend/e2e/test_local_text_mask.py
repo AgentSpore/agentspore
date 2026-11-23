@@ -69,7 +69,7 @@ RECTS = """el=>{
 }"""
 
 def without_indexes(value):
-    """Retain identity fields while normalizing indexes shifted by the one wrapper."""
+    """Retain identity fields and drop document indexes from a captured state."""
     if isinstance(value, dict):
         return {key: without_indexes(item) for key, item in value.items() if key != "index"}
     if isinstance(value, list):
@@ -99,7 +99,7 @@ class LocalTextMaskTests(BrowserFixture, unittest.TestCase):
         self.button = self.card.get_by_role("button").first
         self.focused = self.card.locator("h3 a") if kind == "title" else self.button
         self.original_target = self.card.locator("h3 a span" if kind == "title" else "button span").first
-        self.target, self.kind, self.wrapper = self.original_target, kind, False
+        self.target, self.kind = self.original_target, kind
         self.page.mouse.move(0, 0)
         for _ in range(80):
             self.page.keyboard.press("Tab")
@@ -121,9 +121,6 @@ class LocalTextMaskTests(BrowserFixture, unittest.TestCase):
     def canonical(self, state):
         value = json.loads(json.dumps(state))
         index = self.target.evaluate("el=>[...document.body.querySelectorAll('*')].indexOf(el)")
-        value["elements"] = [
-            item for item in value["elements"] if not self.wrapper or item["identity"]["index"] != index
-        ]
         for item in value["elements"]:
             if item["identity"]["index"] == index:
                 del item["styles"]["webkitTextFillColor"]
@@ -161,11 +158,8 @@ class LocalTextMaskTests(BrowserFixture, unittest.TestCase):
         finally:
             if style is not None:
                 style.evaluate("el=>el.remove()")
-            if self.wrapper:
-                self.target.evaluate("el=>el.replaceWith(...el.childNodes)")
-            else:
-                self.target.evaluate("el=>el.removeAttribute('data-local-text-mask')")
-            self.wrapper, self.target = False, self.original_target
+            self.target.evaluate("el=>el.removeAttribute('data-local-text-mask')")
+            self.target = self.original_target
             self.capture("restored")
             self.capture("restored-repeat")
 

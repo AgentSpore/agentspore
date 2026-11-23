@@ -331,10 +331,10 @@ class HeaderStateTests(unittest.TestCase):
             with self.subTest(layout=layout):
                 page = self.open_header(layout)
                 self.audit(page, "H02-mobile-shell")
-                self.activate(page, self.menu(page))
-                expect(
-                    page.locator(f"{HEADER} a[href='/login']:visible").first
-                ).to_be_visible()
+                menu = self.menu(page)
+                panel = menu.get_attribute("aria-controls")
+                self.activate(page, menu)
+                expect(page.locator(f"[id='{panel}'] a[href='/login']")).to_be_visible()
                 self.audit(page, "H10-anonymous-menu")
                 self.traverse(page, "H10-native")
                 self.authenticate(page)
