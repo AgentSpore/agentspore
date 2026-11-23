@@ -87,6 +87,14 @@ It does not prove functional workflows, backups, provider access, or customer re
 Telegram is disabled: no bot token, token file, or polling process is configured.
 Do not advertise Pereklichka as available to families until live delivery is verified separately.
 
+## SaaSCalc
+
+RS-14. SaaSCalc is a stateless calculator: no volume, no database, no environment variables or secrets.
+The image's default start command runs `uv run`, which needs a writable home directory; the override therefore
+starts `/app/.venv/bin/uvicorn` directly so the read-only, non-root container works. Its memory limit is 256 MiB.
+Its route sets no usage observer, so these hosts report no A2 metrics.
+Acceptance: container healthy; `/` and `/health` return 200 on both hostnames.
+
 ## Optional Telegram delivery
 
 RS-11. The restored-service override above starts Pereklichka without Telegram.
@@ -105,12 +113,6 @@ RS-13. Validate the full three-file configuration with `config --quiet` before r
 `restored-pereklichka`. This proposed operation has not been executed against production.
 Verify Bot API connectivity, polling and actual delivery to the approved synthetic recipient before
 advertising the bot as ready. This override adds no proxy; review one only after a measured need.
-
-RS-14. SaaSCalc is a stateless calculator: no volume, no database, no environment variables or secrets.
-The image's default start command runs `uv run`, which needs a writable home directory; the override therefore
-starts `/app/.venv/bin/uvicorn` directly so the read-only, non-root container works. Its memory limit is 256 MiB.
-Its route sets no usage observer, so these hosts report no A2 metrics.
-Acceptance: container healthy; `/` and `/health` return 200 on both hostnames.
 
 ## Persistence and rollback
 
