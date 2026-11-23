@@ -121,9 +121,9 @@ function StatCard({ label, value }: { label: string; value: number }) {
   const { locale } = useLocale();
   const count = useCounter(value);
   return (
-    <div className="min-w-0 max-w-full [overflow-wrap:anywhere] text-center px-4 py-3 rounded-xl bg-neutral-900/30 border border-neutral-800/50 backdrop-blur-sm stat-card">
-      <div className="text-xl font-bold text-white font-mono">{count.toLocaleString(localeTag(locale))}</div>
-      <div className="text-xs text-neutral-500 mt-0.5">{label}</div>
+    <div className="min-w-0 max-w-full text-center px-2 sm:px-4 py-3 rounded-xl bg-neutral-900/30 border border-neutral-800/50 backdrop-blur-sm stat-card">
+      <div className="text-base lg:text-xl font-bold text-white font-mono whitespace-nowrap tabular-nums">{count.toLocaleString(localeTag(locale))}</div>
+      <div className="text-xs text-neutral-500 mt-0.5 [overflow-wrap:anywhere]">{label}</div>
     </div>
   );
 }
@@ -305,7 +305,7 @@ const DNA_TRAITS = [
                               : displayPublicLabel(locale, meta.label)}
                           </span>
                           {typeof ev.project_id === "string" && ( /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ev.project_id) ? (
-                            <Link href={`/projects/${ev.project_id}`} aria-label={tr("activityProjectLink", { id: ev.project_id })} data-mono className="text-xs text-neutral-400 underline font-mono [overflow-wrap:anywhere] focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-300">{ev.project_id.slice(0, 8)}</Link>
+                            <Link href={`/projects/${ev.project_id}`} aria-label={tr("activityProjectLink", { id: ev.project_id })} data-mono className="inline-flex items-center min-h-11 min-w-11 text-xs text-neutral-400 underline font-mono [overflow-wrap:anywhere] focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-300">{ev.project_id.slice(0, 8)}</Link>
                           ) : <span className="text-xs text-neutral-600 font-mono [overflow-wrap:anywhere]">{ev.project_id}</span>)}
                         </div>
                         <p className="text-sm text-neutral-300 leading-snug [overflow-wrap:anywhere]">{activityDescription(ev, agent.name, tr)}</p>

@@ -3,9 +3,9 @@
 import json
 import unittest
 from argparse import Namespace
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
-from auth_form_fixtures import BrowserFixture, parse_options
+from auth_form_fixtures import BrowserFixture, finish_animations, parse_options
 from playwright.sync_api import expect
 from test_agent_detail_states import AGENT, ENDPOINTS, PAGE, PAYLOADS, AgentReadHTTP
 from test_agents_list import METRICS
@@ -137,6 +137,19 @@ COPY = {
 
 
 class MetadataHTTP(AgentReadHTTP):
+    def accepts_page(self, request, target):
+        """Production builds prefetch the project page linked from each event card; allow exactly that."""
+        if (
+            request.method == "GET"
+            and target.path == "/projects/" + EVENTS[0]["project_id"]
+            and request.headers.get("rsc") == "1"
+            and request.headers.get("next-router-prefetch") == "1"
+            and set(query := parse_qs(target.query, keep_blank_values=True)) == {"_rsc"}
+            and all(len(v) == 1 for v in query.values())
+        ):
+            return True
+        return super().accepts_page(request, target)
+
     def route(self, route):
         request, target = route.request, urlparse(route.request.url)
         if target.scheme != "http" or target.netloc != self.origin:
@@ -180,14 +193,16 @@ class AgentMetadataTests(BrowserFixture, unittest.TestCase):
                 return [...range.getClientRects()].filter(r=>r.width&&r.height)
                     .map(r=>({x:r.x,y:r.y,width:r.width,height:r.height}));}""")
             self.assertEqual(len(rects), 1, f"Stat counter {formatted!r} must occupy one line: {rects}")
-        expect(self.main.get_by_role("region", name="Blog" if locale == "en" else "Блог", exact=True)).to_be_visible()
+            overflow = counter.evaluate("el=>el.scrollWidth-el.clientWidth")
+            self.assertLessEqual(overflow, 0, f"Stat counter {formatted!r} overflows its card by {overflow}px")
+        # A confirmed-empty blog hides the whole section (AgentBlog returns null).
+        expect(self.main.get_by_role("region", name="Blog" if locale == "en" else "Блог", exact=True)).to_have_count(0)
         self.initial_count = self.request_count()
         self.assertEqual(self.initial_count, 6)
 
     def settle(self):
-        self.page.evaluate("""async()=>{await Promise.all(document.getAnimations().filter(a=>a instanceof CSSAnimation&&
-            Number.isFinite(a.effect?.getComputedTiming().iterations)).map(a=>a.finished.catch(()=>{})));
-            await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);} """)
+        finish_animations(self.page)
+        self.page.evaluate("async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);}")
 
     def request_count(self):
         return len(self.http.calls) + len(self.http.blog_calls)
@@ -247,6 +262,7 @@ class AgentMetadataTests(BrowserFixture, unittest.TestCase):
         home, agents = self.main.locator('a[href="/"]'), self.main.locator('a[href="/agents"]')
         dm = self.main.get_by_role("link", name=COPY[self.locale][12], exact=True)
         expect(dm).to_have_attribute("href", PAGE + "/chat")
+        self.main.locator("details > summary").click()  # the ID lives in the collapsed technical details
         copy = self.main.get_by_role("button", name=COPY[self.locale][13], exact=True)
         for target in (home, agents, dm, copy):
             self.native(target)
@@ -340,7 +356,7 @@ class AgentMetadataTests(BrowserFixture, unittest.TestCase):
 
     def test_metadata_geometry_and_six_local_github_filters(self):
         for locale in COPY:
-            for width in (320, 390, 1280):
+            for width in (320, 390, 640, 1024, 1280):
                 with self.subTest(locale=locale, width=width):
                     try:
                         self.open_page(locale, width)
