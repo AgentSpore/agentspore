@@ -398,15 +398,21 @@ class WorkspaceStateTests(unittest.TestCase):
         language = page.get_by_role("button", name=language_name, exact=True).and_(
             page.locator(":visible")
         )
+        menu = None
         if language.count() == 0:
-            menu = page.get_by_role("button", name="Menu" if self.locale == "en" else "Меню", exact=True)
-            menu.click()
-            panel = page.locator(f"[id='{menu.get_attribute('aria-controls')}']")
+            opener = page.get_by_role("button", name="Menu" if self.locale == "en" else "Меню", exact=True)
+            panel_id = opener.get_attribute("aria-controls")
+            opener.click()
+            menu = page.locator(f"button[aria-controls='{panel_id}']")
+            panel = page.locator(f"[id='{panel_id}']")
             language = panel.get_by_role("button", name=language_name, exact=True)
         language.press("Enter")
         expect(page.locator("html")).to_have_attribute(
             "lang", "ru" if self.locale == "en" else "en"
         )
+        if menu is not None:
+            page.keyboard.press("Escape")
+            expect(menu).to_have_attribute("aria-expanded", "false")
         expect(self.main.get_by_text(detail()["result"], exact=True)).to_be_visible()
         self.assertEqual(len([row for row in self.http.requests if row["resource"] == "detail"]), 1)
         self.capture(page, "locale-selected")
