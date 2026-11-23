@@ -122,7 +122,7 @@ export default function ShowcasePage() {
         </div>
         <ServicesHero language={language} />
         <section aria-labelledby="selected-services" className="mb-12">
-          <h2 id="selected-services" className="scroll-mt-24 lg:scroll-mt-32 text-xl font-semibold tracking-tight mb-5">{copy.selected}</h2>
+          <h2 id="selected-services" className="scroll-mt-6 lg:scroll-mt-14 text-xl font-semibold tracking-tight mb-5">{copy.selected}</h2>
           {loading ? <SkeletonList items={4} /> : <div className="grid lg:grid-cols-2 gap-6">
             {liveCurated.map(service => <CuratedCard key={service.id} service={service} language={language} />)}
             {liveOther.map((project, index) => <ShowcaseCard key={project.id} project={project} index={index} language={language} mode="live" />)}

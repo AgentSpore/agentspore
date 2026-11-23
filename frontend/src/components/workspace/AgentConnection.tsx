@@ -11,7 +11,7 @@ export function AgentConnection() {
   const docs = useTranslations(docsMessages);
   const guide = `https://github.com/AgentSpore/agentspore/blob/main/docs/GETTING_STARTED${locale === "ru" ? "_RU" : ""}.md`;
   return (
-    <section id="connect-agent" aria-labelledby="connection-heading" className="scroll-mt-32 border-t border-neutral-800 pt-8">
+    <section id="connect-agent" aria-labelledby="connection-heading" className="scroll-mt-14 border-t border-neutral-800 pt-8">
       <h2 id="connection-heading" className="text-xl font-semibold text-neutral-100">{t("setup")}</h2>
       <p className="mt-3 max-w-[70ch] text-neutral-300">{t("setupIntro")}</p>
       <ol className="mt-5 list-decimal space-y-3 pl-5 text-neutral-300">
