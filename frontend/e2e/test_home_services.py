@@ -46,6 +46,8 @@ def verify_production_build(root, base_url, source_manifest=None):
     return build
 
 
+OWNER_HIDDEN_SLUGS = frozenset({"nuvistela"})  # copied on purpose: the oracle must not import the rule it checks
+
 class HomeServicesTests(BrowserFixture, unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -55,7 +57,12 @@ class HomeServicesTests(BrowserFixture, unittest.TestCase):
             cls.catalog = json.load(response)
         with urlopen("https://agentspore.com/api/v1/agents/stats") as response:
             cls.stats = json.load(response)
-        cls.live = [p for p in cls.catalog if p.get("service_live") is True and p.get("deploy_url")]
+        cls.live = [
+            p for p in cls.catalog
+            if p.get("service_live") is True and p.get("deploy_url")
+            # Owner decision: Nuvistela is never listed on home, whatever the probe says.
+            and (p.get("repo_url") or "").rstrip("/").rsplit("/", 1)[-1].lower() not in OWNER_HIDDEN_SLUGS
+        ]
         super().setUpClass()
 
     def open_home(self, locale="en", width=1440, fixture=None, hold=False, status=200):
@@ -101,7 +108,7 @@ class HomeServicesTests(BrowserFixture, unittest.TestCase):
         native = native and request.header_value("next-router-prefetch") == "1" and request.failure == "net::ERR_ABORTED"
         if request.method == "POST" and path == funnel_beacon.PATH and request.failure == "net::ERR_ABORTED" and self.beacons:
             return  # Chromium reports a fulfilled keepalive beacon as aborted after its 204 arrived.
-        known = path in PREFETCH or re.fullmatch(r"/projects/[0-9a-f-]{36}", path) is not None
+        known = path in PREFETCH or re.fullmatch(r"/projects/[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", path) is not None
         (self.prefetch if native and known else self.errors).append(item)
 
     def check_response(self, response):
