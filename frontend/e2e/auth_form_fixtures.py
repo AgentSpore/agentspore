@@ -143,6 +143,20 @@ class BrowserFixture:
         cls.playwright.stop()
 
 
+def finish_animations(page):
+    """Let finite animations (toast slide-in) end so geometry is measured at rest."""
+    page.evaluate(
+        """async () => {
+            const stalled = new Promise((_, fail) => setTimeout(
+                () => fail(Error("finish_animations stalled")), 7000));
+            const finite = document.getAnimations().filter(a =>
+                a instanceof CSSAnimation && Number.isFinite(a.effect?.getComputedTiming().iterations));
+            finite.forEach(a => a.finish());
+            await Promise.race([Promise.all(finite.map(a => a.finished.catch(() => {}))), stalled]);
+        }"""
+    )
+
+
 def parse_options():
     """Require an explicit local stand and existing browser, avoiding live-service probes."""
     parser = argparse.ArgumentParser(description=__doc__)
