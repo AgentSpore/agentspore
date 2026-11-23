@@ -144,7 +144,11 @@ class BrowserFixture:
 
 
 def finish_animations(page: Page) -> None:
-    """Let finite animations (toast slide-in) end so geometry is measured at rest."""
+    """Let finite animations (toast slide-in) end so geometry is measured at rest.
+
+    The stall guard uses the page's setTimeout, so under a paused Playwright clock it never fires:
+    call this before page.clock.install, not after.
+    """
     page.evaluate(
         """async () => {
             const stalled = new Promise((_, fail) => setTimeout(

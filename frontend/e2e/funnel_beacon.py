@@ -7,6 +7,15 @@ FIELDS = {"path", "utm_source", "referrer", "automated"}
 # Backend VisitBeacon limits (backend/app/schemas/funnel.py).
 MAX_PATH = 200
 MAX_UTM = 64
+# Mirrors PRIVATE_PREFIXES in frontend/src/lib/funnel/beacon.ts: the client never reports these.
+PRIVATE_PREFIXES = (
+    "/admin", "/dashboard", "/profile", "/workspace", "/auth",
+    "/reset-password", "/forgot-password", "/verify-email",
+)
+
+
+def is_public_path(path):
+    return not any(path == p or path.startswith(p + "/") for p in PRIVATE_PREFIXES)
 
 
 def _valid(body):
@@ -15,11 +24,16 @@ def _valid(body):
     if any(isinstance(v, bool) != (k == "automated") or not isinstance(v, (str, bool)) for k, v in body.items()):
         return False
     path = body.get("path")
-    return path is not None and 0 < len(path) <= MAX_PATH and len(body.get("utm_source", "")) <= MAX_UTM
+    return (
+        path is not None
+        and 0 < len(path) <= MAX_PATH
+        and is_public_path(path)
+        and len(body.get("utm_source", "")) <= MAX_UTM
+    )
 
 
 def is_beacon(request, target):
-    """True only for a JSON POST to the exact beacon path whose body the backend would accept."""
+    """True only for a JSON POST to the exact beacon path with a public path the backend would accept."""
     if request.method != "POST" or target.path != PATH or target.query:
         return False
     if request.headers.get("content-type") != "application/json":

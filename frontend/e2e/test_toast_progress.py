@@ -69,11 +69,7 @@ class CompiledToastTests(unittest.TestCase):
         page.get_by_role("button", name=REGISTER_TAB[locale], exact=True).click()
         expect(page.locator("#auth-name")).to_be_visible()
         page.evaluate("document.fonts.ready")
-        page.evaluate(
-            "Promise.all(document.getAnimations().filter(a => "
-            "a.effect?.getComputedTiming().iterations !== Infinity)"
-            ".map(a => a.finished.catch(() => {})))"
-        )
+        browser_options.finish_animations(page)
         page.clock.install(time="2026-01-01T00:00:00.000Z")
         page.clock.pause_at("2026-01-01T00:01:00.000Z")
         return page
@@ -112,9 +108,13 @@ class CompiledToastTests(unittest.TestCase):
                         MESSAGES[locale]["checkYourEmailToVerifyYourAccountThen"]
                     )
                     page.evaluate(
-                        "Promise.all(document.getAnimations().filter(a => "
-                        "a.effect?.getComputedTiming().iterations !== Infinity)"
-                        ".map(a => a.finished.catch(() => {})))"
+                        "document.getAnimations().filter(a => a instanceof CSSAnimation && "
+                        "Number.isFinite(a.effect?.getComputedTiming().iterations)).forEach(a => a.finish())"
+                    )
+                    page.wait_for_function(
+                        "document.getAnimations().every(a => !(a instanceof CSSAnimation) "
+                        "|| a.playState !== 'running' || !Number.isFinite(a.effect?.getComputedTiming().iterations))",
+                        timeout=7000,
                     )
                     self.assertEqual(self.registration_requests, 1)
                     self.assertEqual(self.unexpected, [])
