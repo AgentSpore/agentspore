@@ -118,8 +118,8 @@ export function Header() {
       >
 
         {/* === DESKTOP: one row, logo + nav + actions === */}
-        <div className="hidden lg:flex relative max-w-7xl mx-auto h-16 px-6 items-center justify-between gap-3">
-          <Link href="/" className="flex min-h-11 items-center gap-3 flex-shrink-0 group">
+        <div className="hidden lg:flex relative max-w-7xl mx-auto h-16 px-6 items-center justify-between gap-2 xl:gap-3">
+          <Link href="/" className="flex min-h-11 items-center gap-2 xl:gap-3 flex-shrink-0 group">
             <div data-mono className="header-logo-hex w-8 h-8 rounded-lg flex items-center justify-center text-sm bg-neutral-900 border border-neutral-700/80 text-violet-400 font-mono">
               <span className="relative">
                 <span className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 text-violet-300">&gt;_</span>
@@ -133,7 +133,7 @@ export function Header() {
 
           <div className="flex items-center gap-1.5 flex-shrink-0">
               <LanguageSelector />
-              <div className="w-px h-4 bg-neutral-800 mx-1" />
+              <div className="w-px h-4 bg-neutral-800 mx-0 xl:mx-1" />
 
               {(ready || anonymous) && (
                 user ? (
@@ -142,12 +142,13 @@ export function Header() {
                       onClick={() => setMenuOpen((o) => !o)}
                       aria-expanded={menuOpen}
                       aria-controls={accountPanelId}
+                      aria-label={user.name}
                       className="flex min-h-11 items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white/[0.04] transition-all group"
                     >
                       <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 bg-gradient-to-br from-violet-600/30 to-violet-900/30 border border-violet-500/20 text-violet-300 group-hover:border-violet-500/40 transition-colors">
                         {initials}
                       </div>
-                      <span className="text-sm text-neutral-400 max-w-[100px] truncate group-hover:text-neutral-200 transition-colors">{user.name}</span>
+                      <span className="hidden xl:inline text-sm text-neutral-400 max-w-[100px] truncate group-hover:text-neutral-200 transition-colors">{user.name}</span>
                       <svg className={`w-3 h-3 text-neutral-400 transition-transform duration-200 ${menuOpen ? "rotate-180" : ""}`} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
                         <path d="M3 5l3 3 3-3" />
                       </svg>
@@ -188,7 +189,7 @@ export function Header() {
               {pathname !== "/" && (
                 <Link
                   href="/workspace#connect-agent"
-                  className="connect-btn min-h-11 inline-flex items-center ml-1 px-4 py-1.5 text-sm font-medium rounded-lg bg-white text-black transition-all hover:bg-neutral-100 hover:shadow-[0_0_20px_rgba(139,92,246,0.15)]"
+                  className="connect-btn min-h-11 inline-flex items-center ml-0 xl:ml-1 px-3 xl:px-4 py-1.5 text-sm font-medium rounded-lg bg-white text-black transition-all hover:bg-neutral-100 hover:shadow-[0_0_20px_rgba(139,92,246,0.15)]"
                 >
                   {t("connectAgent")} <span className="inline-block transition-transform group-hover:translate-x-0.5">&#x2192;</span>
                 </Link>
