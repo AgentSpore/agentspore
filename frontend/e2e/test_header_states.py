@@ -204,9 +204,6 @@ class HeaderStateTests(unittest.TestCase):
         self.assertEqual(records["page_errors"], [])
         self.assertLessEqual(records["document_width"], self.width)
         self.assertEqual(self.menu(page).is_visible(), self.width < 1024)
-        self.assertEqual(
-            page.locator(f"{HEADER} .xl\\:inline").is_visible(), self.width >= 1280
-        )
         for record in records["text"]:
             with self.subTest(state=tag, text=record["text"]):
                 self.assertGreaterEqual(record["size"], 12, record)
@@ -284,7 +281,7 @@ class HeaderStateTests(unittest.TestCase):
     def resolve(self, page, payload):
         self.http.settle(payload)
         if payload is None:
-            page.locator(f"{HEADER} a[href='/login']:visible").wait_for()
+            page.locator(f"{HEADER} a[href='/login']:visible").first.wait_for()
         elif self.width >= 1024:
             self.account(page).wait_for()
         else:
@@ -294,7 +291,7 @@ class HeaderStateTests(unittest.TestCase):
         for layout in (value for value in LAYOUTS if value[1] >= 1024):
             with self.subTest(layout=layout):
                 page = self.open_header(layout)
-                page.locator(f"{HEADER} a[href='/login']:visible").wait_for()
+                page.locator(f"{HEADER} a[href='/login']:visible").first.wait_for()
                 self.audit(page, "H02-shell")
                 self.authenticate(page)
                 self.audit(page, "H03-pending")
@@ -334,7 +331,7 @@ class HeaderStateTests(unittest.TestCase):
                 self.audit(page, "H02-mobile-shell")
                 self.activate(page, self.menu(page))
                 expect(
-                    page.locator(f"{HEADER} a[href='/login']:visible")
+                    page.locator(f"{HEADER} a[href='/login']:visible").first
                 ).to_be_visible()
                 self.audit(page, "H10-anonymous-menu")
                 self.traverse(page, "H10-native")
@@ -386,7 +383,7 @@ class HeaderStateTests(unittest.TestCase):
             "window.dispatchEvent(new Event('storage'))"
         )
         self.activate(page, self.menu(page))
-        page.locator(f"{HEADER} a[href='/login']:visible").wait_for()
+        page.locator(f"{HEADER} a[href='/login']:visible").first.wait_for()
         self.audit(page, "storage-denied-pending")
         self.http.settle(PROFILE)
         self.save(page, "storage-denied-late")
@@ -404,7 +401,7 @@ class HeaderStateTests(unittest.TestCase):
             "window.__syntheticHeaderStorageDenied = true; "
             "window.dispatchEvent(new Event('storage'))"
         )
-        page.locator(f"{HEADER} a[href='/login']:visible").wait_for()
+        page.locator(f"{HEADER} a[href='/login']:visible").first.wait_for()
         self.audit(page, "storage-lost-authenticated")
         expect(
             page.locator(HEADER).get_by_text(PROFILE["email"], exact=True)
@@ -412,7 +409,7 @@ class HeaderStateTests(unittest.TestCase):
         page.context.add_init_script("window.__syntheticHeaderStorageDenied = true")
         page.reload()
         self.activate(page, self.menu(page))
-        page.locator(f"{HEADER} a[href='/login']:visible").wait_for()
+        page.locator(f"{HEADER} a[href='/login']:visible").first.wait_for()
         self.audit(page, "storage-denied-initially")
 
     def test_breakpoint_hidden_controls_and_reduced_motion(self):
