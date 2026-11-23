@@ -1,7 +1,9 @@
 """Verify existing email states against an explicit local compiled frontend."""
 
 import json
+import re
 import unittest
+from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import test_auth_forms as auth
@@ -9,6 +11,21 @@ import auth_form_fixtures as browser_fixtures
 from auth_form_fixtures import MESSAGES, AuthHTTP
 from playwright.sync_api import expect
 
+FLOW_SOURCE = Path(__file__).resolve().parents[1] / "src/lib/i18n/authFlow.ts"
+VERIFIED_PROFILE = "/profile?email=verified"
+
+
+def link_copy(key):
+    """Read one auth-flow message per locale (English first, Russian second) from the product source."""
+    found = re.findall(rf'\b{key}: "([^"]*)"', FLOW_SOURCE.read_text())
+    assert len(found) == 2, key
+    return dict(zip(("en", "ru"), found, strict=True))
+
+
+LINK = {
+    key: link_copy(key)
+    for key in ("linkNewLink", "linkTitle", "linkUnavailableTitle", "linkCheckAgain")
+}
 CODE = "synthetic+verification/with?characters"
 EXPIRED = "Invalid or expired verification link."
 SUCCESS = {
@@ -29,10 +46,12 @@ class VerificationHTTP(AuthHTTP):
 
     def accepts_page(self, request, target):
         """Allow only verification document query names and known framework prefetch."""
-        if target.path != "/verify-email":
-            return super().accepts_page(request, target)
         query = parse_qs(target.query, keep_blank_values=True)
         keys = {"token"}
+        if target.path == "/profile" and query.get("email") == ["verified"]:
+            keys = {"email"}
+        elif target.path != "/verify-email":
+            return super().accepts_page(request, target)
         if request.headers.get("rsc") == "1" and request.headers.get("next-router-prefetch") == "1":
             keys.add("_rsc")
         return (
@@ -85,7 +104,7 @@ class EmailVerificationTests(unittest.TestCase):
             [{"name": "agentspore_locale", "value": locale, "url": self.options.base_url}]
         )
         self.http, self.errors = VerificationHTTP(self.options.base_url), []
-        self.copy, self.width = MESSAGES[locale], width
+        self.copy, self.width, self.locale = MESSAGES[locale], width, locale
         self.tag = f"verification-{locale}-{width}-{mode}"
         context.route("**/*", self.http.route)
         page = context.new_page()
@@ -102,10 +121,14 @@ class EmailVerificationTests(unittest.TestCase):
         )
         return page
 
+    def link(self, key):
+        """Return the link-problem copy for the locale under test."""
+        return LINK[key][self.locale]
+
     def resend(self, page, outcome):
         """Preserve an Enter failure, then continue baseline through the existing button."""
         email = page.get_by_role("textbox", name=self.copy["emailAddress"], exact=True)
-        button = page.locator("main").get_by_role("button").last
+        button = page.locator("main form button[type=submit]")  # label turns into "…" while sending
         email.fill("Synthetic@Example.Invalid")
         target = email.bounding_box()
         (self.options.screenshots / f"{self.tag}-input-target.json").write_text(json.dumps(target))
@@ -140,10 +163,12 @@ class EmailVerificationTests(unittest.TestCase):
 
     def missing_flow(self, page):
         """No verification GET without token; blank email cannot issue a resend."""
-        expect(page.get_by_test_id("state-missing")).to_be_visible()
+        expect(page.get_by_test_id("state-link-problem")).to_be_visible()
         self.capture(page, "missing")
         self.assertEqual(self.http.verifications, [])
-        expect(page.get_by_role("button", name=self.copy["resend"], exact=True)).to_be_disabled()
+        expect(
+            page.get_by_role("button", name=self.link("linkNewLink"), exact=True)
+        ).to_be_disabled()
         self.resend(page, 200)
 
     def expired_flow(self, page):
@@ -152,22 +177,32 @@ class EmailVerificationTests(unittest.TestCase):
         self.capture(page, "loading")
         self.assertEqual(len(self.http.verifications), 1)
         self.http.verifications[0].fulfill(status=400, json={"detail": EXPIRED})
-        expect(page.get_by_test_id("state-error")).to_be_visible()
-        expect(page.get_by_test_id("error-message")).to_have_text(
-            self.copy["verificationLinkInvalidOrExpired"]
-        )
+        expect(page.get_by_test_id("state-link-problem")).to_be_visible()
+        expect(
+            page.get_by_role("heading", name=self.link("linkTitle"), exact=True)
+        ).to_be_visible()
         self.capture(page, "expired")
         self.resend(page, "network")
         self.assertEqual(len(self.http.verifications), 1)
 
     def error_flow(self, page, outcome=503):
-        """General and network verification errors retain the existing no-resend branch."""
+        """A network failure keeps the no-resend branch; a 5xx offers a retry beside the resend form."""
         self.assertEqual(len(self.http.verifications), 1)
         request = self.http.verifications[0]
         if outcome == "network":
             request.abort("failed")
         else:
             request.fulfill(status=503, json={"detail": "Synthetic verification unavailable."})
+        if outcome != "network":
+            expect(page.get_by_test_id("state-link-problem")).to_be_visible()
+            expect(
+                page.get_by_role("heading", name=self.link("linkUnavailableTitle"), exact=True)
+            ).to_be_visible()
+            expect(
+                page.get_by_role("button", name=self.link("linkCheckAgain"), exact=True)
+            ).to_be_visible()
+            self.capture(page, "error")
+            return
         expect(page.get_by_test_id("state-error")).to_be_visible()
         self.capture(page, "error")
         expect(page.get_by_role("textbox")).to_have_count(0)
@@ -189,11 +224,11 @@ class EmailVerificationTests(unittest.TestCase):
         expect(paragraph).to_contain_text("2")
         expect(
             page.get_by_role("link", name=self.copy["goToProfile"], exact=True)
-        ).to_have_attribute("href", "/profile")
+        ).to_have_attribute("href", VERIFIED_PROFILE)
         page.clock.run_for(1000)
         expect(paragraph).to_contain_text("1")
         page.clock.run_for(1000)
-        page.wait_for_url(self.options.base_url + "/profile")
+        page.wait_for_url(self.options.base_url + VERIFIED_PROFILE)
         self.assertEqual(self.http.unexpected, [])
         self.assertEqual(self.errors, [])
         self.assertEqual(len(self.http.verifications), 1)
