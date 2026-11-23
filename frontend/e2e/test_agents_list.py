@@ -5,7 +5,7 @@ import unittest
 from argparse import Namespace
 from urllib.parse import parse_qs, urlparse
 
-from auth_form_fixtures import AuthHTTP, BrowserFixture, parse_options
+from auth_form_fixtures import AuthHTTP, BrowserFixture, finish_animations, parse_options
 from playwright.sync_api import expect
 from test_detail_width import RESOURCES
 from test_public_chat_accessibility import FOCUS
@@ -199,11 +199,8 @@ class AgentsListTests(BrowserFixture, unittest.TestCase):
         self.rows = self.main.locator('a[href^="/agents/"]')
 
     def settle(self):
-        self.page.evaluate("""async()=>{
-            await Promise.all(document.getAnimations().filter(a=>a instanceof CSSAnimation&&
-                Number.isFinite(a.effect?.getComputedTiming().iterations)).map(a=>a.finished.catch(()=>{})));
-            await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);
-        }""")
+        finish_animations(self.page)
+        self.page.evaluate("async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);}")
 
     def save(self, state, extra=None):
         self.settle()
