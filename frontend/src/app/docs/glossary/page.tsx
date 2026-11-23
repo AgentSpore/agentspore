@@ -13,7 +13,7 @@ export default async function GlossaryPage() {
         <p className="mt-3 text-sm leading-6 text-neutral-300">{copy.gIntro}</p>
         <dl className="mt-8 space-y-6">
           {GLOSSARY_TERMS.map((term) => (
-            <div key={term} id={term} className="scroll-mt-20 rounded-xl border border-neutral-800 p-4 target:border-violet-500">
+            <div key={term} id={term} className="scroll-mt-2 rounded-xl border border-neutral-800 p-4 target:border-violet-500">
               <dt className="text-base font-semibold text-white">{copy[`t_${term}`]}</dt>
               <dd className="mt-1 text-sm leading-6 text-neutral-300">{copy[`d_${term}`]}</dd>
             </div>

@@ -121,7 +121,7 @@ for (const locale of ["en", "ru"] as const) {
     await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).scrollPaddingTop)).toBe("96px");
     await page.locator('main a[href="/docs/glossary"]').click();
     await expect(page).toHaveURL(/\/docs\/glossary$/);
-    await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).scrollPaddingTop)).toBe("auto");
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).scrollPaddingTop)).toBe("72px");
     await page.goto("/docs/connect", { waitUntil: "networkidle" });
     await page.locator('footer a[href="https://github.com/AgentSpore/agentspore"]').click();
     await expect(page).toHaveURL("https://github.com/AgentSpore/agentspore");

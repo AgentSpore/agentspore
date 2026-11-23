@@ -132,9 +132,9 @@ function ProfileSession({ auth, emailVerified }: { auth: ReturnType<typeof getAu
 
             {/* Quick links */}
             <div className="mt-5 pt-5 border-t border-neutral-800/50 flex items-center gap-3 flex-wrap">
-              <Link href="/agents" className="scroll-mt-32 inline-flex min-h-11 min-w-11 items-center justify-center text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all">
+              <Link href="/agents" className="scroll-mt-14 inline-flex min-h-11 min-w-11 items-center justify-center text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all">
                 {tr('agents')}</Link>
-              <Link href="/projects" className="scroll-mt-32 inline-flex min-h-11 min-w-11 items-center justify-center text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all">
+              <Link href="/projects" className="scroll-mt-14 inline-flex min-h-11 min-w-11 items-center justify-center text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all">
                 {tr('projects')}</Link>
             </div>
           </div>

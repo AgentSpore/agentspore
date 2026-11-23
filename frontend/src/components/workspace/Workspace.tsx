@@ -104,8 +104,8 @@ function TaskInbox({ state, visible, retry, selected, select, changePage, clearS
   if (!visible) return null;
   const page = state.kind === "success" ? state.data : lastPage;
   const items = state.kind === "success" ? state.data.items.filter(task => matchesFilter(task, filter)) : [];
-  return <section id="workspace-tasks" aria-labelledby="tasks-heading" className="min-w-0 scroll-mt-32">
-    <h2 id="tasks-heading" tabIndex={-1} className="scroll-mt-32 text-xl font-semibold focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">{t("tasks")}</h2>
+  return <section id="workspace-tasks" aria-labelledby="tasks-heading" className="min-w-0 scroll-mt-14">
+    <h2 id="tasks-heading" tabIndex={-1} className="scroll-mt-14 text-xl font-semibold focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">{t("tasks")}</h2>
     <div className="my-5 flex flex-wrap gap-2" aria-label={t("tasks")}>{(["all", "waiting", "accepted", "revisions", "closed"] as const).map(value =>
       <button key={value} aria-pressed={filter === value} onClick={() => { setFilter(value); clearSelection(); }} className={`${CONTROL} ${filter === value ? "bg-violet-950 text-violet-200 border-violet-400" : "bg-neutral-950"}`}>{t(value)}</button>)}</div>
     {page && page.total > page.limit && <p className="mb-4 text-sm text-neutral-400">{t("pageFilter")}</p>}
@@ -119,7 +119,7 @@ function SelectedTask({ id, revision, token, rejectAuth }: { id: string | null; 
   const t = useTranslations(WORKSPACE_MESSAGES);
   const [retry, setRetry] = useState(0);
   const state = useOwnerRead(id ? `agent-tasks/${encodeURIComponent(id)}` : null, decodeTaskDetail, revision + retry, token, rejectAuth);
-  return <section id="task-detail" tabIndex={-1} aria-label={t("taskDetails")} className="min-w-0 scroll-mt-32 rounded-xl border border-neutral-800 bg-neutral-900 p-5 sm:p-6 focus-visible:outline-2 focus-visible:outline-violet-300">
+  return <section id="task-detail" tabIndex={-1} aria-label={t("taskDetails")} className="min-w-0 scroll-mt-14 rounded-xl border border-neutral-800 bg-neutral-900 p-5 sm:p-6 focus-visible:outline-2 focus-visible:outline-violet-300">
     <a href="#workspace-tasks" className={`${CONTROL} mb-5 lg:hidden`}>{t("backToTasks")}</a>
     {!id ? <p className="py-8 text-neutral-400">{t("select")}</p> : state.kind === "success" ? <TaskDetail detail={state.data} /> : <ReadFeedback state={state} detail retry={() => setRetry(value => value + 1)} />}
   </section>;
@@ -153,7 +153,7 @@ function BudgetLedger({ agents }: { agents: AgentWorkspace["agents"] }) {
 function RefreshControl({ hidden, refresh }: { hidden: boolean; refresh: () => void }) {
   const t = useTranslations(WORKSPACE_MESSAGES);
   if (hidden) return null;
-  return <div className="flex flex-wrap gap-3"><button onClick={refresh} className={`${CONTROL} scroll-mt-32`}>{t("refresh")}</button></div>;
+  return <div className="flex flex-wrap gap-3"><button onClick={refresh} className={`${CONTROL} scroll-mt-14`}>{t("refresh")}</button></div>;
 }
 
 function OwnerWorkspace({ token, rejectedToken, rejectAuth }: { token: string | null; rejectedToken: string | null; rejectAuth: (token: string) => void }) {
