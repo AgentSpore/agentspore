@@ -22,10 +22,12 @@ services:
       - restored-otkrytka
       - restored-podmemory
       - restored-pereklichka
+      - restored-saascalc
     depends_on:
       restored-otkrytka: {condition: service_healthy}
       restored-podmemory: {condition: service_healthy}
       restored-pereklichka: {condition: service_healthy}
+      restored-saascalc: {condition: service_healthy}
 
   restored-otkrytka:
     <<: *restored-app
@@ -78,6 +80,21 @@ services:
     stop_grace_period: 30s
     networks: [restored-pereklichka, restored-pereklichka-db]
 
+  restored-saascalc:
+    <<: *restored-app
+    image: "${RESTORED_SAASCALC_IMAGE:?set an immutable repository@sha256 image reference}"
+    command: [/app/.venv/bin/uvicorn, main:app, --host, 0.0.0.0, --port, "8000"]
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 0.5
+    healthcheck:
+      test: [CMD, /app/.venv/bin/python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).close()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    networks: [restored-saascalc]
+
   restored-pereklichka-db:
     <<: *restored-app
     image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
@@ -104,6 +121,7 @@ networks:
   restored-otkrytka: {}
   restored-podmemory: {}
   restored-pereklichka: {}
+  restored-saascalc: {}
   restored-pereklichka-db: {internal: true}
 
 volumes:

@@ -24,6 +24,8 @@ HOSTS = [
     "otkrytka.agentspore.ru",
     "pereklichka.agentspore.com",
     "pereklichka.agentspore.ru",
+    "saascalc.agentspore.com",
+    "saascalc.agentspore.ru",
 ]
 FIELDS = {"ts", "service", "method", "status", "duration", "size", "route"}
 MARKER = "SYNTHETIC_PRIVATE_MARKER"
