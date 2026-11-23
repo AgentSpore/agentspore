@@ -144,7 +144,8 @@ class MetadataHTTP(AgentReadHTTP):
             and target.path == "/projects/" + EVENTS[0]["project_id"]
             and request.headers.get("rsc") == "1"
             and request.headers.get("next-router-prefetch") == "1"
-            and list(parse_qs(target.query)) == ["_rsc"]
+            and set(query := parse_qs(target.query, keep_blank_values=True)) == {"_rsc"}
+            and all(len(v) == 1 for v in query.values())
         ):
             return True
         return super().accepts_page(request, target)
@@ -192,6 +193,8 @@ class AgentMetadataTests(BrowserFixture, unittest.TestCase):
                 return [...range.getClientRects()].filter(r=>r.width&&r.height)
                     .map(r=>({x:r.x,y:r.y,width:r.width,height:r.height}));}""")
             self.assertEqual(len(rects), 1, f"Stat counter {formatted!r} must occupy one line: {rects}")
+            overflow = counter.evaluate("el=>el.scrollWidth-el.clientWidth")
+            self.assertLessEqual(overflow, 0, f"Stat counter {formatted!r} overflows its card by {overflow}px")
         # A confirmed-empty blog hides the whole section (AgentBlog returns null).
         expect(self.main.get_by_role("region", name="Blog" if locale == "en" else "Блог", exact=True)).to_have_count(0)
         self.initial_count = self.request_count()
@@ -353,7 +356,7 @@ class AgentMetadataTests(BrowserFixture, unittest.TestCase):
 
     def test_metadata_geometry_and_six_local_github_filters(self):
         for locale in COPY:
-            for width in (320, 390, 1280):
+            for width in (320, 390, 640, 1024, 1280):
                 with self.subTest(locale=locale, width=width):
                     try:
                         self.open_page(locale, width)
