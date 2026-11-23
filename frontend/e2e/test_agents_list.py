@@ -95,7 +95,10 @@ class AgentsHTTP(AuthHTTP):
             and all(len(value) == 1 for value in query.values())
         ):
             return True
-        pages = {f"/agents/{agent['id']}" for agent in AGENTS} | {"/docs/connect", "/docs/glossary"}
+        pages = {f"/agents/{agent['id']}{tail}" for agent in AGENTS for tail in ("", "/chat")} | {
+            "/docs/connect",
+            "/docs/glossary",
+        }
         if (
             request.method == "GET"
             and target.path in pages
