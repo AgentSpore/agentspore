@@ -141,13 +141,13 @@ export function Header() {
                     <button
                       onClick={() => setMenuOpen((o) => !o)}
                       aria-expanded={menuOpen}
-                      aria-controls={accountPanelId} aria-label={user.name}
+                      aria-controls={accountPanelId}
                       className="flex min-h-11 items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white/[0.04] transition-all group"
                     >
                       <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 bg-gradient-to-br from-violet-600/30 to-violet-900/30 border border-violet-500/20 text-violet-300 group-hover:border-violet-500/40 transition-colors">
                         {initials}
                       </div>
-                      <span className="hidden xl:inline text-sm text-neutral-400 max-w-[100px] truncate group-hover:text-neutral-200 transition-colors">{user.name}</span>
+                      <span className="sr-only xl:hidden">{user.name}</span><span className="hidden xl:inline text-sm text-neutral-400 max-w-[100px] truncate group-hover:text-neutral-200 transition-colors">{user.name}</span>
                       <svg className={`w-3 h-3 text-neutral-400 transition-transform duration-200 ${menuOpen ? "rotate-180" : ""}`} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
                         <path d="M3 5l3 3 3-3" />
                       </svg>
