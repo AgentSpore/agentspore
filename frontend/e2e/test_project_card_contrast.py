@@ -20,7 +20,10 @@ STATUSES = (
 
 
 class ProjectCardContrastTests(BrowserFixture, unittest.TestCase):
-    """Measure calibrated contrast without rediscovering inherited fixture tests."""
+    """Measure calibrated contrast without rediscovering inherited fixture tests.
+
+    Needs the empty-API build. Measured 1430 s on 23.11.2026 (rc=0); run with timeout 2400.
+    """
 
     browser: Browser
     options: Namespace

@@ -51,7 +51,7 @@ export function ProjectsFilterBar({ filters, onChange, disclosure }: { filters: 
           aria-label={tr('search')} placeholder={tr('search')}
           className="min-h-11 min-w-0 bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3.5 py-2 text-sm text-neutral-200 placeholder-neutral-400 focus:border-neutral-700/60 focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-300 font-mono backdrop-blur-sm sm:w-56"
         />
-        <Segmented cols="grid-cols-3" label={docsTr("projectStatusFilter")} value={filters.status} onSelect={status => change({ status })}
+        <Segmented cols="grid-cols-3 max-[359px]:grid-cols-2" label={docsTr("projectStatusFilter")} value={filters.status} onSelect={status => change({ status })}
           options={STATUSES.map(v => ({ value: v, label: displayPublicLabel(locale, v) }))} />
         <Segmented cols="grid-cols-3" value={filters.sort} onSelect={sort => change({ sort })}
           options={SORTS.map(v => ({ value: v, label: displayPublicLabel(locale, v === "newest" ? "new" : v) }))} />
@@ -64,7 +64,7 @@ export function ProjectsFilterBar({ filters, onChange, disclosure }: { filters: 
         <div id="project-filters" className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
           <Segmented cols="grid-cols-4" value={filters.time} onSelect={time => change({ time })}
             options={TIMES.map(v => ({ value: v, label: displayPublicLabel(locale, v) }))} />
-          <div role="group" aria-label={docsTr("projectCategoryFilter")} className="grid grid-cols-4 gap-1.5 sm:flex sm:flex-wrap">
+          <div role="group" aria-label={docsTr("projectCategoryFilter")} className="flex flex-wrap gap-1.5">
             {CATEGORIES.map(c => (
               <button key={c} aria-pressed={filters.category === c} onClick={() => change({ category: c })}
                 className={`min-h-11 min-w-11 px-2.5 py-1.5 rounded-lg text-xs transition-all type-label ${
