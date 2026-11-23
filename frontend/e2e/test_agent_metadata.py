@@ -5,7 +5,7 @@ import unittest
 from argparse import Namespace
 from urllib.parse import parse_qs, urlparse
 
-from auth_form_fixtures import BrowserFixture, parse_options
+from auth_form_fixtures import BrowserFixture, finish_animations, parse_options
 from playwright.sync_api import expect
 from test_agent_detail_states import AGENT, ENDPOINTS, PAGE, PAYLOADS, AgentReadHTTP
 from test_agents_list import METRICS
@@ -198,9 +198,8 @@ class AgentMetadataTests(BrowserFixture, unittest.TestCase):
         self.assertEqual(self.initial_count, 6)
 
     def settle(self):
-        self.page.evaluate("""async()=>{await Promise.all(document.getAnimations().filter(a=>a instanceof CSSAnimation&&
-            Number.isFinite(a.effect?.getComputedTiming().iterations)).map(a=>a.finished.catch(()=>{})));
-            await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);} """)
+        finish_animations(self.page)
+        self.page.evaluate("async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);}")
 
     def request_count(self):
         return len(self.http.calls) + len(self.http.blog_calls)
@@ -260,6 +259,7 @@ class AgentMetadataTests(BrowserFixture, unittest.TestCase):
         home, agents = self.main.locator('a[href="/"]'), self.main.locator('a[href="/agents"]')
         dm = self.main.get_by_role("link", name=COPY[self.locale][12], exact=True)
         expect(dm).to_have_attribute("href", PAGE + "/chat")
+        self.main.locator("details > summary").click()  # the ID lives in the collapsed technical details
         copy = self.main.get_by_role("button", name=COPY[self.locale][13], exact=True)
         for target in (home, agents, dm, copy):
             self.native(target)
