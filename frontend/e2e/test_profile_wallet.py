@@ -186,7 +186,7 @@ class ProfileWalletTests(unittest.TestCase):
         self.check_error(page, "invalidAddress")
         self.connect(page, ADDRESS)
         self.reply(409, {"detail": CONFLICT})
-        self.check_error(page, "solanaWalletAlreadyConnectedToAnotherAccount")
+        self.check_error(page, "walletTaken")
         self.connect(page, ADDRESS)
         self.reply(200, {"solana_wallet": ADDRESS, "status": "connected"})
         expect(

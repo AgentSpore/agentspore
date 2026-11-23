@@ -212,8 +212,7 @@ class ProjectMetadataTests(BrowserFixture, unittest.TestCase):
         with self.context.expect_page() as opened:
             self.page.keyboard.press("Enter")
         popup = opened.value
-        popup.wait_for_load_state("domcontentloaded")
-        self.assertEqual(popup.url, url)
+        expect(popup).to_have_url(url)
         popup.close()
 
     def initial_metadata(self):

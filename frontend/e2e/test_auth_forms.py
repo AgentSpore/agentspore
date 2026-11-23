@@ -5,21 +5,12 @@ import unittest
 from urllib.parse import urlparse
 
 import auth_form_fixtures as browser_fixtures
-from auth_form_fixtures import EMAIL, ERROR, MESSAGES, PASSWORD, TOKEN, AuthHTTP
+from auth_form_fixtures import EMAIL, ERROR, MESSAGES, PASSWORD, TOKEN, AuthHTTP, finish_animations
 from playwright.sync_api import expect
 from test_project_cards import ACTION, TEXT
 
 AUTH_ACTION = ACTION.replace("article, main", "article, main, .toast-card")
 SURFACE_TEXT = "els => els.flatMap(" + TEXT + ")"
-
-
-def finish_animations(page):
-    """Let finite animations (toast slide-in) end so geometry is measured at rest."""
-    page.evaluate(
-        "Promise.all(document.getAnimations().filter(a => "
-        "a.effect?.getComputedTiming().iterations !== Infinity)"
-        ".map(a => a.finished.catch(() => {})))"
-    )
 
 
 class AuthFormTests(unittest.TestCase):

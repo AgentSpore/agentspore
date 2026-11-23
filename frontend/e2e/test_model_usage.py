@@ -13,6 +13,11 @@ from urllib.parse import urlparse
 import test_detail_width as detail
 from playwright.sync_api import expect
 
+# Task labels as rendered, src/lib/i18n/public.ts taskCodegen / taskReview.
+TASK_LABELS = {
+    "en": {"codegen": "Code generation", "review": "Review"},
+    "ru": {"codegen": "Генерация кода", "review": "Ревью"},
+}
 MODEL_COUNTS = (("synthetic/model-alpha", "codegen", 3), ("synthetic/model-beta", "review", 1))
 MODEL_USAGE = {
     "agent_id": detail.AGENT_ID,
@@ -81,14 +86,14 @@ class ModelUsageTests(unittest.TestCase):
         )
         return models, tasks, records
 
-    def assert_usage(self, models, tasks, records):
+    def assert_usage(self, models, tasks, records, locale):
         """Require backend model totals, independent task counts and finite geometry."""
         for index, (model, task, count) in enumerate(MODEL_COUNTS):
             percent = (75, 25)[index]
             row = models.locator(f'[title="{model}"]').locator("../..")
             expect(row.get_by_text(f"{count} · {percent}%", exact=True)).to_be_visible()
             task_row = tasks.locator(f'[title="{model}"]').locator("..")
-            expect(task_row.get_by_text(task, exact=True)).to_be_visible()
+            expect(task_row.get_by_text(TASK_LABELS[locale][task], exact=True)).to_be_visible()
             expect(task_row.get_by_text(f"{count}×", exact=True)).to_be_visible()
             self.assertEqual(records["models"][index]["inlineWidth"], f"{percent}%")
             self.assertAlmostEqual(records["models"][index]["percent"], percent, delta=1)
@@ -106,7 +111,7 @@ class ModelUsageTests(unittest.TestCase):
                         title = "Model usage" if locale == "en" else "Использование моделей"
                         expect(page.get_by_text(title, exact=True)).to_be_visible()
                         models, tasks, records = self.capture_usage(page, f"model-{locale}-{width}")
-                        self.assert_usage(models, tasks, records)
+                        self.assert_usage(models, tasks, records, locale)
                     finally:
                         page.context.close()
 

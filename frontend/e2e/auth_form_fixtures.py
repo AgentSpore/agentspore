@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import funnel_beacon
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Page, sync_playwright
 
 SOURCE = Path(__file__).resolve().parents[1] / "src/lib/i18n/account.ts"
 MESSAGES = json.loads(
@@ -61,8 +61,14 @@ class AuthHTTP:
         self.pending, self.requests, self.unexpected = [], [], []
 
     def reject(self, route):
-        """Keep unknown requests visible without sending them to a live service."""
+        """Keep unknown requests visible without sending them to a live service.
+
+        The well-formed visit beacon fired by every public page is answered here, so subclasses
+        that route only their own contracts do not each have to repeat it.
+        """
         request, target = route.request, urlparse(route.request.url)
+        if target.netloc == self.origin and funnel_beacon.answer(route, target):
+            return
         url = target.path + (f"?{target.query}" if target.netloc == self.origin else "")
         headers = {
             key: request.headers.get(key)
@@ -135,6 +141,24 @@ class BrowserFixture:
     def tearDownClass(cls):
         cls.browser.close()
         cls.playwright.stop()
+
+
+def finish_animations(page: Page) -> None:
+    """Let finite animations (toast slide-in) end so geometry is measured at rest.
+
+    The stall guard uses the page's setTimeout, so under a paused Playwright clock it never fires:
+    call this before page.clock.install, not after.
+    """
+    page.evaluate(
+        """async () => {
+            const stalled = new Promise((_, fail) => setTimeout(
+                () => fail(Error("finish_animations stalled")), 7000));
+            const finite = document.getAnimations().filter(a =>
+                a instanceof CSSAnimation && Number.isFinite(a.effect?.getComputedTiming().iterations));
+            finite.forEach(a => a.finish());
+            await Promise.race([Promise.all(finite.map(a => a.finished.catch(() => {}))), stalled]);
+        }"""
+    )
 
 
 def parse_options():

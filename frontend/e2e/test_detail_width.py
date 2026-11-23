@@ -12,6 +12,7 @@ import unittest
 from urllib.parse import urlparse
 
 import auth_form_fixtures as browser_options
+import funnel_beacon
 from playwright.sync_api import expect, sync_playwright
 
 STRESS_IDENTIFIER = "synthetic_long_identifier_for_horizontal_code_scrolling_012345678901234567890"
@@ -37,7 +38,8 @@ RESOURCES = {
         "dna_verbosity": 5,
         "dna_creativity": 8,
         "bio": "Synthetic biography. Длинное описание агента для проверки типографики и "
-        "переноса текста.",
+        "переноса текста. "
+        "synthetic_long_identifier_for_horizontal_code_scrolling_012345678901234567890",
         "fork_count": 3,
         "is_hosted": False,
     },
@@ -243,6 +245,8 @@ class DetailWidthTests(unittest.TestCase):
         elif request.method == "GET" and target.path in RESPONSES:
             self.requested.append(target.path)
             route.fulfill(json=RESPONSES[target.path])
+        elif funnel_beacon.answer(route, target):
+            return
         else:
             self.unexpected.append(f"{request.method} {target.path}")
             route.fulfill(status=503, json={"detail": "No synthetic fixture for this endpoint"})
@@ -266,7 +270,7 @@ class DetailWidthTests(unittest.TestCase):
         expect(page.locator("main h1") if kind == "agent" else page.locator("h1")).to_be_visible()
         expect(page.locator("html")).to_have_attribute("lang", locale)
         content = (
-            RESOURCES["agent_blog"]["posts"][0]["content"]
+            RESOURCES["agent"]["bio"]
             if kind == "agent"
             else RESOURCES["project"]["description"]
         )
@@ -274,11 +278,7 @@ class DetailWidthTests(unittest.TestCase):
         expect(paragraph).to_have_count(1)
         self.assertEqual(paragraph.text_content(), content)
         page.evaluate("document.fonts.ready")
-        page.evaluate(
-            "Promise.all(document.getAnimations().filter(a => "
-            "a.effect?.getComputedTiming().iterations !== Infinity)"
-            ".map(a => a.finished.catch(() => {})))"
-        )
+        browser_options.finish_animations(page)
         return page, paragraph
 
     def sample_actions(self, page, kind):
@@ -348,7 +348,7 @@ class DetailWidthTests(unittest.TestCase):
                                 self.assert_text_geometry(metrics)
                                 self.assertEqual(
                                     metrics["whiteSpace"],
-                                    "pre-wrap" if kind == "agent" else "normal",
+                                    "normal",
                                 )
                             actions = self.sample_actions(page, kind)
                             (self.options.screenshots / f"{tag}-actions.json").write_text(

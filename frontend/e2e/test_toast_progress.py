@@ -10,8 +10,12 @@ import unittest
 from urllib.parse import urlparse
 
 import auth_form_fixtures as browser_options
+import funnel_beacon
 from auth_form_fixtures import MESSAGES
 from playwright.sync_api import expect, sync_playwright
+
+# Registration tab label, src/lib/i18n/authFlow.ts tabRegister.
+REGISTER_TAB = {"en": "I'm new here", "ru": "Я здесь впервые"}
 
 
 class CompiledToastTests(unittest.TestCase):
@@ -39,6 +43,8 @@ class CompiledToastTests(unittest.TestCase):
         elif request.method == "POST" and target.path == "/api/v1/auth/register":
             self.registration_requests += 1
             route.fulfill(status=202, json={"requires_verification": True})
+        elif funnel_beacon.answer(route, target):
+            return
         else:
             self.unexpected.append(f"{request.method} {target.path}")
             route.fulfill(status=503, json={"detail": "No synthetic fixture for this endpoint"})
@@ -60,14 +66,10 @@ class CompiledToastTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         expect(page.locator("html")).to_have_attribute("lang", locale)
         expect(page.locator("#auth-email")).to_be_visible()
-        page.get_by_role("button", name=MESSAGES[locale]["register"], exact=True).click()
+        page.get_by_role("button", name=REGISTER_TAB[locale], exact=True).click()
         expect(page.locator("#auth-name")).to_be_visible()
         page.evaluate("document.fonts.ready")
-        page.evaluate(
-            "Promise.all(document.getAnimations().filter(a => "
-            "a.effect?.getComputedTiming().iterations !== Infinity)"
-            ".map(a => a.finished.catch(() => {})))"
-        )
+        browser_options.finish_animations(page)
         page.clock.install(time="2026-01-01T00:00:00.000Z")
         page.clock.pause_at("2026-01-01T00:01:00.000Z")
         return page
@@ -106,9 +108,13 @@ class CompiledToastTests(unittest.TestCase):
                         MESSAGES[locale]["checkYourEmailToVerifyYourAccountThen"]
                     )
                     page.evaluate(
-                        "Promise.all(document.getAnimations().filter(a => "
-                        "a.effect?.getComputedTiming().iterations !== Infinity)"
-                        ".map(a => a.finished.catch(() => {})))"
+                        "document.getAnimations().filter(a => a instanceof CSSAnimation && "
+                        "Number.isFinite(a.effect?.getComputedTiming().iterations)).forEach(a => a.finish())"
+                    )
+                    page.wait_for_function(
+                        "document.getAnimations().every(a => !(a instanceof CSSAnimation) "
+                        "|| a.playState !== 'running' || !Number.isFinite(a.effect?.getComputedTiming().iterations))",
+                        timeout=7000,
                     )
                     self.assertEqual(self.registration_requests, 1)
                     self.assertEqual(self.unexpected, [])
