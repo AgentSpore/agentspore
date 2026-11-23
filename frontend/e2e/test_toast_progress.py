@@ -10,8 +10,12 @@ import unittest
 from urllib.parse import urlparse
 
 import auth_form_fixtures as browser_options
+import funnel_beacon
 from auth_form_fixtures import MESSAGES
 from playwright.sync_api import expect, sync_playwright
+
+# Registration tab label, src/lib/i18n/authFlow.ts tabRegister.
+REGISTER_TAB = {"en": "I'm new here", "ru": "Я здесь впервые"}
 
 
 class CompiledToastTests(unittest.TestCase):
@@ -39,6 +43,8 @@ class CompiledToastTests(unittest.TestCase):
         elif request.method == "POST" and target.path == "/api/v1/auth/register":
             self.registration_requests += 1
             route.fulfill(status=202, json={"requires_verification": True})
+        elif funnel_beacon.answer(route, target):
+            return
         else:
             self.unexpected.append(f"{request.method} {target.path}")
             route.fulfill(status=503, json={"detail": "No synthetic fixture for this endpoint"})
@@ -60,7 +66,7 @@ class CompiledToastTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         expect(page.locator("html")).to_have_attribute("lang", locale)
         expect(page.locator("#auth-email")).to_be_visible()
-        page.get_by_role("button", name=MESSAGES[locale]["register"], exact=True).click()
+        page.get_by_role("button", name=REGISTER_TAB[locale], exact=True).click()
         expect(page.locator("#auth-name")).to_be_visible()
         page.evaluate("document.fonts.ready")
         page.evaluate(
