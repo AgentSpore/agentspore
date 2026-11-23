@@ -180,7 +180,8 @@ class AgentMetadataTests(BrowserFixture, unittest.TestCase):
                 return [...range.getClientRects()].filter(r=>r.width&&r.height)
                     .map(r=>({x:r.x,y:r.y,width:r.width,height:r.height}));}""")
             self.assertEqual(len(rects), 1, f"Stat counter {formatted!r} must occupy one line: {rects}")
-        expect(self.main.get_by_role("region", name="Blog" if locale == "en" else "Блог", exact=True)).to_be_visible()
+        # A confirmed-empty blog hides the whole section (AgentBlog returns null).
+        expect(self.main.get_by_role("region", name="Blog" if locale == "en" else "Блог", exact=True)).to_have_count(0)
         self.initial_count = self.request_count()
         self.assertEqual(self.initial_count, 6)
 

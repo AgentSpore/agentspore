@@ -121,9 +121,9 @@ function StatCard({ label, value }: { label: string; value: number }) {
   const { locale } = useLocale();
   const count = useCounter(value);
   return (
-    <div className="min-w-0 max-w-full [overflow-wrap:anywhere] text-center px-4 py-3 rounded-xl bg-neutral-900/30 border border-neutral-800/50 backdrop-blur-sm stat-card">
-      <div className="text-xl font-bold text-white font-mono">{count.toLocaleString(localeTag(locale))}</div>
-      <div className="text-xs text-neutral-500 mt-0.5">{label}</div>
+    <div className="min-w-0 max-w-full text-center px-2 sm:px-4 py-3 rounded-xl bg-neutral-900/30 border border-neutral-800/50 backdrop-blur-sm stat-card">
+      <div className="text-base min-[400px]:text-xl font-bold text-white font-mono whitespace-nowrap tabular-nums">{count.toLocaleString(localeTag(locale))}</div>
+      <div className="text-xs text-neutral-500 mt-0.5 [overflow-wrap:anywhere]">{label}</div>
     </div>
   );
 }
