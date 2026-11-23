@@ -210,3 +210,11 @@ main {
     max-width: 70ch;
   }
 }
+
+/* WCAG 2.4.11: keyboard focus scrolls a target into view; keep it below the sticky header
+   (68 px on mobile: 44 px row + 2 x 12 px padding; 64 px from lg). */
+@layer base {
+  html {
+    scroll-padding-top: 4.5rem;
+  }
+}
