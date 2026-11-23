@@ -66,6 +66,7 @@ RECTS = """el=>{
  if(/^(hidden|clip|auto|scroll)$/.test(s.overflowY)){b[1]=Math.max(b[1],y);b[3]=Math.min(b[3],y+p.clientHeight);}}
  if(b[0]<b[2]&&b[1]<b[3])result.push(b);}}return result;
 }"""
+
 def without_indexes(value):
     """Retain identity fields while normalizing indexes shifted by the one wrapper."""
     if isinstance(value, dict):
@@ -122,10 +123,9 @@ class LocalTextMaskTests(BrowserFixture, unittest.TestCase):
         value["elements"] = [
             item for item in value["elements"] if not self.wrapper or item["identity"]["index"] != index
         ]
-        if self.kind == "title":
-            for item in value["elements"]:
-                if item["identity"]["index"] == index:
-                    del item["styles"]["webkitTextFillColor"]
+        for item in value["elements"]:
+            if item["identity"]["index"] == index:
+                del item["styles"]["webkitTextFillColor"]
         return without_indexes(value)
 
     def capture(self, name):
