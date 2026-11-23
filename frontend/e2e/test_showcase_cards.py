@@ -15,7 +15,7 @@ from test_project_cards import PROJECTS as CARD_PROJECTS
 AXE = Path(__file__).resolve().parents[1] / "node_modules/axe-core/axe.min.js"
 VIEWPORTS = {"desktop": (1440, 900), "mobile": (390, 844)}
 ORG = "https://github.com/SyntheticResearchToolsOrganization/"
-BASE = dict(CARD_PROJECTS[0], tech_stack=["TypeScript"], deploy_url="https://showcase-fixture.invalid/app")
+BASE = dict(CARD_PROJECTS[0], tech_stack=["TypeScript"], deploy_url="https://showcase-fixture.invalid/app", service_live=False)
 
 
 def project(index, title, repo, **extra):
@@ -23,17 +23,17 @@ def project(index, title, repo, **extra):
 
 
 PROJECTS = [
-    project(1, "Synthetic duplicate otkrytka", "otkrytka", description="Greeting cards"),
-    project(2, "Synthetic duplicate podmemory", "podmemory", description="Flashcards"),
-    project(3, "Synthetic verdict", "verdict", description="A synthetic English description"),
+    project(1, "Synthetic duplicate otkrytka", "otkrytka", description="Greeting cards", service_live=True),
+    project(2, "Synthetic duplicate podmemory", "podmemory", description="Flashcards", service_live=True),
+    project(3, "Synthetic verdict", "verdict", description="A synthetic English description", service_live=True),
     project(4, "Synthetic empty", "dawntask", description=""),
     project(5, "Synthetic russian", "vibecheck", description="Синтетическое описание на русском языке"),
+    project(6, "Synthetic hidden live", "nuvistela", description="Hidden live service", service_live=True),
+    project(8, "Synthetic duplicate saascalc", "saascalc", description="Calculator", service_live=True),
+    project(7, "Synthetic hidden archived", "Nuvistela", description="Hidden archived service"),
 ]
-DUPLICATES = {"Synthetic duplicate otkrytka", "Synthetic duplicate podmemory"}
-FALLBACKS = {
-    "en": ("The author has not added a description yet.", "Description is available in the project, in another language."),
-    "ru": ("Автор пока не добавил описание.", "Описание доступно в проекте на другом языке."),
-}
+DUPLICATES = {"Synthetic duplicate otkrytka", "Synthetic duplicate podmemory", "Synthetic duplicate saascalc"}
+FALLBACKS = {"en": "The author has not added a description yet.", "ru": "Автор пока не добавил описание."}
 PROBE = """() => {
   window.__cls = 0;
   new PerformanceObserver(list => { for (const e of list.getEntries()) if (!e.hadRecentInput) window.__cls += e.value; })
@@ -86,7 +86,7 @@ class ShowcaseCardTests(BrowserFixture, unittest.TestCase):
 
     def check_cards(self, page):
         cards = page.evaluate(CARD_REACH)
-        self.assertGreaterEqual(len(cards), 7)
+        self.assertEqual(len(cards), 6)
         for card in cards:
             self.assertEqual(card, {"links": 1, "reach": True, "nested": False})
 
@@ -106,9 +106,23 @@ class ShowcaseCardTests(BrowserFixture, unittest.TestCase):
         self.assertEqual(page.evaluate(THUMBS), before)
         self.assertLess(page.evaluate("window.__cls"), 0.1)
         text = page.locator("main").inner_text()
-        for fallback in FALLBACKS[locale]:
-            self.assertIn(fallback, text)
-        (self.assertNotIn if locale == "en" else self.assertIn)("Синтетическое описание на русском языке", text)
+        self.assertIn(FALLBACKS[locale], text)
+        self.assertIn("Синтетическое описание на русском языке", text)
+
+    def check_nuvistela_absent(self, page):
+        self.assertNotIn("nuvistela", page.locator("main").inner_text().lower())
+        self.assertEqual(page.locator('main a[href*="uvistela" i]').count(), 0)
+        self.assertEqual(page.locator("main h3", has_text="Synthetic hidden").count(), 0)
+
+    def check_sections(self, page):
+        archive = page.locator('main section[aria-labelledby="project-archive"]')
+        titles = archive.locator("h3").all_text_contents()
+        self.assertEqual(sorted(t.split(":")[0] for t in titles), ["Synthetic empty", "Synthetic russian"])
+        self.assertEqual(page.locator('main section[aria-labelledby="selected-services"] h3', has_text="Synthetic verdict").count(), 1)
+        self.assertEqual(archive.locator("h3", has_text="Synthetic verdict").count(), 0)
+        hrefs = archive.locator("a[data-card-link]").evaluate_all("els => els.map(e => e.href)")
+        self.assertTrue(hrefs and all(h.startswith(ORG) for h in hrefs), hrefs)
+        self.assertEqual(archive.locator('a[href*="showcase-fixture.invalid"]').count(), 0)
 
     def check_axe(self, page):
         page.add_script_tag(path=str(AXE))
@@ -127,6 +141,8 @@ class ShowcaseCardTests(BrowserFixture, unittest.TestCase):
                     self.check_cards(page)
                     self.check_no_repeats(page)
                     self.check_stable_thumbs(page, locale)
+                    self.check_nuvistela_absent(page)
+                    self.check_sections(page)
                     self.check_axe(page)
                     page.screenshot(path=str(self.options.screenshots / f"showcase-{locale}-{label}-full.png"), full_page=True, timeout=30000)
 

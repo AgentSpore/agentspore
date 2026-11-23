@@ -25,6 +25,7 @@ LIVE = dict(
     repo_url=REPO,
     deploy_url=DEMO,
     tech_stack=[TECH, "TypeScript", "Python", "PostgreSQL", "Redis"],
+    service_live=True,
 )
 ARCHIVED = dict(
     LIVE,
@@ -33,6 +34,7 @@ ARCHIVED = dict(
     repo_url="https://github.com/SyntheticResearchToolsOrganization/otkrytka",
     status="archived",
     deploy_url=None,
+    service_live=False,
 )
 ARCHIVED_OTHER = dict(
     ARCHIVED,
@@ -45,23 +47,31 @@ UNLISTED = dict(
     id="00000000-0000-4000-8000-000000000103",
     title="Synthetic unlisted tool",
     repo_url="https://github.com/SyntheticResearchToolsOrganization/unlisted-tool",
+    service_live=False,
 )
-PROJECTS = [LIVE, ARCHIVED, ARCHIVED_OTHER, UNLISTED]
+HIDDEN_LIVE = dict(
+    LIVE,
+    id="00000000-0000-4000-8000-000000000105",
+    title="Synthetic hidden live",
+    repo_url="https://github.com/SyntheticResearchToolsOrganization/nuvistela",
+)
+HIDDEN_ARCHIVED = dict(HIDDEN_LIVE, id="00000000-0000-4000-8000-000000000106", title="Synthetic hidden archived", service_live=False)
+PROJECTS = [LIVE, ARCHIVED, ARCHIVED_OTHER, UNLISTED, HIDDEN_LIVE, HIDDEN_ARCHIVED]
 SENTINEL = "Synthetic private failure sentinel"
 COPY = {
     "en": (
-        "home",
-        "catalog apps",
-        "No catalog apps found. The services above remain available to explore.",
-        "Catalog unavailable. You can still read the service instructions above.",
+        "Home",
+        "archived projects",
+        "No archived projects found.",
+        "Archive unavailable.",
         "Retry",
         "Stale — last updated",
     ),
     "ru": (
-        "главная",
-        "проектов в каталоге",
-        "В каталоге пока нет проектов. Инструкции сервисов выше доступны.",
-        "Каталог недоступен. Инструкции сервисов выше можно прочитать.",
+        "Главная",
+        "проектов в архиве",
+        "В архиве пока нет проектов.",
+        "Архив недоступен.",
         "Повторить",
         "Устарело: последнее обновление",
     ),
@@ -152,7 +162,8 @@ class ShowcaseCatalogTests(BrowserFixture, unittest.TestCase):
         self.page.expose_function("__heldCatalog", lambda: len(self.http.pending))
         self.page.goto(self.options.base_url + "/showcase", wait_until="domcontentloaded")
         self.main = self.page.locator("#main-content")
-        self.catalog = self.main.locator('section[aria-labelledby="project-catalog"]')
+        self.live = self.main.locator('section[aria-labelledby="selected-services"]')
+        self.catalog = self.main.locator('section[aria-labelledby="project-archive"]')
         self.home = self.main.get_by_role("link", name=COPY[locale][0], exact=True)
         self.cards = self.catalog.locator("h3")
 
@@ -166,7 +177,7 @@ class ShowcaseCatalogTests(BrowserFixture, unittest.TestCase):
     def save(self, state):
         self.settle()
         self.catalog.scroll_into_view_if_needed()
-        metrics = {"catalog": self.catalog.evaluate(METRICS), "breadcrumb": self.home.locator("..").evaluate(METRICS)}
+        metrics = {"live": self.live.evaluate(METRICS), "catalog": self.catalog.evaluate(METRICS), "breadcrumb": self.home.locator("..").evaluate(METRICS)}
         record = {
             "locale": self.locale,
             "width": self.width,
@@ -217,7 +228,7 @@ class ShowcaseCatalogTests(BrowserFixture, unittest.TestCase):
         self.focus.append(target.evaluate(FOCUS))
 
     def popup(self, url):
-        link = self.catalog.locator(f'a[href="{url}"]')
+        link = self.live.locator(f'a[href="{url}"]')
         expect(link).to_have_attribute("target", "_blank")
         rel = link.get_attribute("rel") or ""
         self.assertTrue({"noopener", "noreferrer"} <= set(rel.split()))
@@ -231,10 +242,17 @@ class ShowcaseCatalogTests(BrowserFixture, unittest.TestCase):
         popup.close()
 
     def populated_flow(self):
-        expect(self.cards).to_have_count(2)
-        expect(self.cards.filter(has_text=ARCHIVED["title"])).to_have_count(0)
-        expect(self.cards.filter(has_text=TITLE)).to_be_visible()
-        expect(self.catalog.get_by_text(HANDLE, exact=True)).to_have_count(2)
+        expect(self.cards).to_have_count(3)
+        expect(self.cards.filter(has_text=ARCHIVED["title"])).to_have_count(1)
+        expect(self.cards.filter(has_text=TITLE)).to_have_count(0)
+        expect(self.live.locator("h3")).to_have_count(1)
+        expect(self.live.locator("h3").filter(has_text=TITLE)).to_be_visible()
+        expect(self.catalog.locator(f'a[href="{DEMO}"]')).to_have_count(0)
+        expect(self.catalog.locator(f'a[href="{REPO}"]')).to_have_count(0)
+        expect(self.catalog.locator("a[data-card-link]")).to_have_count(3)
+        expect(self.main.locator("h3", has_text="Synthetic hidden")).to_have_count(0)
+        expect(self.main.locator('a[href*="uvistela" i]')).to_have_count(0)
+        expect(self.main.get_by_text(HANDLE, exact=True)).to_have_count(4)
         self.save("populated")
         self.native(self.home)
         before = len(self.http.calls)
@@ -283,23 +301,23 @@ class ShowcaseCatalogTests(BrowserFixture, unittest.TestCase):
         expect(retry).to_have_count(1)
         self.native(retry)
         self.page.keyboard.press("Enter")
-        self.reply([] if self.locale == "en" else [UNLISTED])
+        self.reply([] if self.locale == "en" else [HIDDEN_LIVE, HIDDEN_ARCHIVED])
         expect(self.catalog.get_by_text(COPY[self.locale][2], exact=True)).to_be_visible()
         expect(self.catalog.get_by_text("0 " + COPY[self.locale][1], exact=True)).to_be_visible()
         self.save("confirmed-empty")
         self.page.clock.fast_forward(30000)
         self.reply(PROJECTS)
-        expect(self.cards).to_have_count(2)
+        expect(self.cards).to_have_count(3)
         self.page.clock.fast_forward(30000)
         self.reply(failure=True)
         expect(self.catalog.get_by_role("status").filter(has_text=COPY[self.locale][5])).to_be_visible()
-        expect(self.cards).to_have_count(2)
+        expect(self.cards).to_have_count(3)
         self.save("stale-retained")
         retry = self.catalog.get_by_role("button", name=COPY[self.locale][4], exact=True)
         self.native(retry)
         self.page.keyboard.press("Enter")
         self.reply(PROJECTS)
-        expect(self.cards).to_have_count(2)
+        expect(self.cards).to_have_count(3)
         expect(self.catalog.get_by_role("status").filter(has_text=COPY[self.locale][5])).to_have_count(0)
         self.save("recovered")
         self.assertEqual(self.issues() + behavior, [])

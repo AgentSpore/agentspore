@@ -1,4 +1,7 @@
-"""Read-only production-homepage checks using isolated Chrome and public catalog shapes."""
+"""Read-only production-homepage checks using isolated Chrome and public catalog shapes.
+
+Build with NEXT_PUBLIC_API_URL=https://agentspore.com and serve on a loopback `localhost` base URL.
+"""
 import hashlib
 import json
 import os
@@ -8,7 +11,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
-from auth_form_fixtures import BrowserFixture, parse_options
+import funnel_beacon
+from auth_form_fixtures import PREFETCH, BrowserFixture, parse_options
 from playwright.sync_api import expect
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +46,8 @@ def verify_production_build(root, base_url, source_manifest=None):
     return build
 
 
+OWNER_HIDDEN_SLUGS = frozenset({"nuvistela"})  # copied on purpose: the oracle must not import the rule it checks
+
 class HomeServicesTests(BrowserFixture, unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -51,10 +57,16 @@ class HomeServicesTests(BrowserFixture, unittest.TestCase):
             cls.catalog = json.load(response)
         with urlopen("https://agentspore.com/api/v1/agents/stats") as response:
             cls.stats = json.load(response)
+        cls.live = [
+            p for p in cls.catalog
+            if p.get("service_live") is True and p.get("deploy_url")
+            # Owner decision: Nuvistela is never listed on home, whatever the probe says.
+            and (p.get("repo_url") or "").rstrip("/").rsplit("/", 1)[-1].lower() not in OWNER_HIDDEN_SLUGS
+        ]
         super().setUpClass()
 
     def open_home(self, locale="en", width=1440, fixture=None, hold=False, status=200):
-        self.errors, self.pending, self.expected, self.prefetch = [], [], [], []
+        self.errors, self.pending, self.expected, self.prefetch, self.beacons = [], [], [], [], []
         self.context = self.browser.new_context(viewport={"width": width, "height": 900},
                                                 service_workers="block")
         self.addCleanup(self.context.close)
@@ -70,10 +82,12 @@ class HomeServicesTests(BrowserFixture, unittest.TestCase):
 
         def route_request(route):
             request = route.request
-            if request.method != "GET":
-                self.errors.append({"kind": "blocked-write", "path": urlparse(request.url).path})
-                return route.abort()
             target = urlparse(request.url)
+            if funnel_beacon.is_beacon(request, target):
+                return route.fulfill(status=204, headers={"access-control-allow-origin": self.options.base_url})
+            if request.method != "GET":
+                self.errors.append({"kind": "blocked-write", "path": target.path})
+                return route.abort()
             if target.path == "/api/v1/projects" and target.query == "limit=200":
                 if hold:
                     self.pending.append(route)
@@ -92,10 +106,14 @@ class HomeServicesTests(BrowserFixture, unittest.TestCase):
         item = {"kind": "requestfailed", "path": path, "cause": request.failure}
         native = request.method == "GET" and urlparse(request.url).netloc == urlparse(self.options.base_url).netloc
         native = native and request.header_value("next-router-prefetch") == "1" and request.failure == "net::ERR_ABORTED"
-        known = path in ("/", "/showcase", "/workspace", "/projects", "/agents", "/login", "/dashboard")
+        if request.method == "POST" and path == funnel_beacon.PATH and request.failure == "net::ERR_ABORTED" and self.beacons:
+            return  # Chromium reports a fulfilled keepalive beacon as aborted after its 204 arrived.
+        known = path in PREFETCH or re.fullmatch(r"/projects/[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", path) is not None
         (self.prefetch if native and known else self.errors).append(item)
 
     def check_response(self, response):
+        if response.request.method == "POST" and urlparse(response.url).path == funnel_beacon.PATH and response.status == 204:
+            self.beacons.append(response.url)
         if response.status < 400:
             return
         path = urlparse(response.url).path
@@ -109,13 +127,13 @@ class HomeServicesTests(BrowserFixture, unittest.TestCase):
             "document.documentElement.scrollWidth > innerWidth"))
 
     def test_01_real_catalog_locales_links_and_settled_counters(self):
-        deployed = [p for p in self.catalog if p["status"] == "deployed" and p.get("deploy_url")]
-        self.assertEqual(len(deployed), 3)
+        deployed = self.live
+        self.assertTrue(1 <= len(deployed) <= 6, len(deployed))
         snapshots = []
         for locale in ("en", "ru"):
             self.open_home(locale)
-            expect(self.section.locator("article")).to_have_count(3)
-            self.assertEqual(self.section.locator('a[href^="/projects/"]').count(), 3)
+            expect(self.section.locator("article")).to_have_count(len(deployed))
+            self.assertEqual(self.section.locator('a[href^="/projects/"]').count(), len(deployed))
             for project in deployed:
                 expect(self.section.locator(f'a[href="/projects/{project["id"]}"]')).to_have_count(1)
             for link in self.section.locator('a[target="_blank"]').all():
@@ -168,9 +186,22 @@ class HomeServicesTests(BrowserFixture, unittest.TestCase):
         expect(self.section.get_by_role("status")).to_contain_text("No deployed services")
         self.assert_clean()
 
+    def test_03b_hidden_service_stays_off_the_list_even_when_live(self):
+        shown = dict(self.live[0], title="Synthetic shown service", repo_url=None,
+                     deploy_url="https://shown-fixture.invalid/app")
+        hidden = dict(shown, id="00000000-0000-4000-8000-000000000301", title="Synthetic hidden service",
+                      repo_url="https://github.com/SyntheticResearchToolsOrganization/Nuvistela",
+                      deploy_url="https://hidden-fixture.invalid/app")
+        self.open_home(fixture=[shown, hidden])
+        expect(self.section.locator("article")).to_have_count(1)
+        expect(self.section.get_by_text("Synthetic shown service")).to_be_visible()
+        expect(self.section.get_by_text("Synthetic hidden service")).to_have_count(0)
+        expect(self.section.locator('a[href*="hidden-fixture"]')).to_have_count(0)
+        self.assert_clean()
+
     def test_04_malformed_response_retains_ssr_with_warning(self):
         self.open_home(fixture={"projects": []})
-        expect(self.section.locator("article")).to_have_count(3)
+        expect(self.section.locator("article")).to_have_count(len(self.live))
         expect(self.section.get_by_role("status")).to_contain_text("Couldn't refresh")
         self.assert_clean()
 
@@ -178,18 +209,18 @@ class HomeServicesTests(BrowserFixture, unittest.TestCase):
         self.fault = True
         self.open_home(fixture={"detail": "Synthetic catalog outage"}, status=500)
         expect(self.section.get_by_role("status")).to_contain_text("Couldn't refresh")
-        expect(self.section.locator("article")).to_have_count(3)
+        expect(self.section.locator("article")).to_have_count(len(self.live))
         self.assertEqual(len(self.expected), 1)
         self.assertEqual(self.errors, [{"kind": "console", "path": "/api/v1/projects"}])
         self.section.screenshot(path=self.options.screenshots / "services-stale.png")
 
     def test_06_slow_refresh_preserves_ssr_then_long_unknown_card(self):
         self.open_home(hold=True, width=320)
-        expect(self.section.locator("article")).to_have_count(3)
+        expect(self.section.locator("article")).to_have_count(len(self.live))
         self.page.expose_function("__catalogHeld", lambda: len(self.pending))
         self.page.wait_for_function("async () => await window.__catalogHeld() === 1")
         project = dict(self.catalog[0], title="LongServiceName" * 28, description="LongPurpose" * 60,
-                       status="deployed", repo_url=None, deploy_url="https://example.org/application")
+                       status="deployed", service_live=True, repo_url=None, deploy_url="https://example.org/application")
         self.pending.pop().fulfill(json=[project])
         expect(self.section.locator("article")).to_have_count(1)
         link = self.section.locator('a[target="_blank"]')
