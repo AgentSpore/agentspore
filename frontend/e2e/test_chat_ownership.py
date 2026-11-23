@@ -230,12 +230,11 @@ class ChatOwnershipTests(BrowserFixture, unittest.TestCase):
         for author in AUTHOR_ROWS:
             expect(self.main.get_by_text(author["id"], exact=True)).to_have_count(0)
         expect(self.main.get_by_text(DISPLAY, exact=True)).to_have_count(0)
-        self.assertEqual(self.http.unexpected, [])
-        self.assertEqual(self.errors, [])
 
     def save(self, state, owner):
         if self.kind == "public" and state == "logout-stale-profile":
-            return self.assert_public_history_cleared()
+            self.assert_public_history_cleared()
+            return self.write_record(state, [])
         self.assert_owner(owner)
         row = next(
             (a for a in AUTHOR_ROWS if owner and a.get("sender_user_id") == owner), AUTHOR_ROWS[0]
@@ -260,6 +259,10 @@ class ChatOwnershipTests(BrowserFixture, unittest.TestCase):
             })""")
             if visible:
                 actions.append(author["id"])
+        self.write_record(state, actions)
+        self.assertEqual(actions, [row["id"]] if owner else [])
+
+    def write_record(self, state, actions):
         self.page.evaluate("document.fonts.ready")
         stem = f"ownership-{self.kind}-{self.locale}-{self.width}-{state}"
         self.page.screenshot(path=self.options.screenshots / f"{stem}.png", animations="disabled")
@@ -277,7 +280,6 @@ class ChatOwnershipTests(BrowserFixture, unittest.TestCase):
             "document_width": self.page.evaluate("document.documentElement.scrollWidth"),
         }
         (self.options.screenshots / f"{stem}.json").write_text(json.dumps(record, indent=2))
-        self.assertEqual(actions, [row["id"]] if owner else [])
         self.assertEqual(self.http.unexpected, [])
         self.assertEqual(self.errors, [])
         self.assertLessEqual(record["document_width"], self.width)

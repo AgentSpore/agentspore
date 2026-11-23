@@ -394,13 +394,15 @@ class WorkspaceStateTests(unittest.TestCase):
         self.capture(page, "history-expanded")
         collapse.press("Enter")
         expect(self.main.get_by_text("Synthetic receipt 1", exact=True)).to_have_count(0)
-        language = page.get_by_role(
-            "button", name="RU Русский" if self.locale == "en" else "EN English", exact=True
-        ).first
-        if not language.is_visible():
-            page.get_by_role(
-                "button", name="Menu" if self.locale == "en" else "Меню", exact=True
-            ).click()
+        language_name = "RU Русский" if self.locale == "en" else "EN English"
+        language = page.get_by_role("button", name=language_name, exact=True).and_(
+            page.locator(":visible")
+        )
+        if language.count() == 0:
+            menu = page.get_by_role("button", name="Menu" if self.locale == "en" else "Меню", exact=True)
+            menu.click()
+            panel = page.locator(f"[id='{menu.get_attribute('aria-controls')}']")
+            language = panel.get_by_role("button", name=language_name, exact=True)
         language.press("Enter")
         expect(page.locator("html")).to_have_attribute(
             "lang", "ru" if self.locale == "en" else "en"

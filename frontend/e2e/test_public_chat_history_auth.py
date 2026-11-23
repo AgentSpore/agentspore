@@ -160,6 +160,7 @@ class PublicChatHistoryAuthTests(unittest.TestCase):
         self.assertEqual(self.http.reply()["authorization"], "Bearer " + TOKEN_A)
         self.assert_signin_notice()
         self.save("unauthorized-before-rotation")
+        # Rotation recovery: the page notices the new token (storage event or its own poll).
         self.page.evaluate(
             """token => {
             localStorage.setItem('access_token', token);
@@ -171,6 +172,7 @@ class PublicChatHistoryAuthTests(unittest.TestCase):
         self.assertEqual(self.http.reply()["authorization"], "Bearer " + TOKEN_B)
         expect(self.page.get_by_text(ROWS[0]["content"], exact=True)).to_be_visible()
         expect(self.page.get_by_text(SIGN_IN[self.locale], exact=True)).to_have_count(0)
+        expect(self.page.locator("main").get_by_role("alert")).to_have_count(0)
         self.assertEqual(len(self.http.requests), 2)
         self.save("rotated-recovered")
 
