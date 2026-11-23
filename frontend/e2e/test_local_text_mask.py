@@ -6,9 +6,10 @@ import json
 import unittest
 from argparse import Namespace
 
+from playwright.sync_api import Browser
+
 import test_project_cards as cards
 from auth_form_fixtures import BrowserFixture, parse_options
-from playwright.sync_api import Browser
 
 STATE = """root=>{
  const properties=['outlineStyle','outlineColor','outlineWidth','outlineOffset',
@@ -66,16 +67,9 @@ RECTS = """el=>{
  if(/^(hidden|clip|auto|scroll)$/.test(s.overflowY)){b[1]=Math.max(b[1],y);b[3]=Math.min(b[3],y+p.clientHeight);}}
  if(b[0]<b[2]&&b[1]<b[3])result.push(b);}}return result;
 }"""
-WRAP = """el=>{
- if(!el.childNodes.length||[...el.childNodes].some(n=>n.nodeType!==Node.TEXT_NODE))
- throw Error('Expected only direct vote text');
- const span=document.createElement('span');span.dataset.localTextMask='';
- span.append(...el.childNodes);el.append(span);
-}"""
-
 
 def without_indexes(value):
-    """Retain identity fields while normalizing indexes shifted by the one wrapper."""
+    """Retain identity fields and drop document indexes from a captured state."""
     if isinstance(value, dict):
         return {key: without_indexes(item) for key, item in value.items() if key != "index"}
     if isinstance(value, list):
@@ -104,8 +98,8 @@ class LocalTextMaskTests(BrowserFixture, unittest.TestCase):
         self.card = self.page.locator("main article").first
         self.button = self.card.get_by_role("button").first
         self.focused = self.card.locator("h3 a") if kind == "title" else self.button
-        self.original_target = self.card.locator("h3 a span") if kind == "title" else self.button
-        self.target, self.kind, self.wrapper = self.original_target, kind, False
+        self.original_target = self.card.locator("h3 a span" if kind == "title" else "button span").first
+        self.target, self.kind = self.original_target, kind
         self.page.mouse.move(0, 0)
         for _ in range(80):
             self.page.keyboard.press("Tab")
@@ -127,13 +121,9 @@ class LocalTextMaskTests(BrowserFixture, unittest.TestCase):
     def canonical(self, state):
         value = json.loads(json.dumps(state))
         index = self.target.evaluate("el=>[...document.body.querySelectorAll('*')].indexOf(el)")
-        value["elements"] = [
-            item for item in value["elements"] if not self.wrapper or item["identity"]["index"] != index
-        ]
-        if self.kind == "title":
-            for item in value["elements"]:
-                if item["identity"]["index"] == index:
-                    del item["styles"]["webkitTextFillColor"]
+        for item in value["elements"]:
+            if item["identity"]["index"] == index:
+                del item["styles"]["webkitTextFillColor"]
         return without_indexes(value)
 
     def capture(self, name):
@@ -156,12 +146,7 @@ class LocalTextMaskTests(BrowserFixture, unittest.TestCase):
         self.capture("original")
         style = None
         try:
-            if self.kind == "upvote":
-                self.button.evaluate(WRAP)
-                self.wrapper = True
-                self.target = self.button.locator("[data-local-text-mask]")
-            else:
-                self.target.evaluate("el=>el.setAttribute('data-local-text-mask','')")
+            self.target.evaluate("el=>el.setAttribute('data-local-text-mask','')")
             self.capture("original-repeat")
             for key in ("canonical", "rects", "image"):
                 self.assertEqual(self.shots["original"][key], self.shots["original-repeat"][key])
@@ -173,11 +158,8 @@ class LocalTextMaskTests(BrowserFixture, unittest.TestCase):
         finally:
             if style is not None:
                 style.evaluate("el=>el.remove()")
-            if self.wrapper:
-                self.target.evaluate("el=>el.replaceWith(...el.childNodes)")
-            else:
-                self.target.evaluate("el=>el.removeAttribute('data-local-text-mask')")
-            self.wrapper, self.target = False, self.original_target
+            self.target.evaluate("el=>el.removeAttribute('data-local-text-mask')")
+            self.target = self.original_target
             self.capture("restored")
             self.capture("restored-repeat")
 

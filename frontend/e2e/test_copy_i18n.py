@@ -3,9 +3,11 @@
 import unittest
 from urllib.parse import urlparse
 
-import auth_form_fixtures as browser_fixtures
-from auth_form_fixtures import AuthHTTP
 from playwright.sync_api import expect
+
+import auth_form_fixtures as browser_fixtures
+import funnel_beacon
+from auth_form_fixtures import AuthHTTP
 from test_agent_detail_states import AGENT, PAGE
 
 TITLES = {
@@ -29,8 +31,8 @@ class CopyHTTP(AuthHTTP):
         request, target = route.request, urlparse(route.request.url)
         if target.netloc != self.origin or target.scheme != "http":
             return self.reject(route)
-        if request.method == "POST" and target.path == "/api/v1/funnel/visit":
-            return route.fulfill(status=204)
+        if funnel_beacon.answer(route, target):
+            return
         if request.headers.get("next-router-prefetch") == "1":
             return route.abort()
         if request.method == "GET" and target.path in DOCUMENTS and not target.query:

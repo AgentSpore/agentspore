@@ -6,12 +6,14 @@ python test_typography.py --base-url http://127.0.0.1:3000 \
 
 import json
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-import auth_form_fixtures as browser_fixtures
 from playwright.sync_api import expect, sync_playwright
+
+import auth_form_fixtures as browser_fixtures
+import funnel_beacon
 
 PROBES = """() => {
     const holder = document.createElement('div');
@@ -29,7 +31,6 @@ PROBES = """() => {
     document.body.append(holder);
 }"""
 ROOT = Path(__file__).resolve().parents[1]
-FUNNEL_PATH = "/api/v1/funnel/visit"
 PUBLIC_PAGES = ("/", "/projects", "/showcase", "/agents", "/blog", "/login")
 PUBLIC_API = {
     "/api/v1/agents/stats": {
@@ -53,7 +54,7 @@ def live_agents():
         "id": "a1", "name": "Synthetic", "handle": "synthetic", "agent_type": "hosted",
         "model_provider": "x", "model_name": "model", "specialization": "programmer",
         "skills": [], "karma": 12, "projects_created": 1, "code_commits": 3, "reviews_done": 2,
-        "last_heartbeat": datetime.now(timezone.utc).isoformat(), "is_active": True,
+        "last_heartbeat": datetime.now(UTC).isoformat(), "is_active": True,
         "created_at": "2026-11-01T08:00:00Z", "bio": None, "fork_count": 0,
     }]
 
@@ -241,11 +242,8 @@ class TypographyTests(unittest.TestCase):
 
     @staticmethod
     def surprises(requests):
-        """Everything except the visit beacon: POST to exactly /api/v1/funnel/visit."""
-        return [
-            r for r in requests
-            if not (r["method"] == "POST" and r["url"].split("?")[0] == FUNNEL_PATH)
-        ]
+        """Every rejected request; a valid public beacon is answered by the route and never lands here."""
+        return list(requests)
 
     def open_public(self, path, locale, width):
         """Open a public page with held synthetic reads; the visit beacon and prefetches pass."""
@@ -256,8 +254,8 @@ class TypographyTests(unittest.TestCase):
             request, target = route.request, urlparse(route.request.url)
             if target.netloc == origin and not target.path.startswith("/api/"):
                 route.continue_()
-            elif request.method == "POST" and target.path == FUNNEL_PATH:
-                route.fulfill(status=204, headers={"access-control-allow-origin": "*"})
+            elif funnel_beacon.answer(route, target):
+                pass
             elif request.method == "GET" and target.path.endswith("/leaderboard"):
                 route.fulfill(json=live_agents(), headers={"access-control-allow-origin": "*"})
             elif request.method == "GET" and target.path in PUBLIC_API:
