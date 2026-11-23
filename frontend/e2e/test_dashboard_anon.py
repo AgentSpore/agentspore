@@ -4,9 +4,10 @@ import unittest
 from pathlib import Path
 from urllib.parse import urlparse
 
+from playwright.sync_api import expect
+
 import auth_form_fixtures as browser_fixtures
 import funnel_beacon
-from playwright.sync_api import expect
 
 AXE = Path(__file__).resolve().parents[1] / "node_modules/axe-core/axe.min.js"
 VIEWPORTS = {"d": (1440, 900), "m": (390, 844)}

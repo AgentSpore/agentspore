@@ -7,9 +7,11 @@ import json
 import unittest
 from urllib.parse import urlparse
 
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import expect
+
 import auth_form_fixtures as auth
 import auth_form_fixtures as browser
-from playwright.sync_api import Error as PlaywrightError, expect
 
 TEXT = """root => {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT), records = [];

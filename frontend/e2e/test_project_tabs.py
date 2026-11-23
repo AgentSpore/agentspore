@@ -6,9 +6,10 @@ from argparse import Namespace
 from pathlib import Path
 from urllib.parse import urlparse
 
+from playwright.sync_api import expect
+
 import funnel_beacon
 from auth_form_fixtures import BrowserFixture, parse_options
-from playwright.sync_api import expect
 from test_chat_ownership import PROJECT_ID, OwnershipHTTP
 from test_project_detail_reads import CONTRIBUTOR, OWNERSHIP_DATA, PROJECT_DATA, TITLE
 

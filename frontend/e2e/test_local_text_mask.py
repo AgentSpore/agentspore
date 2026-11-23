@@ -6,9 +6,10 @@ import json
 import unittest
 from argparse import Namespace
 
+from playwright.sync_api import Browser
+
 import test_project_cards as cards
 from auth_form_fixtures import BrowserFixture, parse_options
-from playwright.sync_api import Browser
 
 STATE = """root=>{
  const properties=['outlineStyle','outlineColor','outlineWidth','outlineOffset',

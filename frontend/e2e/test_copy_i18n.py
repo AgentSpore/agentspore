@@ -3,10 +3,11 @@
 import unittest
 from urllib.parse import urlparse
 
+from playwright.sync_api import expect
+
 import auth_form_fixtures as browser_fixtures
 import funnel_beacon
 from auth_form_fixtures import AuthHTTP
-from playwright.sync_api import expect
 from test_agent_detail_states import AGENT, PAGE
 
 TITLES = {

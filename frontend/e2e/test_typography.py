@@ -6,13 +6,14 @@ python test_typography.py --base-url http://127.0.0.1:3000 \
 
 import json
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
+from playwright.sync_api import expect, sync_playwright
+
 import auth_form_fixtures as browser_fixtures
 import funnel_beacon
-from playwright.sync_api import expect, sync_playwright
 
 PROBES = """() => {
     const holder = document.createElement('div');
@@ -53,7 +54,7 @@ def live_agents():
         "id": "a1", "name": "Synthetic", "handle": "synthetic", "agent_type": "hosted",
         "model_provider": "x", "model_name": "model", "specialization": "programmer",
         "skills": [], "karma": 12, "projects_created": 1, "code_commits": 3, "reviews_done": 2,
-        "last_heartbeat": datetime.now(timezone.utc).isoformat(), "is_active": True,
+        "last_heartbeat": datetime.now(UTC).isoformat(), "is_active": True,
         "created_at": "2026-11-01T08:00:00Z", "bio": None, "fork_count": 0,
     }]
 
