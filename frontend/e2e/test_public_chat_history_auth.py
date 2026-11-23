@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 from auth_form_fixtures import AuthHTTP, BrowserFixture, USER, parse_options
 from playwright.sync_api import expect
-from test_public_chat_states import COPY, STREAM
+from test_public_chat_states import COPY, SIGN_IN, STREAM
 
 TOKEN_A, TOKEN_B = "synthetic-history-a", "synthetic-history-b"
 ROWS = [
@@ -101,7 +101,8 @@ class PublicChatHistoryAuthTests(unittest.TestCase):
         self.page.on("pageerror", lambda error: self.errors.append(str(error)))
         self.page.expose_function("__heldHistory", lambda: len(self.http.pending))
         self.page.goto(self.options.base_url + "/chat", wait_until="domcontentloaded")
-        self.wait_for_read()
+        if token:
+            self.wait_for_read()
 
     def wait_for_read(self):
         self.page.evaluate("""async () => {
@@ -133,10 +134,11 @@ class PublicChatHistoryAuthTests(unittest.TestCase):
         self.assertEqual(self.http.unexpected, [])
         self.assertEqual(self.errors, [])
 
-    def assert_error(self):
-        error, _retry, empty = COPY[self.locale]
-        expect(self.page.get_by_role("alert").get_by_text(error, exact=True)).to_be_visible()
-        expect(self.page.get_by_text(empty, exact=True)).to_have_count(0)
+    def assert_signin_notice(self):
+        """A 401 or a missing session shows the sign-in notice, never an empty chat or a retry alert."""
+        expect(self.page.get_by_role("status").get_by_text(SIGN_IN[self.locale], exact=True)).to_be_visible()
+        expect(self.page.get_by_text(COPY[self.locale][2], exact=True)).to_have_count(0)
+        expect(self.page.get_by_text(COPY[self.locale][0], exact=True)).to_have_count(0)
 
     def authenticated_history(self):
         self.assertEqual(self.http.reply()["authorization"], "Bearer " + TOKEN_A)
@@ -156,27 +158,27 @@ class PublicChatHistoryAuthTests(unittest.TestCase):
     def rotated_retry(self):
         self.http.accepted = TOKEN_B
         self.assertEqual(self.http.reply()["authorization"], "Bearer " + TOKEN_A)
-        self.assert_error()
+        self.assert_signin_notice()
         self.save("unauthorized-before-rotation")
-        self.page.evaluate("token => localStorage.setItem('access_token', token)", TOKEN_B)
-        retry = self.page.get_by_role("button", name=COPY[self.locale][1], exact=True)
-        for _ in range(self.page.locator("a[href],button,input,textarea").count() * 2 + 4):
-            self.page.keyboard.press("Tab")
-            if retry.evaluate("el => el === document.activeElement"):
-                break
-        expect(retry).to_be_focused()
-        self.page.keyboard.press("Enter")
+        # Rotation recovery: the page notices the new token (storage event or its own poll).
+        self.page.evaluate(
+            """token => {
+            localStorage.setItem('access_token', token);
+            window.dispatchEvent(new Event('storage'));
+        }""",
+            TOKEN_B,
+        )
         self.wait_for_read()
         self.assertEqual(self.http.reply()["authorization"], "Bearer " + TOKEN_B)
         expect(self.page.get_by_text(ROWS[0]["content"], exact=True)).to_be_visible()
+        expect(self.page.get_by_text(SIGN_IN[self.locale], exact=True)).to_have_count(0)
         expect(self.page.locator("main").get_by_role("alert")).to_have_count(0)
         self.assertEqual(len(self.http.requests), 2)
         self.save("rotated-recovered")
 
     def anonymous_error(self):
-        self.assertIsNone(self.http.reply()["authorization"])
-        self.assert_error()
-        self.assertEqual(len(self.http.requests), 1)
+        self.assert_signin_notice()
+        self.assertEqual(self.http.requests, [])
         self.save("anonymous-unauthorized")
 
     def matrix(self, scenario, token=TOKEN_A):

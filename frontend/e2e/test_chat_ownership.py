@@ -10,7 +10,7 @@ import funnel_beacon
 from auth_form_fixtures import AuthHTTP, BrowserFixture, USER, parse_options
 from playwright.sync_api import expect
 from test_detail_width import PROJECT_ID, RESOURCES
-from test_public_chat_states import STREAM
+from test_public_chat_states import SIGN_IN, STREAM
 
 ACCOUNT_A = "00000000-0000-4000-8000-0000000000a1"
 ACCOUNT_B = "00000000-0000-4000-8000-0000000000b1"
@@ -223,7 +223,18 @@ class ChatOwnershipTests(BrowserFixture, unittest.TestCase):
                 ).to_have_count(1 if expected else 0)
         expect(self.main.get_by_text(DISPLAY, exact=True)).to_have_count(4)
 
+    def assert_public_history_cleared(self):
+        """Signing out clears the public history and shows the sign-in notice instead."""
+        notice = self.main.get_by_role("status").filter(has_text=SIGN_IN[self.locale])
+        expect(notice).to_be_visible()
+        for author in AUTHOR_ROWS:
+            expect(self.main.get_by_text(author["id"], exact=True)).to_have_count(0)
+        expect(self.main.get_by_text(DISPLAY, exact=True)).to_have_count(0)
+
     def save(self, state, owner):
+        if self.kind == "public" and state == "logout-stale-profile":
+            self.assert_public_history_cleared()
+            return self.write_record(state, [])
         self.assert_owner(owner)
         row = next(
             (a for a in AUTHOR_ROWS if owner and a.get("sender_user_id") == owner), AUTHOR_ROWS[0]
@@ -248,6 +259,10 @@ class ChatOwnershipTests(BrowserFixture, unittest.TestCase):
             })""")
             if visible:
                 actions.append(author["id"])
+        self.write_record(state, actions)
+        self.assertEqual(actions, [row["id"]] if owner else [])
+
+    def write_record(self, state, actions):
         self.page.evaluate("document.fonts.ready")
         stem = f"ownership-{self.kind}-{self.locale}-{self.width}-{state}"
         self.page.screenshot(path=self.options.screenshots / f"{stem}.png", animations="disabled")
@@ -265,7 +280,6 @@ class ChatOwnershipTests(BrowserFixture, unittest.TestCase):
             "document_width": self.page.evaluate("document.documentElement.scrollWidth"),
         }
         (self.options.screenshots / f"{stem}.json").write_text(json.dumps(record, indent=2))
-        self.assertEqual(actions, [row["id"]] if owner else [])
         self.assertEqual(self.http.unexpected, [])
         self.assertEqual(self.errors, [])
         self.assertLessEqual(record["document_width"], self.width)

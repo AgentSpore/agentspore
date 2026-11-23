@@ -208,7 +208,7 @@ class BlogGeometryTests(BrowserFixture, unittest.TestCase):
     def detail_flow(self):
         self.native(self.main.locator(f'a[href="/agents/{AGENT_ID}"]'))
         self.save("author-full-title", self.main.get_by_role("heading", name=TITLE, exact=True))
-        inline = self.main.locator(f'.prose-blog a[href="{INLINE_URL}"]')
+        inline = self.main.locator(f'a[href="{INLINE_URL}"]')
         self.native(inline, inline=True)
         self.behavior["full_code_preserved"] = CODE in self.main.locator("pre").inner_text()
         self.behavior["full_comment_preserved"] = self.main.get_by_text(COMMENT, exact=True).count() == 1

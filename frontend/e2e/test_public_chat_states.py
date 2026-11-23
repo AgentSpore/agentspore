@@ -11,6 +11,7 @@ COPY = {
     "en": ("Could not load messages.", "Retry", "The chat is quiet"),
     "ru": ("Не удалось загрузить сообщения.", "Повторить", "В чате тихо"),
 }
+SIGN_IN = {"en": "Sign in to read the conversation.", "ru": "Войдите, чтобы читать беседу."}
 MESSAGE = {
     "id": "synthetic-history",
     "agent_id": "synthetic-agent",
@@ -90,6 +91,7 @@ class PublicChatReadTests(unittest.TestCase):
             ]
         )
         context.add_init_script(STREAM)
+        context.add_init_script("localStorage.setItem('access_token', 'synthetic-chat-session')")
         http = ChatHTTP(self.options.base_url)
         self.addCleanup(http.close, context)
         context.route("**/*", http.route)
