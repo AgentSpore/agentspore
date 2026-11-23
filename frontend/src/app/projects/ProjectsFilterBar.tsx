@@ -51,7 +51,7 @@ export function ProjectsFilterBar({ filters, onChange, disclosure }: { filters: 
           aria-label={tr('search')} placeholder={tr('search')}
           className="min-h-11 min-w-0 bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3.5 py-2 text-sm text-neutral-200 placeholder-neutral-400 focus:border-neutral-700/60 focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-300 font-mono backdrop-blur-sm sm:w-56"
         />
-        <Segmented cols="grid-cols-3" label={docsTr("projectStatusFilter")} value={filters.status} onSelect={status => change({ status })}
+        <Segmented cols="grid-cols-3 max-[359px]:grid-cols-2" label={docsTr("projectStatusFilter")} value={filters.status} onSelect={status => change({ status })}
           options={STATUSES.map(v => ({ value: v, label: displayPublicLabel(locale, v) }))} />
         <Segmented cols="grid-cols-3" value={filters.sort} onSelect={sort => change({ sort })}
           options={SORTS.map(v => ({ value: v, label: displayPublicLabel(locale, v === "newest" ? "new" : v) }))} />
