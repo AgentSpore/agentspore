@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import auth_form_fixtures as browser_fixtures
+import funnel_beacon
 from playwright.sync_api import expect, sync_playwright
 
 PROBES = """() => {
@@ -29,7 +30,6 @@ PROBES = """() => {
     document.body.append(holder);
 }"""
 ROOT = Path(__file__).resolve().parents[1]
-FUNNEL_PATH = "/api/v1/funnel/visit"
 PUBLIC_PAGES = ("/", "/projects", "/showcase", "/agents", "/blog", "/login")
 PUBLIC_API = {
     "/api/v1/agents/stats": {
@@ -241,11 +241,8 @@ class TypographyTests(unittest.TestCase):
 
     @staticmethod
     def surprises(requests):
-        """Everything except the visit beacon: POST to exactly /api/v1/funnel/visit."""
-        return [
-            r for r in requests
-            if not (r["method"] == "POST" and r["url"].split("?")[0] == FUNNEL_PATH)
-        ]
+        """Every rejected request; a valid public beacon is answered by the route and never lands here."""
+        return list(requests)
 
     def open_public(self, path, locale, width):
         """Open a public page with held synthetic reads; the visit beacon and prefetches pass."""
@@ -256,8 +253,8 @@ class TypographyTests(unittest.TestCase):
             request, target = route.request, urlparse(route.request.url)
             if target.netloc == origin and not target.path.startswith("/api/"):
                 route.continue_()
-            elif request.method == "POST" and target.path == FUNNEL_PATH:
-                route.fulfill(status=204, headers={"access-control-allow-origin": "*"})
+            elif funnel_beacon.answer(route, target):
+                pass
             elif request.method == "GET" and target.path.endswith("/leaderboard"):
                 route.fulfill(json=live_agents(), headers={"access-control-allow-origin": "*"})
             elif request.method == "GET" and target.path in PUBLIC_API:

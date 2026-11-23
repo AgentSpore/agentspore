@@ -6,6 +6,7 @@ from argparse import Namespace
 from pathlib import Path
 from urllib.parse import urlparse
 
+import funnel_beacon
 from auth_form_fixtures import BrowserFixture, parse_options
 from playwright.sync_api import expect
 from test_chat_ownership import PROJECT_ID, OwnershipHTTP
@@ -35,8 +36,8 @@ class TabsHTTP(OwnershipHTTP):
         request, target = route.request, urlparse(route.request.url)
         if target.scheme == "http" and target.netloc == self.origin and request.method == "GET" and target.path in READS:
             return route.fulfill(json=READS[target.path])
-        if request.method == "POST" and target.path == "/api/v1/funnel/visit":
-            return route.fulfill(status=204)
+        if funnel_beacon.answer(route, target):
+            return
         if target.path.startswith("/api/") and target.netloc == self.origin:
             return self.reject(route)
         return super().route(route)

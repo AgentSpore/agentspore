@@ -66,14 +66,6 @@ RECTS = """el=>{
  if(/^(hidden|clip|auto|scroll)$/.test(s.overflowY)){b[1]=Math.max(b[1],y);b[3]=Math.min(b[3],y+p.clientHeight);}}
  if(b[0]<b[2]&&b[1]<b[3])result.push(b);}}return result;
 }"""
-WRAP = """el=>{
- if(!el.childNodes.length||[...el.childNodes].some(n=>n.nodeType!==Node.TEXT_NODE))
- throw Error('Expected only direct vote text');
- const span=document.createElement('span');span.dataset.localTextMask='';
- span.append(...el.childNodes);el.append(span);
-}"""
-
-
 def without_indexes(value):
     """Retain identity fields while normalizing indexes shifted by the one wrapper."""
     if isinstance(value, dict):
@@ -104,7 +96,7 @@ class LocalTextMaskTests(BrowserFixture, unittest.TestCase):
         self.card = self.page.locator("main article").first
         self.button = self.card.get_by_role("button").first
         self.focused = self.card.locator("h3 a") if kind == "title" else self.button
-        self.original_target = self.card.locator("h3 a span") if kind == "title" else self.button
+        self.original_target = self.card.locator("h3 a span" if kind == "title" else "button span").first
         self.target, self.kind, self.wrapper = self.original_target, kind, False
         self.page.mouse.move(0, 0)
         for _ in range(80):
@@ -156,12 +148,7 @@ class LocalTextMaskTests(BrowserFixture, unittest.TestCase):
         self.capture("original")
         style = None
         try:
-            if self.kind == "upvote":
-                self.button.evaluate(WRAP)
-                self.wrapper = True
-                self.target = self.button.locator("[data-local-text-mask]")
-            else:
-                self.target.evaluate("el=>el.setAttribute('data-local-text-mask','')")
+            self.target.evaluate("el=>el.setAttribute('data-local-text-mask','')")
             self.capture("original-repeat")
             for key in ("canonical", "rects", "image"):
                 self.assertEqual(self.shots["original"][key], self.shots["original-repeat"][key])

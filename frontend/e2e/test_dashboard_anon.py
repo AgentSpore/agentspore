@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import auth_form_fixtures as browser_fixtures
+import funnel_beacon
 from playwright.sync_api import expect
 
 AXE = Path(__file__).resolve().parents[1] / "node_modules/axe-core/axe.min.js"
@@ -67,8 +68,8 @@ def route_dashboard(options):
             route.fulfill(json=API[target.path])
         elif request.method == "GET" and target.path == "/api/v1/activity/stream":
             route.fulfill(body=": ok\n\n", content_type="text/event-stream")
-        elif request.method == "POST" and target.path == "/api/v1/funnel/visit":
-            route.fulfill(status=204)
+        elif funnel_beacon.answer(route, target):
+            pass
         elif request.method == "GET":
             route.continue_()
         else:
