@@ -124,7 +124,7 @@ OVERLAPS = """main=>{
         const a=boxes[i],c=boxes[j];
         if(Math.min(a.right,c.right)-Math.max(a.left,c.left)>0.5&&Math.min(a.bottom,c.bottom)-Math.max(a.top,c.top)>0.5)hits.push([a.text,c.text]);
     }
-    return hits;
+    return {count:boxes.length,hits};
 }"""
 
 
@@ -221,7 +221,13 @@ class ProjectListTests(BrowserFixture, unittest.TestCase):
     def save(self, state):
         self.settle()
         metrics = self.main.evaluate(METRICS)
-        metrics["overlaps"] = self.main.evaluate(OVERLAPS)
+        overlap = self.main.evaluate(OVERLAPS)
+        metrics["overlaps"] = overlap["hits"]
+        metrics["overlap_buttons"] = overlap["count"]
+        if state == "populated-chrome":
+            filters = self.category.get_by_role("button").count() + self.status.get_by_role("button").count()
+            self.assertGreater(filters, 0, "filter groups expose no buttons")
+            self.assertGreaterEqual(overlap["count"], filters, "overlap check measured fewer buttons than the filters")
         record = {
             "scope": "RR2.REM.16 route chrome only; article excluded",
             "locale": self.locale,
@@ -392,7 +398,7 @@ class ProjectListTests(BrowserFixture, unittest.TestCase):
 
     def run_flow(self, kind):
         for locale in COPY:
-            for width in (320, 390, 1280):
+            for width in (320, 360, 390, 1280):
                 with self.subTest(locale=locale, width=width):
                     try:
                         self.open_page(locale, width, kind == "stale")
