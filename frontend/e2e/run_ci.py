@@ -24,7 +24,7 @@ FRONTEND = HERE.parent
 FILE_TIMEOUT = 600
 BUILD_TIMEOUT = 900
 FAIL_TAIL_LINES = 60
-PORTS = {"default": 3970, "unset": 3971, "prodapi": 3972, "showcase": 3973}
+PORTS = {"default": 3970, "unset": 3971, "prodapi": 3972, "showcase": 3973, "pixel": 3974}
 
 # default: NEXT_PUBLIC_API_URL="" (synthetic API through context.route).
 # unset: variable absent from the build environment.
@@ -51,7 +51,6 @@ MODES = {
     "test_email_verification",
     "test_header_nav",
     "test_header_states",
-    "test_local_text_mask",
     "test_mobile_layout",
     "test_model_usage",
     "test_oauth_callback",
@@ -60,7 +59,6 @@ MODES = {
     "test_profile_reads",
     "test_profile_wallet",
     "test_project_action",
-    "test_project_card_contrast",
     "test_project_cards",
     "test_project_chat_accessibility",
     "test_project_chat_drafts",
@@ -91,6 +89,8 @@ MODES = {
     "unset": ["test_home_first_screen"],
     "prodapi": ["test_home_services"],
     "showcase": ["test_showcase_cards", "test_showcase_catalog"],
+    # macOS-calibrated pixel diffs: Linux antialiasing paints outside glyph boxes (measured 8 and 28 px).
+    "pixel": ["test_local_text_mask", "test_project_card_contrast"],
 }
 EXCLUDED = {
     "test_welcome_journey_stand": "needs a real stand (backend, database, mail capture); skips itself without one",
@@ -100,7 +100,7 @@ EXCLUDED = {
 def build_env(mode: str, port: int) -> dict[str, str]:
     env = dict(os.environ)
     env.pop("NEXT_PUBLIC_API_URL", None)
-    values = {"default": "", "prodapi": "https://agentspore.com", "showcase": f"http://localhost:{port}"}
+    values = {"default": "", "pixel": "", "prodapi": "https://agentspore.com", "showcase": f"http://localhost:{port}"}
     if mode in values:
         env["NEXT_PUBLIC_API_URL"] = values[mode]
     return env

@@ -17,7 +17,7 @@ permissions:
 jobs:
   e2e:
     name: e2e (${{ matrix.mode }} ${{ matrix.shard }})
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     # The prodapi mode reads the live public API; its outage must not redden other changes.
     continue-on-error: ${{ matrix.optional }}
@@ -25,12 +25,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { mode: default, shard: '1/3', optional: false }
-          - { mode: default, shard: '2/3', optional: false }
-          - { mode: default, shard: '3/3', optional: false }
-          - { mode: showcase, shard: '1/1', optional: false }
-          - { mode: unset, shard: '1/1', optional: false }
-          - { mode: prodapi, shard: '1/1', optional: true }
+          - { mode: default, shard: '1/3', optional: false, os: ubuntu-24.04 }
+          - { mode: default, shard: '2/3', optional: false, os: ubuntu-24.04 }
+          - { mode: default, shard: '3/3', optional: false, os: ubuntu-24.04 }
+          - { mode: showcase, shard: '1/1', optional: false, os: ubuntu-24.04 }
+          - { mode: unset, shard: '1/1', optional: false, os: ubuntu-24.04 }
+          - { mode: pixel, shard: '1/1', optional: false, os: macos-15 }
+          - { mode: prodapi, shard: '1/1', optional: true, os: ubuntu-24.04 }
     steps:
       - uses: actions/checkout@v5
         with:
@@ -64,7 +65,7 @@ jobs:
       # Same apt mirror workaround as the Frontend workflow: some runners resolve
       # apt to a regional mirror that is ~100x slower. Signatures are still checked.
       - name: Install Chromium
-        if: steps.scope.outputs.frontend == 'true'
+        if: steps.scope.outputs.frontend == 'true' && runner.os == 'Linux'
         timeout-minutes: 8
         run: |
           for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
@@ -72,6 +73,10 @@ jobs:
             sudo sed -i -E 's#[a-z0-9-]+\.ec2\.archive\.ubuntu\.com#azure.archive.ubuntu.com#g' "$f"
           done
           python -m playwright install --with-deps chromium
+      - name: Install Chromium (macOS)
+        if: steps.scope.outputs.frontend == 'true' && runner.os == 'macOS'
+        timeout-minutes: 8
+        run: python -m playwright install chromium
       - name: Run e2e files (${{ matrix.mode }} ${{ matrix.shard }})
         if: steps.scope.outputs.frontend == 'true'
         timeout-minutes: 20
