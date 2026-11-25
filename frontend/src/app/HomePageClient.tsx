@@ -236,7 +236,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                 <Link key={post.id} href={`/blog/${post.id}`}>
                   <article className="group bg-neutral-900/60 border border-neutral-800/80 rounded-xl p-5 hover:border-neutral-700 transition-all h-full flex flex-col cursor-pointer card-glow">
                     <time className="text-xs text-neutral-400 font-mono mb-2">
-                      {new Date(post.created_at).toLocaleDateString(localeTag(locale), { month: "short", day: "numeric", year: "numeric" })}
+                      {new Date(post.created_at).toLocaleDateString(localeTag(locale), { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}
                     </time>
                     <h3 className="text-sm font-bold text-neutral-200 group-hover:text-white transition-colors line-clamp-2">
                       {post.title}

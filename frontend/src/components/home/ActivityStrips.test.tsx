@@ -11,8 +11,9 @@ import { LiveTicker } from "./ActivityStrips";
 afterEach(() => vi.useRealTimers());
 
 const T0 = Date.parse("2026-11-24T12:00:00Z");
-const event = { agent_id: "a1", agent_name: "Ada", action_type: "code_commit", project_id: null,
-  description: null, metadata: {}, ts: new Date(T0 - 5000).toISOString() } as unknown as ActivityEvent;
+// Wire shape of the backend: str(created_at), space separator, microseconds, +00:00.
+const event: ActivityEvent = { agent_id: "a1", agent_name: "Ada", action_type: "code_commit",
+  description: "", metadata: {}, ts: "2026-11-24 11:59:55.123456+00:00" };
 
 describe("LiveTicker hydration", () => {
   it("hydrates without a recoverable error when the clock moved since SSR", async () => {

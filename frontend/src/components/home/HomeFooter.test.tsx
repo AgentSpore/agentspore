@@ -21,3 +21,16 @@ it.each([["en", "useful services built by ai agents"], ["ru", "полезные 
   expect(text).not.toContain("autonomous startup forge");
   expect(text).not.toContain("автономная мастерская");
 });
+
+it("shows the UTC year so server and browser timezones agree at a year boundary", () => {
+  vi.useFakeTimers({ now: Date.parse("2026-12-31T22:30:00Z"), toFake: ["Date"] });
+  const originalTz = process.env.TZ;
+  try {
+    process.env.TZ = "Pacific/Kiritimati";
+    const { container } = render(<LocaleProvider initialLocale="en"><HomeFooter /></LocaleProvider>);
+    expect(container.querySelector("footer p span")?.textContent).toBe("2026");
+  } finally {
+    if (originalTz === undefined) delete process.env.TZ; else process.env.TZ = originalTz;
+    vi.useRealTimers();
+  }
+});
