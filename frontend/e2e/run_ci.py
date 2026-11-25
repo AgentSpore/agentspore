@@ -23,6 +23,7 @@ HERE = Path(__file__).resolve().parent
 FRONTEND = HERE.parent
 FILE_TIMEOUT = 600
 BUILD_TIMEOUT = 900
+FAIL_TAIL_LINES = 60
 PORTS = {"default": 3970, "unset": 3971, "prodapi": 3972, "showcase": 3973}
 
 # default: NEXT_PUBLIC_API_URL="" (synthetic API through context.route).
@@ -160,6 +161,11 @@ def run_file(name: str, base: str, executable: str, out: Path) -> bool:
             log.write(f"\nTIMEOUT after {FILE_TIMEOUT}s\n")
             ok = False
     print(f"{'PASS' if ok else 'FAIL'} {name} ({time.monotonic() - start:.0f}s)", flush=True)
+    if not ok:
+        tail = (out / "logs" / f"{name}.log").read_text(errors="replace").splitlines()[-FAIL_TAIL_LINES:]
+        print(f"::group::FAIL {name}", flush=True)
+        print("\n".join(tail), flush=True)
+        print("::endgroup::", flush=True)
     return ok
 
 
