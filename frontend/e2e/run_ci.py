@@ -4,7 +4,7 @@ NEXT_PUBLIC_API_URL is baked in at `next build`, so every test file belongs to e
 mode. MODES is the single source of truth; a test_*.py file that is not listed (or excluded)
 fails the run, so new files must be classified here.
 
-    python run_ci.py --mode default --out DIR [--executable PATH] [--only test_a,test_b]
+    python run_ci.py --mode default --out DIR [--shard I/N] [--only test_a,test_b]
 """
 
 import argparse
@@ -166,7 +166,8 @@ def run_file(name: str, base: str, executable: str, out: Path) -> bool:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", required=True, choices=sorted(MODES))
-    parser.add_argument("--executable")
+    parser.add_argument("--executable", help="Chromium binary; default is the build bundled with the installed playwright client")
+    parser.add_argument("--shard", default="1/1", help="I/N: run every N-th file of the mode, starting at the I-th")
     parser.add_argument("--out", type=Path, required=True, help="log and screenshot directory (outside the build tree)")
     parser.add_argument("--only", help="comma-separated subset of the mode's files")
     args = parser.parse_args()
@@ -174,6 +175,8 @@ def main() -> None:
     names = MODES[args.mode]
     if args.only:
         names = [n for n in names if n in args.only.split(",")]
+    index, total = (int(part) for part in args.shard.split("/"))
+    names = sorted(names)[index - 1 :: total]
     port = PORTS[args.mode]
     base = f"http://localhost:{port}"
     out = args.out.resolve()

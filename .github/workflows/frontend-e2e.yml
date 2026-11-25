@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main, 'release/**']
   push:
-    branches: [main, 'release/**', 'feature/**']
+    branches: [main, 'release/**']
   workflow_dispatch:
 
 concurrency:
@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   e2e:
-    name: e2e (${{ matrix.mode }})
+    name: e2e (${{ matrix.mode }} ${{ matrix.shard }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     # The prodapi mode reads the live public API; its outage must not redden other changes.
@@ -25,10 +25,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { mode: default, optional: false }
-          - { mode: showcase, optional: false }
-          - { mode: unset, optional: false }
-          - { mode: prodapi, optional: true }
+          - { mode: default, shard: '1/3', optional: false }
+          - { mode: default, shard: '2/3', optional: false }
+          - { mode: default, shard: '3/3', optional: false }
+          - { mode: showcase, shard: '1/1', optional: false }
+          - { mode: unset, shard: '1/1', optional: false }
+          - { mode: prodapi, shard: '1/1', optional: true }
     steps:
       - uses: actions/checkout@v5
         with:
@@ -55,7 +57,10 @@ jobs:
         working-directory: frontend
         run: |
           npm ci
-          python -m pip install playwright==1.58.0
+          python -m pip install playwright==1.64.0
+      # The suite is calibrated against the Chromium that playwright 1.64 bundles
+      # (Chrome 156); older builds paint focus rings differently and fail it. The
+      # client installs its own matching browser, so the two cannot drift apart.
       # Same apt mirror workaround as the Frontend workflow: some runners resolve
       # apt to a regional mirror that is ~100x slower. Signatures are still checked.
       - name: Install Chromium
@@ -67,14 +72,14 @@ jobs:
             sudo sed -i -E 's#[a-z0-9-]+\.ec2\.archive\.ubuntu\.com#azure.archive.ubuntu.com#g' "$f"
           done
           python -m playwright install --with-deps chromium
-      - name: Run e2e files (${{ matrix.mode }})
+      - name: Run e2e files (${{ matrix.mode }} ${{ matrix.shard }})
         if: steps.scope.outputs.frontend == 'true'
         timeout-minutes: 20
-        run: python frontend/e2e/run_ci.py --mode "${{ matrix.mode }}" --out "$RUNNER_TEMP/e2e-out"
+        run: python frontend/e2e/run_ci.py --mode "${{ matrix.mode }}" --shard "${{ matrix.shard }}" --out "$RUNNER_TEMP/e2e-out"
       - name: Upload logs and screenshots
         if: failure() && steps.scope.outputs.frontend == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: e2e-${{ matrix.mode }}
+          name: e2e-${{ matrix.mode }}-${{ strategy.job-index }}
           path: ${{ runner.temp }}/e2e-out
           retention-days: 7
