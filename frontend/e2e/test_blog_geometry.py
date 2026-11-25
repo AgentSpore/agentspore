@@ -1,6 +1,7 @@
 """Measure blog-owned typography, standalone actions and complete essential text."""
 
 import json
+import re
 import unittest
 from argparse import Namespace
 from urllib.parse import parse_qs
@@ -25,10 +26,23 @@ BODY = f"# {TITLE}\n\n{INLINE_URL}\n\n```typescript\n{CODE}\n```\n\n" + (
     "1. First numbered paragraph.\n2. Second numbered paragraph.\n\nSynthetic readable paragraph. " * 2
 )
 COPY = {
-    "en": ("Home", "Read more →", "Write a comment...", "Delete", "← Blog", "No blog posts yet"),
-    "ru": ("Главная", "Читать далее →", "Напишите комментарий...", "Удалить", "← Блог", "Записей в блоге пока нет"),
+    "en": ("Home", "Read article", "Write a comment...", "Delete", "← Blog", "No blog posts yet"),
+    "ru": ("Главная", "Читать статью", "Напишите комментарий...", "Удалить", "← Блог", "Записей в блоге пока нет"),
 }
 DECORATIVE = {"/", "·", "+", "?", "×", "..."}
+# Code blocks and wide tables scroll inside their own labelled, keyboard-focusable region
+# (WCAG 1.4.10 exception for code and data tables). Text inside such a region is reachable by
+# scrolling, so it is not clipping; SCROLLERS checks the region itself instead.
+OPERABLE = """'pre[tabindex="0"][aria-label],[role="region"][tabindex="0"][aria-label]'"""
+BLOG_METRICS = METRICS.replace(
+    "const bounds=el=>{",
+    "const bounds=el=>{const sc=el.closest(" + OPERABLE + ");"
+    "if(sc&&/^(auto|scroll)$/.test(getComputedStyle(sc).overflowX))return [];",
+)
+assert BLOG_METRICS != METRICS
+SCROLLERS = """main=>[...main.querySelectorAll('pre,[role=region]')].map(el=>{const r=el.getBoundingClientRect();
+    return {label:el.getAttribute('aria-label'),tab:el.tabIndex,overflow:getComputedStyle(el).overflowX,
+        left:r.left,right:r.right,scrolls:el.scrollWidth>el.clientWidth};})"""
 PSEUDO = """root=>[...root.querySelectorAll('ol li')].map(el=>{const s=getComputedStyle(el,'::before');
     return {text:'ordered-list marker',size:parseFloat(s.fontSize)};})"""
 
@@ -85,6 +99,15 @@ class GeometryHTTP(BlogReadHTTP):
 def metric_issues(metrics, width):
     issues = [{"font": item} for item in metrics["text"] if item["size"] < 12]
     issues.extend({"clip": item} for item in metrics["clipped"])
+    issues.extend(
+        {"scroller": item}
+        for item in metrics.get("scrollers", [])
+        if not item["label"]
+        or item["tab"] != 0
+        or item["overflow"] not in ("auto", "scroll")
+        or item["left"] < 0
+        or item["right"] > width
+    )
     issues.extend({"ellipsis": item} for item in metrics["essential"] if item["ellipsis"])
     issues.extend(
         {"target": item}
@@ -148,13 +171,15 @@ class BlogGeometryTests(BrowserFixture, unittest.TestCase):
         self.targets.append(dict(target.evaluate(TARGET), inline_exception=inline))
 
     def measure(self):
-        result = self.main.evaluate(METRICS)
+        result = self.main.evaluate(BLOG_METRICS)
         result["text"] = [item for item in result["text"] if item["text"] not in DECORATIVE]
         result["text"].extend(self.main.evaluate(PSEUDO))
         result["targets"] = [item for item in result["targets"] if item["name"] != INLINE_URL]
         if self.page.url.endswith(f"/blog/{POST_ID}") and self.main.locator("article").count():
             regions = [self.main.locator("article"), self.main.locator("section")]
-            result["clipped"] = [item for region in regions for item in region.evaluate(METRICS)["clipped"]]
+            result["clipped"] = [item for region in regions for item in region.evaluate(BLOG_METRICS)["clipped"]]
+            result["scrollers"] = self.main.evaluate(SCROLLERS)
+            self.assertTrue(any(item["scrolls"] for item in result["scrollers"]), "no code or table region overflows")
             result["clip_exception"] = (
                 "Duplicate breadcrumb title only; font/targets still measured globally, article/section text clipping remains strict."
             )
@@ -187,9 +212,13 @@ class BlogGeometryTests(BrowserFixture, unittest.TestCase):
         self.native(author)
         self.behavior["author_href"] = author.get_attribute("href") == f"/agents/{AGENT_ID}"
         self.save("populated-card", heading)
-        inline = card.locator(f'a[href="{INLINE_URL}"]')
-        self.native(inline, inline=True)
-        more = card.get_by_role("link", name=COPY[self.locale][1], exact=True)
+        # The feed excerpt is plain text by design (#400): the URL shows as text, never as a link.
+        expect(card.locator(f'a[href="{INLINE_URL}"]')).to_have_count(0)
+        expect(card.get_by_text(INLINE_URL, exact=False)).to_be_visible()
+        # The visually hidden ": <title>" suffix is absolutely positioned, so the computed name has a
+        # space before the colon ("Read article : <title>"); match the full name with that tolerance.
+        name = re.compile(rf"^{re.escape(COPY[self.locale][1])}\s*: {re.escape(TITLE)}$")
+        more = card.get_by_role("link", name=name)
         self.native(more)
         title_link = heading.locator("..")
         self.native(title_link)
