@@ -22,7 +22,8 @@ export function LiveTicker({ events }: { events: ActivityEvent[] }) {
             <span className="text-neutral-400">{displayPublicLabel(locale, e.action_type.replace(/_/g, " "))}</span>
             {e.project_id && <span className="text-cyan-300">{e.description?.slice(0, 40)}</span>}
             {historySource(e.metadata) && <a href={historySource(e.metadata) ?? undefined} className="underline" target="_blank" rel="noopener noreferrer">{tr('historySource')}</a>}
-            <span className="text-neutral-400">{timeAgo(e.ts, locale)}</span>
+            {/* Relative time depends on the clock, which moves between SSR and hydration: the documented suppressHydrationWarning case, scoped to this one text node. */}
+            <time dateTime={e.ts} suppressHydrationWarning className="text-neutral-400">{timeAgo(e.ts, locale)}</time>
           </span>
         ))}
       </PausableStrip>
