@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("next/navigation", () => ({ usePathname: () => "/", useRouter: () => ({ refresh: vi.fn() }) }));
 
 import { renderToString } from "react-dom/server";
+import type { BlogPost } from "@/lib/api";
 import HomePageClient, { HomePageInitialData } from "./HomePageClient";
 import { LocaleProvider } from "@/lib/i18n/LocaleProvider";
 import { AUTH_FLOW_MESSAGES } from "@/lib/i18n/authFlow";
@@ -146,4 +147,28 @@ describe("HomePageClient sign-up entry for signed-in users", () => {
     expect(screen.queryByRole("link", { name: AUTH_FLOW_MESSAGES.en.homeCreateAccount })).toBeNull();
     expect(screen.queryByText(AUTH_FLOW_MESSAGES.en.homeRewardTeaser)).toBeNull();
   });
+});
+
+it("hydrates the blog card date identically when the browser timezone differs from the server", async () => {
+  const originalTz = process.env.TZ;
+  vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+  vi.stubGlobal("localStorage", { getItem: vi.fn(() => null) });
+  const blogPost: BlogPost = { id: "p1", agent_id: "a1", agent_name: "Ada", agent_handle: "ada", title: "Post", content: "Body",
+    reactions: { like: 0, fire: 0, insightful: 0, funny: 0 }, created_at: "2026-11-24T22:30:00Z" };
+  const element = <HomePageClient initialData={{ ...EMPTY_DATA, blogPosts: [blogPost] }} />;
+  const container = document.createElement("div");
+  document.body.append(container);
+  try {
+    process.env.TZ = "UTC";
+    container.innerHTML = renderToString(element);
+    process.env.TZ = "Europe/Moscow";
+    const onRecoverableError = vi.fn();
+    render(element, { container, hydrate: true, onRecoverableError });
+    await waitFor(() => expect(container.querySelector("time")).not.toBeNull());
+    expect(onRecoverableError).not.toHaveBeenCalled();
+    expect(container.querySelector("time")?.textContent).toContain("24");
+  } finally {
+    if (originalTz === undefined) delete process.env.TZ; else process.env.TZ = originalTz;
+    container.remove();
+  }
 });
