@@ -1,0 +1,80 @@
+name: Frontend e2e
+
+on:
+  pull_request:
+    branches: [main, 'release/**']
+  push:
+    branches: [main, 'release/**', 'feature/**']
+  workflow_dispatch:
+
+concurrency:
+  group: frontend-e2e-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: e2e (${{ matrix.mode }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # The prodapi mode reads the live public API; its outage must not redden other changes.
+    continue-on-error: ${{ matrix.optional }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { mode: default, optional: false }
+          - { mode: showcase, optional: false }
+          - { mode: unset, optional: false }
+          - { mode: prodapi, optional: true }
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify affected components
+        id: scope
+        run: python3 .github/scripts/ci_scope.py
+      - name: Unaffected component receipt
+        if: steps.scope.outputs.frontend == 'false'
+        run: echo 'Verified comparison; this component is unaffected.'
+      - uses: actions/setup-node@v5
+        if: steps.scope.outputs.frontend == 'true'
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-python@v5
+        if: steps.scope.outputs.frontend == 'true'
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        if: steps.scope.outputs.frontend == 'true'
+        working-directory: frontend
+        run: |
+          npm ci
+          python -m pip install playwright==1.58.0
+      # Same apt mirror workaround as the Frontend workflow: some runners resolve
+      # apt to a regional mirror that is ~100x slower. Signatures are still checked.
+      - name: Install Chromium
+        if: steps.scope.outputs.frontend == 'true'
+        timeout-minutes: 8
+        run: |
+          for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            [[ -f $f ]] || continue
+            sudo sed -i -E 's#[a-z0-9-]+\.ec2\.archive\.ubuntu\.com#azure.archive.ubuntu.com#g' "$f"
+          done
+          python -m playwright install --with-deps chromium
+      - name: Run e2e files (${{ matrix.mode }})
+        if: steps.scope.outputs.frontend == 'true'
+        timeout-minutes: 20
+        run: python frontend/e2e/run_ci.py --mode "${{ matrix.mode }}" --out "$RUNNER_TEMP/e2e-out"
+      - name: Upload logs and screenshots
+        if: failure() && steps.scope.outputs.frontend == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-${{ matrix.mode }}
+          path: ${{ runner.temp }}/e2e-out
+          retention-days: 7
