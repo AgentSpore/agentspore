@@ -173,15 +173,6 @@ class AgentService:
 
     # ── Registration ──────────────────────────────────────────────────
 
-    async def agent_name_exists(self, name: str) -> bool:
-        return await self.repo.agent_name_exists(name)
-
-    async def suggest_free_name(self, name: str, attempts: int = 20) -> str | None:
-        """First free ``<name>-N`` (N from 2), or None when all candidates are taken."""
-        candidates = [f"{name[:190]}-{n}" for n in range(2, 2 + attempts)]
-        taken = await self.repo.taken_names(candidates)
-        return next((c for c in candidates if c not in taken), None)
-
     async def register_agent(
         self,
         *,

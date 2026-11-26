@@ -45,6 +45,7 @@ from app.schemas.agents import (
 )
 from app.schemas.deployments import DeploymentAccepted, DeploymentRequest, DeploymentStatus
 from app.services.deployment_admission import DeploymentAdmission, get_deployment_admission
+from app.services.agent_name_service import AgentNameService, get_agent_name_service
 from app.services.agent_admission import admit_agent_registration, refund_agent_registration
 from app.services.agent_service import AgentService, get_agent_service, get_agent_by_api_key
 from app.services.agent_webhook_registration import AgentWebhookRegistration
@@ -90,12 +91,12 @@ async def register_agent_wrong_method() -> None:
     )
 
 
-async def _name_conflict(svc: AgentService, name: str) -> JSONResponse:
+async def _name_conflict(names: AgentNameService, name: str) -> JSONResponse:
     return JSONResponse(
         status_code=409,
         content={
             "detail": f"Agent name '{name}' is already taken. Please choose a different name.",
-            "suggested_name": await svc.suggest_free_name(name),
+            "suggested_name": await names.suggest_free(name),
         },
     )
 
@@ -116,6 +117,7 @@ async def register_agent(
     request: Request,
     body: AgentRegisterRequest,
     svc: AgentService = Depends(get_agent_service),
+    names: AgentNameService = Depends(get_agent_name_service),
     redis: Redis = Depends(get_redis),
 ):
     """
@@ -125,8 +127,8 @@ async def register_agent(
     needs no human owner. GitHub OAuth is optional and only used for commit attribution.
     A taken name returns 409 and does not use up the daily attempt limit.
     """
-    if await svc.agent_name_exists(body.name):
-        return await _name_conflict(svc, body.name)
+    if await names.is_taken(body.name):
+        return await _name_conflict(names, body.name)
     attempt = await admit_agent_registration(client_ip(request), redis)
     try:
         result = await svc.register_agent(
@@ -145,7 +147,7 @@ async def register_agent(
         )
     except IntegrityError:
         await refund_agent_registration(attempt, redis)
-        return await _name_conflict(svc, body.name)
+        return await _name_conflict(names, body.name)
     await FunnelService(redis).record("agent_register")
 
     return AgentRegisterResponse(

@@ -68,39 +68,24 @@ class AgentRepository:
 
     # ── Registration ──
 
-    async def agent_name_exists(self, name: str) -> bool:
-        result = await self.db.execute(
-            text("SELECT 1 FROM agents WHERE name = :name"), {"name": name}
-        )
-        return result.first() is not None
-
-    async def taken_names(self, candidates: list[str]) -> set[str]:
-        result = await self.db.execute(
-            text("SELECT name FROM agents WHERE name = ANY(:names)"), {"names": candidates}
-        )
-        return {row[0] for row in result}
-
     async def insert_agent(self, params: dict) -> None:
         # Savepoint: a unique-name violation must not poison the request transaction,
         # so the caller can still read a free name suggestion afterwards.
         async with self.db.begin_nested():
-            await self._insert_agent_row(params)
-
-    async def _insert_agent_row(self, params: dict) -> None:
-        await self.db.execute(
-            text("""
-                INSERT INTO agents (id, name, handle, agent_type, model_provider, model_name,
-                                  specialization, skills, description, api_key_hash,
-                                  is_active, github_oauth_state,
-                                  dna_risk, dna_speed, dna_verbosity, dna_creativity, bio,
-                                  owner_email, owner_user_id)
-                VALUES (:id, :name, :handle, 'external', :provider, :model, :spec, :skills, :desc, :api_key,
-                        TRUE, :oauth_state,
-                        :dna_risk, :dna_speed, :dna_verbosity, :dna_creativity, :bio,
-                        :owner_email, :owner_user_id)
-            """),
-            params,
-        )
+            await self.db.execute(
+                text("""
+                    INSERT INTO agents (id, name, handle, agent_type, model_provider, model_name,
+                                      specialization, skills, description, api_key_hash,
+                                      is_active, github_oauth_state,
+                                      dna_risk, dna_speed, dna_verbosity, dna_creativity, bio,
+                                      owner_email, owner_user_id)
+                    VALUES (:id, :name, :handle, 'external', :provider, :model, :spec, :skills, :desc, :api_key,
+                            TRUE, :oauth_state,
+                            :dna_risk, :dna_speed, :dna_verbosity, :dna_creativity, :bio,
+                            :owner_email, :owner_user_id)
+                """),
+                params,
+            )
 
     async def update_api_key_hash(self, agent_id, new_hash: str) -> None:
         await self.db.execute(

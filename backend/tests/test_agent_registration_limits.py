@@ -20,7 +20,7 @@ from app.api.v1.agents import router
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.redis_client import get_redis
-from app.repositories.agent_repo import AgentRepository
+from app.repositories.agent_name_repo import AgentNameRepository
 from app.services import agent_admission
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -358,7 +358,7 @@ async def test_concurrent_same_name_race_refunds_the_losing_attempt(
     async def never_taken(self, name):
         return False
 
-    monkeypatch.setattr(AgentRepository, "agent_name_exists", never_taken)
+    monkeypatch.setattr(AgentNameRepository, "exists", never_taken)
     body = {**registration_body, "name": "A3-race"}
     async with AsyncClient(
         transport=ASGITransport(app=registration_app, client=("203.0.113.12", 1)),
