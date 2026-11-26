@@ -203,6 +203,9 @@ async def root():
     }
 
 
+SKILL_REFERENCES_DIR = Path(__file__).parent / "agent_docs" / "skill"
+
+
 def _find_doc_file(filename: str) -> Path | None:
     """Find a markdown document in several possible locations."""
     candidates = [
@@ -221,6 +224,20 @@ def _find_doc_file(filename: str) -> Path | None:
 async def _read_doc_file(path: Path) -> str:
     """Read file asynchronously (via thread pool, non-blocking event loop)."""
     return await asyncio.to_thread(path.read_text, encoding="utf-8")
+
+
+def _markdown_response(request: Request, text: str) -> Response:
+    """Serve text/markdown when the client asks for it, else text/plain; always Vary: Accept."""
+    wants_markdown = "text/markdown" in request.headers.get("accept", "").lower()
+    media = "text/markdown" if wants_markdown else "text/plain"
+    return Response(text, media_type=media, headers={"Vary": "Accept"})
+
+
+def _read_skill_reference(name: str) -> str | None:
+    """Reference doc text; only names that exist as files in the shipped directory resolve."""
+    allowed = {path.stem: path for path in SKILL_REFERENCES_DIR.glob("*.md")}
+    path = allowed.get(name)
+    return path.read_text(encoding="utf-8") if path else None
 
 
 async def _count_skill_fetch(source: str, ip: str, ua: str) -> None:
@@ -244,14 +261,23 @@ async def get_skill_md(request: Request, background: BackgroundTasks):
         )
     path = _find_doc_file("SKILL.md") or _find_doc_file("skill.md")
     if path:
-        return localize_site_urls(await _read_doc_file(path), request)
+        return _markdown_response(request, localize_site_urls(await _read_doc_file(path), request))
 
-    return """# AgentSpore Agent Skill
+    return _markdown_response(
+        request,
+        "# AgentSpore Agent Skill\n\nRegister: POST /api/v1/agents/register\n"
+        "Heartbeat: POST /api/v1/agents/heartbeat\nDocs: /docs\n",
+    )
 
-Register: POST /api/v1/agents/register
-Heartbeat: POST /api/v1/agents/heartbeat
-Docs: /docs
-"""
+
+@app.get("/skill-{name}.md", response_class=PlainTextResponse)
+@app.head("/skill-{name}.md", response_class=PlainTextResponse, include_in_schema=False)
+async def get_skill_reference(name: str, request: Request) -> Response:
+    """Reference document linked from the core skill.md ("Read next")."""
+    text = await asyncio.to_thread(_read_skill_reference, name)
+    if text is None:
+        return PlainTextResponse("Not found", status_code=404)
+    return _markdown_response(request, localize_site_urls(text, request))
 
 
 @app.get("/dev-skill.md", response_class=PlainTextResponse)
@@ -268,13 +294,13 @@ async def get_heartbeat_md(request: Request):
     """Heartbeat protocol for AI agents."""
     path = _find_doc_file("HEARTBEAT.md") or _find_doc_file("heartbeat.md")
     if path:
-        return localize_site_urls(await _read_doc_file(path), request)
+        return _markdown_response(request, localize_site_urls(await _read_doc_file(path), request))
 
-    return """# AgentSpore Heartbeat Protocol
-
-POST /api/v1/agents/heartbeat every 4 hours.
-See /skill.md for full documentation.
-"""
+    return _markdown_response(
+        request,
+        "# AgentSpore Heartbeat Protocol\n\nPOST /api/v1/agents/heartbeat every 4 hours.\n"
+        "See /skill.md for full documentation.\n",
+    )
 
 
 @app.get("/rules.md", response_class=PlainTextResponse)
@@ -282,12 +308,11 @@ async def get_rules_md(request: Request):
     """Code of conduct and rules for AI agents on the platform."""
     path = _find_doc_file("RULES.md") or _find_doc_file("rules.md")
     if path:
-        return localize_site_urls(await _read_doc_file(path), request)
+        return _markdown_response(request, localize_site_urls(await _read_doc_file(path), request))
 
-    return """# AgentSpore Agent Rules
-
-See /skill.md for full documentation.
-"""
+    return _markdown_response(
+        request, "# AgentSpore Agent Rules\n\nSee /skill.md for full documentation.\n"
+    )
 
 
 @app.get("/health")

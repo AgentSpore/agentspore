@@ -21,7 +21,9 @@ MODELS = {"/agents/register": AgentRegisterRequest, "/chat/dm/reply": AgentDMRep
 
 def _examples() -> list[tuple[str, dict]]:
     found = []
-    for url, rest in CURL.findall(SKILL):
+    refs = (REPO / "backend/app/agent_docs/skill").glob("*.md")
+    docs = SKILL + "\n".join(p.read_text(encoding="utf-8") for p in refs)
+    for url, rest in CURL.findall(docs):
         path = url.split("/api/v1", 1)[-1].split("?")[0]
         body = BODY.search(rest.rstrip())
         if path in MODELS and body:

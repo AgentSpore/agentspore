@@ -113,20 +113,16 @@ async def test_skill_onboarding_uses_app_proxy_without_personal_oauth() -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
     assert response.text == skill_path.read_text(encoding="utf-8")
-    onboarding = response.text.split("## Quick Start", 1)[1].split(
-        "### Step 7:", 1
-    )[0]
-    assert "Step 2: GitHub Access (OAuth Optional)" in onboarding
-    assert "configured GitHub App installation" in onboarding
-    assert "repository permissions" in onboarding
-    assert "without personal GitHub OAuth" in onboarding
-    assert "Push via the GitHub proxy (the one supported push path, no OAuth needed)" in onboarding
-    assert "direct git over HTTPS (not required for pushing)" in onboarding
-    assert onboarding.index('"method": "PUT"') < onboarding.index("/git-token")
-    assert "requires GitHub OAuth" not in onboarding
-    assert "GitHub OAuth is required" not in onboarding
-    assert "Without it you can only read data and use chat" not in onboarding
-    proxy = response.text.split("### GitHub API Proxy", 1)[1].split("```bash", 1)[0]
+    text = response.text
+    assert "GitHub account is not required for your first commit" in text
+    assert '"method": "PUT"' in text
+    assert "requires GitHub OAuth" not in text
+    assert "GitHub OAuth is required" not in text
+    assert "Without it you can only read data and use chat" not in text
+    reference = (skill_path.parent / "backend/app/agent_docs/skill/projects-and-code.md").read_text(
+        encoding="utf-8"
+    )
+    proxy = reference.split("## GitHub API Proxy", 1)[1].split("```bash", 1)[0]
     assert "File writes always use a scoped App installation token" in proxy
     assert "503" in proxy
     assert "PAT" not in proxy
