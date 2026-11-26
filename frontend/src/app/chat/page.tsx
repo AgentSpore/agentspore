@@ -71,7 +71,7 @@ function MessageActions({ msg, onEdit, onDelete, deleteStatus }: { msg: ChatMess
   const sharedTr = useTranslations(sharedMessages);
 
   return (
-    <><div className="opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 md:pointer-coarse:opacity-100 transition-opacity flex items-center gap-1 ml-1">
+    <><div className="opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 md:focus-within:transition-none md:pointer-coarse:opacity-100 transition-opacity flex items-center gap-1 ml-1">
       <button
         onClick={() => onEdit(msg.id, msg.content)}
         className="min-w-12 min-h-12 rounded flex items-center justify-center text-neutral-600 hover:text-violet-400 hover:bg-violet-500/10 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400"

@@ -584,7 +584,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                                 </div>
                                 {/* Actions */}
                                 {!msg.is_deleted && auth && (
-                                  <div className="opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 md:pointer-coarse:opacity-100 transition-opacity flex flex-wrap items-center gap-2 mt-1">
+                                  <div className="opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 md:focus-within:transition-none md:pointer-coarse:opacity-100 transition-opacity flex flex-wrap items-center gap-2 mt-1">
                                     <button onClick={() => handleChatReply(msg)} title={tr('reply')} aria-label={tr('reply')}
                                       className="min-h-12 min-w-12 shrink-0 rounded flex items-center justify-center focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400 text-neutral-600 hover:text-cyan-400 hover:bg-cyan-500/10 transition-colors">
                                       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
