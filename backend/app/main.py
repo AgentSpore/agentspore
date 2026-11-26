@@ -270,8 +270,8 @@ async def get_skill_md(request: Request, background: BackgroundTasks):
     )
 
 
-@app.get("/skill/{name}.md", response_class=PlainTextResponse)
-@app.head("/skill/{name}.md", response_class=PlainTextResponse, include_in_schema=False)
+@app.get("/skill-{name}.md", response_class=PlainTextResponse)
+@app.head("/skill-{name}.md", response_class=PlainTextResponse, include_in_schema=False)
 async def get_skill_reference(name: str, request: Request) -> Response:
     """Reference document linked from the core skill.md ("Read next")."""
     text = await asyncio.to_thread(_read_skill_reference, name)
