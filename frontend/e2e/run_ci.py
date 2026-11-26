@@ -22,9 +22,10 @@ from playwright.sync_api import sync_playwright
 HERE = Path(__file__).resolve().parent
 FRONTEND = HERE.parent
 FILE_TIMEOUT = 600
+FILE_TIMEOUTS = {"pixel-nightly": 2700}
 BUILD_TIMEOUT = 900
 FAIL_TAIL_LINES = 60
-PORTS = {"default": 3970, "unset": 3971, "prodapi": 3972, "showcase": 3973, "pixel": 3974}
+PORTS = {"default": 3970, "unset": 3971, "prodapi": 3972, "showcase": 3973, "pixel": 3974, "pixel-nightly": 3975}
 
 # default: NEXT_PUBLIC_API_URL="" (synthetic API through context.route).
 # unset: variable absent from the build environment.
@@ -90,7 +91,9 @@ MODES = {
     "prodapi": ["test_home_services"],
     "showcase": ["test_showcase_cards", "test_showcase_catalog"],
     # macOS-calibrated pixel diffs: Linux antialiasing paints outside glyph boxes (measured 8 and 28 px).
-    "pixel": ["test_local_text_mask", "test_project_card_contrast"],
+    "pixel": ["test_local_text_mask"],
+    # Needs about 1430 s of its own: nightly only, never on a pull request.
+    "pixel-nightly": ["test_project_card_contrast"],
 }
 EXCLUDED = {
     "test_welcome_journey_stand": "needs a real stand (backend, database, mail capture); skips itself without one",
@@ -100,7 +103,7 @@ EXCLUDED = {
 def build_env(mode: str, port: int) -> dict[str, str]:
     env = dict(os.environ)
     env.pop("NEXT_PUBLIC_API_URL", None)
-    values = {"default": "", "pixel": "", "prodapi": "https://agentspore.com", "showcase": f"http://localhost:{port}"}
+    values = {"default": "", "pixel": "", "pixel-nightly": "", "prodapi": "https://agentspore.com", "showcase": f"http://localhost:{port}"}
     if mode in values:
         env["NEXT_PUBLIC_API_URL"] = values[mode]
     return env
@@ -149,16 +152,16 @@ def stop(server: subprocess.Popen) -> None:
             os.killpg(server.pid, signal.SIGKILL)
 
 
-def run_file(name: str, base: str, executable: str, out: Path) -> bool:
+def run_file(name: str, base: str, executable: str, out: Path, timeout: int) -> bool:
     shots = out / "screenshots" / name
     shots.mkdir(parents=True, exist_ok=True)
     cmd = [sys.executable, f"{name}.py", "--base-url", base, "--executable", executable, "--screenshots", str(shots)]
     start = time.monotonic()
     with open(out / "logs" / f"{name}.log", "w") as log:
         try:
-            ok = subprocess.run(cmd, cwd=HERE, stdout=log, stderr=subprocess.STDOUT, timeout=FILE_TIMEOUT).returncode == 0
+            ok = subprocess.run(cmd, cwd=HERE, stdout=log, stderr=subprocess.STDOUT, timeout=timeout).returncode == 0
         except subprocess.TimeoutExpired:
-            log.write(f"\nTIMEOUT after {FILE_TIMEOUT}s\n")
+            log.write(f"\nTIMEOUT after {timeout}s\n")
             ok = False
     print(f"{'PASS' if ok else 'FAIL'} {name} ({time.monotonic() - start:.0f}s)", flush=True)
     if not ok:
@@ -198,7 +201,7 @@ def main() -> None:
     try:
         wait_ready(base, server)
         executable = args.executable or chromium_path()
-        failed = [n for n in names if not run_file(n, base, executable, out)]
+        failed = [n for n in names if not run_file(n, base, executable, out, FILE_TIMEOUTS.get(args.mode, FILE_TIMEOUT))]
     finally:
         stop(server)
         server_log.close()

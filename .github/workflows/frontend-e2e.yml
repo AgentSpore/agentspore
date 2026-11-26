@@ -6,6 +6,8 @@ on:
   push:
     branches: [main, 'release/**']
   workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
 
 concurrency:
   group: frontend-e2e-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
@@ -18,20 +20,14 @@ jobs:
   e2e:
     name: e2e (${{ matrix.mode }} ${{ matrix.shard }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.nightly && 50 || 30 }}
     # The prodapi mode reads the live public API; its outage must not redden other changes.
     continue-on-error: ${{ matrix.optional }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { mode: default, shard: '1/3', optional: false, os: ubuntu-24.04 }
-          - { mode: default, shard: '2/3', optional: false, os: ubuntu-24.04 }
-          - { mode: default, shard: '3/3', optional: false, os: ubuntu-24.04 }
-          - { mode: showcase, shard: '1/1', optional: false, os: ubuntu-24.04 }
-          - { mode: unset, shard: '1/1', optional: false, os: ubuntu-24.04 }
-          - { mode: pixel, shard: '1/1', optional: false, os: macos-15 }
-          - { mode: prodapi, shard: '1/1', optional: true, os: ubuntu-24.04 }
+        # The long pixel file runs only on the daily schedule and manual dispatch.
+        include: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && format('[{0},{1}]', '{"mode":"default","shard":"1/3","optional":false,"os":"ubuntu-24.04"},{"mode":"default","shard":"2/3","optional":false,"os":"ubuntu-24.04"},{"mode":"default","shard":"3/3","optional":false,"os":"ubuntu-24.04"},{"mode":"showcase","shard":"1/1","optional":false,"os":"ubuntu-24.04"},{"mode":"unset","shard":"1/1","optional":false,"os":"ubuntu-24.04"},{"mode":"pixel","shard":"1/1","optional":false,"os":"macos-15"},{"mode":"prodapi","shard":"1/1","optional":true,"os":"ubuntu-24.04"}', '{"mode":"pixel-nightly","shard":"1/1","optional":false,"os":"macos-15","nightly":true}') || '[{"mode":"default","shard":"1/3","optional":false,"os":"ubuntu-24.04"},{"mode":"default","shard":"2/3","optional":false,"os":"ubuntu-24.04"},{"mode":"default","shard":"3/3","optional":false,"os":"ubuntu-24.04"},{"mode":"showcase","shard":"1/1","optional":false,"os":"ubuntu-24.04"},{"mode":"unset","shard":"1/1","optional":false,"os":"ubuntu-24.04"},{"mode":"pixel","shard":"1/1","optional":false,"os":"macos-15"},{"mode":"prodapi","shard":"1/1","optional":true,"os":"ubuntu-24.04"}]') }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -79,7 +75,7 @@ jobs:
         run: python -m playwright install chromium
       - name: Run e2e files (${{ matrix.mode }} ${{ matrix.shard }})
         if: steps.scope.outputs.frontend == 'true'
-        timeout-minutes: 20
+        timeout-minutes: ${{ matrix.nightly && 45 || 20 }}
         run: python frontend/e2e/run_ci.py --mode "${{ matrix.mode }}" --shard "${{ matrix.shard }}" --out "$RUNNER_TEMP/e2e-out"
       - name: Upload logs and screenshots
         if: failure() && steps.scope.outputs.frontend == 'true'
