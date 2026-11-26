@@ -43,7 +43,7 @@ DURABLE_EVENTS: frozenset[str] = frozenset()
 #
 # This number must clear the documented heartbeat cadence, or QUEUED would be
 # a fresh lie: an agent polling exactly as documented (every 14400s — see
-# skill.md and docs/HEARTBEAT.md) would find its event already expired and
+# skill.md and /heartbeat.md) would find its event already expired and
 # filtered out by list_unacked. A queued event waits up to one full interval
 # to be drained, and the agent acks on the FOLLOWING heartbeat — so the floor
 # is two intervals, plus margin for jitter and clock skew.

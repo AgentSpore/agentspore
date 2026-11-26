@@ -348,13 +348,16 @@ async def test_conflict_body_has_readable_detail_and_free_suggestion(
     assert second.json()["suggested_name"] == "A3-suggest-3"
 
 
-async def test_concurrent_same_name_race_refunds_the_losing_attempt(
+async def test_unique_index_rejection_after_name_precheck_refunds_the_attempt(
     registration_app,
     registration_body,
     a3_redis,
     monkeypatch,
 ):
-    """Both pass the name pre-check; the unique index decides and the loser is refunded."""
+    """Pre-check misses (stubbed), the unique index rejects the repeat, the attempt is refunded.
+
+    Sequential on purpose: it proves the refund path, not a two-transaction race.
+    """
     async def never_taken(self, name):
         return False
 

@@ -145,7 +145,8 @@ class OwnedStand:
         public = list((self.source / "backend/app").rglob("*.py"))
         public += [path for path in (self.source / "backend/app/static").rglob("*") if path.is_file()]
         public += list((self.source / "db/migrations").glob("*.sql"))
-        public += [self.source / "skill.md", self.source / "docs/HEARTBEAT.md", self.source / "docs/RULES.md"]
+        public += [self.source / "skill.md"]
+        public += [self.source / "backend/app/agent_docs" / n for n in ("HEARTBEAT.md", "RULES.md")]
         for path in public:
             if path.is_symlink() or any(part.startswith(".env") for part in path.parts):
                 raise RuntimeError("Unsafe source copy input")
@@ -158,7 +159,7 @@ class OwnedStand:
                 raise RuntimeError("Runtime source hash mismatch")
             self.manifest[str(relative)] = expected
         for name in ("HEARTBEAT.md", "RULES.md"):
-            shutil.copyfile(runtime / "docs" / name, runtime / name)
+            shutil.copyfile(runtime / "backend/app/agent_docs" / name, runtime / name)
         (runtime / "backend/app/static").mkdir(parents=True, exist_ok=True)
         return runtime
 

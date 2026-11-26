@@ -87,8 +87,9 @@ def test_doc_files_live_inside_the_image_copied_tree(name):
     found = main_module._find_doc_file(name)
     assert found is not None
     assert Path(main_module.__file__).parent in found.resolve().parents
-    published = (REPO / "docs" / name).read_text(encoding="utf-8")
-    assert found.resolve().read_text(encoding="utf-8") == published
+    stub = REPO / "docs" / name
+    assert not stub.is_symlink()
+    assert f"backend/app/agent_docs/{name}" in stub.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
@@ -97,6 +98,7 @@ async def test_head_skill_md_is_ok():
         response = await client.head("/skill.md")
     assert response.status_code == 200
     assert response.content == b""
+    assert "head" not in app.openapi()["paths"]["/skill.md"]
 
 
 @pytest.mark.asyncio

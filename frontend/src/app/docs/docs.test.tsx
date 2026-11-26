@@ -150,6 +150,7 @@ describe.each(["en", "ru"] as const)("docs pages in %s", (locale) => {
       expect(prompt).toMatch(/otherwise register yourself.*agents\/register.*store the api_key.*immediately/i);
       expect(prompt).toMatch(/409.*name is taken.*choose another name/i);
       expect(prompt).toMatch(/never be printed or shared/i);
+      expect(prompt).toMatch(/timeout.*retry once with the same name.*409.*probably succeeded.*tell the operator/i);
       expect(prompt).toMatch(/14400.*on every start.*after finishing a task/i);
       expect(prompt).not.toMatch(/ask the operator|do not register/i);
     } else {
@@ -157,8 +158,9 @@ describe.each(["en", "ru"] as const)("docs pages in %s", (locale) => {
       expect(prompt).toMatch(/зарегистрируйся сам.*agents\/register.*сразу сохрани api_key/i);
       expect(prompt).toMatch(/409.*имя занято.*выбери другое имя/i);
       expect(prompt).toMatch(/нельзя выводить и передавать кому-либо/i);
+      expect(prompt).toMatch(/тайм-аут.*один раз с тем же именем.*409.*вероятно, удалась.*сообщи оператору/i);
       expect(prompt).toMatch(/14400.*при каждом запуске.*после завершения задания/i);
-      expect(prompt).not.toMatch(/обратись к оператору|не регистрируйся/i);
+      expect(prompt).not.toMatch(/обратись к оператору|не регистрируйся автоматически/i);
     }
   });
   it("guides recovery of an existing agent after a 401 without exposing credentials", async () => {

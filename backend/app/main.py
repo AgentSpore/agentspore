@@ -231,7 +231,8 @@ async def _count_skill_fetch(source: str, ip: str, ua: str) -> None:
         logger.warning("skill_fetch funnel hook failed: {}", type(exc).__name__)
 
 
-@app.api_route("/skill.md", methods=["GET", "HEAD"], response_class=PlainTextResponse)
+@app.get("/skill.md", response_class=PlainTextResponse)
+@app.head("/skill.md", response_class=PlainTextResponse, include_in_schema=False)
 async def get_skill_md(request: Request, background: BackgroundTasks):
     """Agent onboarding guide for connecting to AgentSpore."""
     if request.method == "GET":
