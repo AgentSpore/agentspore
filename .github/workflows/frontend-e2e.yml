@@ -1,0 +1,88 @@
+name: Frontend e2e
+
+on:
+  pull_request:
+    branches: [main, 'release/**']
+  push:
+    branches: [main, 'release/**']
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
+
+concurrency:
+  group: frontend-e2e-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: e2e (${{ matrix.mode }} ${{ matrix.shard }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.nightly && 75 || 35 }}
+    # The prodapi mode reads the live public API; its outage must not redden other changes.
+    continue-on-error: ${{ matrix.optional }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The long pixel file runs only on the daily schedule and manual dispatch.
+        include: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && format('[{0},{1}]', '{"mode":"default","shard":"1/3","optional":false,"os":"ubuntu-24.04"},{"mode":"default","shard":"2/3","optional":false,"os":"ubuntu-24.04"},{"mode":"default","shard":"3/3","optional":false,"os":"ubuntu-24.04"},{"mode":"showcase","shard":"1/1","optional":false,"os":"ubuntu-24.04"},{"mode":"unset","shard":"1/1","optional":false,"os":"ubuntu-24.04"},{"mode":"pixel","shard":"1/1","optional":false,"os":"macos-15"},{"mode":"prodapi","shard":"1/1","optional":true,"os":"ubuntu-24.04"}', '{"mode":"pixel-nightly","shard":"1/1","optional":false,"os":"macos-15","nightly":true}') || '[{"mode":"default","shard":"1/3","optional":false,"os":"ubuntu-24.04"},{"mode":"default","shard":"2/3","optional":false,"os":"ubuntu-24.04"},{"mode":"default","shard":"3/3","optional":false,"os":"ubuntu-24.04"},{"mode":"showcase","shard":"1/1","optional":false,"os":"ubuntu-24.04"},{"mode":"unset","shard":"1/1","optional":false,"os":"ubuntu-24.04"},{"mode":"pixel","shard":"1/1","optional":false,"os":"macos-15"},{"mode":"prodapi","shard":"1/1","optional":true,"os":"ubuntu-24.04"}]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify affected components
+        id: scope
+        run: python3 .github/scripts/ci_scope.py
+      - name: Unaffected component receipt
+        if: steps.scope.outputs.frontend == 'false'
+        run: echo 'Verified comparison; this component is unaffected.'
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        if: steps.scope.outputs.frontend == 'true'
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: steps.scope.outputs.frontend == 'true'
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        if: steps.scope.outputs.frontend == 'true'
+      - name: Install dependencies
+        if: steps.scope.outputs.frontend == 'true'
+        working-directory: frontend
+        run: |
+          npm ci
+          uv pip install --system --require-hashes -r e2e/requirements-ci.txt
+      # The suite is calibrated against the Chromium that playwright 1.64 bundles
+      # (Chrome 156); older builds paint focus rings differently and fail it. The
+      # client installs its own matching browser, so the two cannot drift apart.
+      # Same apt mirror workaround as the Frontend workflow: some runners resolve
+      # apt to a regional mirror that is ~100x slower. Signatures are still checked.
+      - name: Install Chromium
+        if: steps.scope.outputs.frontend == 'true' && runner.os == 'Linux'
+        timeout-minutes: 8
+        run: |
+          for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            [[ -f $f ]] || continue
+            sudo sed -i -E 's#[a-z0-9-]+\.ec2\.archive\.ubuntu\.com#azure.archive.ubuntu.com#g' "$f"
+          done
+          python -m playwright install --with-deps chromium
+      - name: Install Chromium (macOS)
+        if: steps.scope.outputs.frontend == 'true' && runner.os == 'macOS'
+        timeout-minutes: 8
+        run: python -m playwright install chromium
+      - name: Run e2e files (${{ matrix.mode }} ${{ matrix.shard }})
+        if: steps.scope.outputs.frontend == 'true'
+        timeout-minutes: ${{ matrix.nightly && 60 || 20 }}
+        run: python frontend/e2e/run_ci.py --mode "${{ matrix.mode }}" --shard "${{ matrix.shard }}" --budget "${{ matrix.nightly && 3500 || 1100 }}" --out "$RUNNER_TEMP/e2e-out"
+      - name: Upload logs and screenshots
+        if: failure() && steps.scope.outputs.frontend == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-${{ matrix.mode }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/e2e-out
+          retention-days: 7
