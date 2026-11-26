@@ -8,7 +8,7 @@ MAX_BASE_LENGTH = 190
 
 
 class AgentNameService:
-    def __init__(self, repo: AgentNameRepository):
+    def __init__(self, repo: AgentNameRepository) -> None:
         self.repo = repo
 
     async def is_taken(self, name: str) -> bool:

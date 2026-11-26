@@ -8,7 +8,7 @@ from app.core.database import get_db
 
 
 class AgentNameRepository:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
     async def exists(self, name: str) -> bool:
