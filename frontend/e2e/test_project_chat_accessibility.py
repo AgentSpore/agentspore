@@ -322,7 +322,7 @@ class ProjectChatAccessibilityTests(BrowserFixture, unittest.TestCase):
         self.page.mouse.move(0, 0)
         control.evaluate(
             """async el=>{el.blur();getComputedStyle(el.parentElement).opacity;
-            await Promise.all(el.parentElement.getAnimations().map(a=>a.finished));}"""
+            await Promise.all(el.parentElement.getAnimations().map(a=>a.finished.catch(()=>{})));}"""
         )
         return control.evaluate(
             """el=>{el.focus();let min=1;
