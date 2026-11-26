@@ -9,6 +9,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import client_ip, get_admin_user, get_usage_service
@@ -44,7 +45,7 @@ from app.schemas.agents import (
 )
 from app.schemas.deployments import DeploymentAccepted, DeploymentRequest, DeploymentStatus
 from app.services.deployment_admission import DeploymentAdmission, get_deployment_admission
-from app.services.agent_admission import admit_agent_registration
+from app.services.agent_admission import admit_agent_registration, refund_agent_registration
 from app.services.agent_service import AgentService, get_agent_service, get_agent_by_api_key
 from app.services.agent_webhook_registration import AgentWebhookRegistration
 from app.services.openviking_service import OpenVikingService, get_openviking_service
@@ -79,7 +80,38 @@ async def get_service_events(
 # Registration
 # ==========================================
 
-@router.post("/register", response_model=AgentRegisterResponse)
+@router.get("/register", include_in_schema=False)
+async def register_agent_wrong_method() -> None:
+    """Registration is POST-only; answer 405 instead of falling through to /{agent_id}."""
+    raise HTTPException(
+        status_code=405,
+        detail="Method Not Allowed: register with POST /api/v1/agents/register",
+        headers={"Allow": "POST"},
+    )
+
+
+async def _name_conflict(svc: AgentService, name: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content={
+            "detail": f"Agent name '{name}' is already taken. Please choose a different name.",
+            "suggested_name": await svc.suggest_free_name(name),
+        },
+    )
+
+
+@router.post(
+    "/register",
+    response_model=AgentRegisterResponse,
+    summary="Register a new AI agent",
+    responses={
+        400: {"description": "Client address missing or malformed"},
+        409: {"description": "Agent name already taken; body has `detail` and `suggested_name`"},
+        422: {"description": "Validation error; `detail` is a list of {loc, msg, type}"},
+        429: {"description": "Daily registration limit for this address; see Retry-After"},
+        503: {"description": "Registration admission backend unavailable"},
+    },
+)
 async def register_agent(
     request: Request,
     body: AgentRegisterRequest,
@@ -87,13 +119,15 @@ async def register_agent(
     redis: Redis = Depends(get_redis),
 ):
     """
-    Зарегистрировать нового ИИ-агента.
+    Register a new AI agent and issue its API key.
 
-    Любой человек может подключить своего агента.
-    API-ключ выдаётся ОДИН раз — сохраните!
-    Агент активен сразу. GitHub OAuth опционально (для атрибуции коммитов).
+    The API key is returned once; store it immediately. The agent is active at once and
+    needs no human owner. GitHub OAuth is optional and only used for commit attribution.
+    A taken name returns 409 and does not use up the daily attempt limit.
     """
-    await admit_agent_registration(client_ip(request), redis)
+    if await svc.agent_name_exists(body.name):
+        return await _name_conflict(svc, body.name)
+    attempt = await admit_agent_registration(client_ip(request), redis)
     try:
         result = await svc.register_agent(
             name=body.name,
@@ -110,10 +144,8 @@ async def register_agent(
             bio=body.bio,
         )
     except IntegrityError:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Agent name '{body.name}' is already taken. Please choose a different name.",
-        )
+        await refund_agent_registration(attempt, redis)
+        return await _name_conflict(svc, body.name)
     await FunnelService(redis).record("agent_register")
 
     return AgentRegisterResponse(

@@ -120,8 +120,8 @@ async def test_skill_onboarding_uses_app_proxy_without_personal_oauth() -> None:
     assert "configured GitHub App installation" in onboarding
     assert "repository permissions" in onboarding
     assert "without personal GitHub OAuth" in onboarding
-    assert "Option A -- Push via GitHub proxy (recommended, no OAuth needed)" in onboarding
-    assert "Option B -- Direct push (optional)" in onboarding
+    assert "Push via the GitHub proxy (the one supported push path, no OAuth needed)" in onboarding
+    assert "direct git over HTTPS (not required for pushing)" in onboarding
     assert onboarding.index('"method": "PUT"') < onboarding.index("/git-token")
     assert "requires GitHub OAuth" not in onboarding
     assert "GitHub OAuth is required" not in onboarding

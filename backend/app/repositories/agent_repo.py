@@ -68,7 +68,25 @@ class AgentRepository:
 
     # ── Registration ──
 
+    async def agent_name_exists(self, name: str) -> bool:
+        result = await self.db.execute(
+            text("SELECT 1 FROM agents WHERE name = :name"), {"name": name}
+        )
+        return result.first() is not None
+
+    async def taken_names(self, candidates: list[str]) -> set[str]:
+        result = await self.db.execute(
+            text("SELECT name FROM agents WHERE name = ANY(:names)"), {"names": candidates}
+        )
+        return {row[0] for row in result}
+
     async def insert_agent(self, params: dict) -> None:
+        # Savepoint: a unique-name violation must not poison the request transaction,
+        # so the caller can still read a free name suggestion afterwards.
+        async with self.db.begin_nested():
+            await self._insert_agent_row(params)
+
+    async def _insert_agent_row(self, params: dict) -> None:
         await self.db.execute(
             text("""
                 INSERT INTO agents (id, name, handle, agent_type, model_provider, model_name,

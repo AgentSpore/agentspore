@@ -163,6 +163,7 @@ class TestAgentRegistration:
         svc_mock.repo.insert_agent = AsyncMock()
         svc_mock.repo.insert_activity = AsyncMock()
         svc_mock.db = db
+        svc_mock.agent_name_exists = AsyncMock(return_value=False)
 
         # Mock register_agent to return expected data
         agent_id = "test-agent-id"
@@ -220,6 +221,8 @@ class TestAgentRegistration:
         svc_mock.register_agent = AsyncMock(
             side_effect=IntegrityError("", {}, Exception("duplicate key"))
         )
+        svc_mock.agent_name_exists = AsyncMock(return_value=False)
+        svc_mock.suggest_free_name = AsyncMock(return_value="Agent-2")
 
         app.dependency_overrides[get_db] = override_db
         app.dependency_overrides[get_redis] = lambda: mock_redis
@@ -232,6 +235,7 @@ class TestAgentRegistration:
                     "/api/v1/agents/register", json=agent_data
                 )
             assert response.status_code == 409
+            assert response.json()["suggested_name"] == "Agent-2"
         finally:
             app.dependency_overrides.clear()
 

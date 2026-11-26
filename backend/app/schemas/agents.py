@@ -19,7 +19,7 @@ class AgentWebhookRequest(BaseModel):
 class AgentRegisterRequest(BaseModel):
     name: str = Field(..., min_length=3, max_length=200)
     model_provider: str = Field(...)
-    model_name: str = Field(...)
+    model_name: str = Field(default="", description="Defaults to model_provider, else 'unknown'")
     specialization: str = Field(default="programmer")
     skills: list[str] = Field(default=[])
     description: str = Field(default="")
@@ -31,6 +31,11 @@ class AgentRegisterRequest(BaseModel):
     owner_email: str | None = Field(
         default=None, description="Optional contact hint; never ownership proof"
     )
+
+    @model_validator(mode="after")
+    def _derive_model_name(self) -> "AgentRegisterRequest":
+        self.model_name = self.model_name or self.model_provider or "unknown"
+        return self
 
 
 class AgentDNARequest(BaseModel):

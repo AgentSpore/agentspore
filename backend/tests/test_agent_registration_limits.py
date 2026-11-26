@@ -20,6 +20,7 @@ from app.api.v1.agents import router
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.redis_client import get_redis
+from app.repositories.agent_repo import AgentRepository
 from app.services import agent_admission
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -272,29 +273,103 @@ async def test_missing_or_malformed_address_fails_closed(
     assert response.status_code == 400
 
 
-async def test_duplicate_attempts_consume_quota_but_validation_does_not(
+async def test_taken_name_and_validation_errors_do_not_consume_quota(
     registration_app,
     registration_body,
 ):
-    """Only validated requests enter admission; later DB rollback does not refund."""
+    """Only a created agent or an unexpected failure spends an attempt; a taken name never does."""
     async with AsyncClient(
         transport=ASGITransport(app=registration_app, client=("203.0.113.10", 1)),
         base_url="http://test",
     ) as client:
         assert (await client.post("/api/v1/agents/register", json={})).status_code == 422
+        taken = {**registration_body, "name": "A3-duplicate"}
         statuses = [
+            (await client.post("/api/v1/agents/register", json=taken)).status_code
+            for _ in range(8)
+        ]
+        fresh = [
             (
                 await client.post(
-                    "/api/v1/agents/register",
-                    json={
-                        **registration_body,
-                        "name": "A3-duplicate",
-                    },
+                    "/api/v1/agents/register", json={**registration_body, "name": f"A3-fresh-{i}"}
                 )
             ).status_code
-            for _ in range(6)
+            for i in range(5)
         ]
-    assert statuses == [200] + [409] * 4 + [429]
+        sixth = await client.post(
+            "/api/v1/agents/register", json={**registration_body, "name": "A3-fresh-6"}
+        )
+    assert statuses == [200] + [409] * 7
+    assert fresh == [200] * 4 + [429]
+    assert sixth.status_code == 429
+
+
+async def test_taken_name_answers_409_even_when_the_daily_limit_is_spent(
+    registration_app,
+    registration_body,
+):
+    """The name check runs before admission: an exhausted address still learns the name is taken."""
+    async with AsyncClient(
+        transport=ASGITransport(app=registration_app, client=("203.0.113.13", 1)),
+        base_url="http://test",
+    ) as client:
+        for i in range(5):
+            body = {**registration_body, "name": f"A3-spent-{i}"}
+            assert (await client.post("/api/v1/agents/register", json=body)).status_code == 200
+        taken = await client.post(
+            "/api/v1/agents/register", json={**registration_body, "name": "A3-spent-0"}
+        )
+        fresh = await client.post(
+            "/api/v1/agents/register", json={**registration_body, "name": "A3-spent-new"}
+        )
+    assert taken.status_code == 409
+    assert fresh.status_code == 429
+
+
+async def test_conflict_body_has_readable_detail_and_free_suggestion(
+    registration_app,
+    registration_body,
+):
+    body = {**registration_body, "name": "A3-suggest"}
+    async with AsyncClient(
+        transport=ASGITransport(app=registration_app, client=("203.0.113.11", 1)),
+        base_url="http://test",
+    ) as client:
+        assert (await client.post("/api/v1/agents/register", json=body)).status_code == 200
+        first = await client.post("/api/v1/agents/register", json=body)
+        suggested = first.json()["suggested_name"]
+        assert (
+            await client.post("/api/v1/agents/register", json={**body, "name": suggested})
+        ).status_code == 200
+        second = await client.post("/api/v1/agents/register", json=body)
+    assert first.status_code == 409
+    assert "already taken" in first.json()["detail"]
+    assert suggested == "A3-suggest-2"
+    assert second.json()["suggested_name"] == "A3-suggest-3"
+
+
+async def test_concurrent_same_name_race_refunds_the_losing_attempt(
+    registration_app,
+    registration_body,
+    a3_redis,
+    monkeypatch,
+):
+    """Both pass the name pre-check; the unique index decides and the loser is refunded."""
+    async def never_taken(self, name):
+        return False
+
+    monkeypatch.setattr(AgentRepository, "agent_name_exists", never_taken)
+    body = {**registration_body, "name": "A3-race"}
+    async with AsyncClient(
+        transport=ASGITransport(app=registration_app, client=("203.0.113.12", 1)),
+        base_url="http://test",
+    ) as client:
+        statuses = [
+            (await client.post("/api/v1/agents/register", json=body)).status_code for _ in range(3)
+        ]
+    counters = [int(await a3_redis.get(key)) for key in await a3_redis.keys("agent-registration:*")]
+    assert statuses == [200, 409, 409]
+    assert counters == [1]
 
 
 async def test_day_rollover_expires_private_counter(

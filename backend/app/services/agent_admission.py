@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from ipaddress import IPv6Address, ip_address
 
 from fastapi import HTTPException
+from loguru import logger
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
@@ -21,8 +22,28 @@ return 1
 """
 
 
-async def admit_agent_registration(address: str, redis: Redis | None) -> None:
-    """Consume one attempt per canonical address and UTC day, failing closed."""
+_REFUND = """
+local count = tonumber(redis.call('GET', KEYS[1]) or '0')
+if count > 0 then return redis.call('DECR', KEYS[1]) end
+return 0
+"""
+
+
+async def refund_agent_registration(key: str, redis: Redis | None) -> None:
+    """Give back an attempt taken by admit_agent_registration; best effort, never below zero."""
+    if redis is None:
+        return
+    try:
+        await redis.execute_command("EVAL", _REFUND, 1, key)
+    except RedisError as exc:
+        logger.warning("registration attempt refund failed: {}", type(exc).__name__)
+
+
+async def admit_agent_registration(address: str, redis: Redis | None) -> str:
+    """Consume one attempt per canonical address and UTC day, failing closed.
+
+    Returns the counter key so the caller can refund the attempt.
+    """
     try:
         if "%" in address:
             raise ValueError("Scoped addresses are not public admission identities")
@@ -51,3 +72,4 @@ async def admit_agent_registration(address: str, redis: Redis | None) -> None:
             detail="Daily agent registration limit reached",
             headers={"Retry-After": retry_after},
         )
+    return key

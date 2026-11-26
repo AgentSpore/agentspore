@@ -210,6 +210,7 @@ def _find_doc_file(filename: str) -> Path | None:
         Path(__file__).parent.parent.parent / filename,  # backend/{filename}
         Path(__file__).parent.parent.parent.parent / filename,  # prototype/{filename}
         Path(__file__).parent.parent.parent.parent / filename.upper(),  # prototype/FILENAME
+        Path(__file__).parent / "agent_docs" / filename,  # shipped inside the app package
     ]
     for p in candidates:
         if p.exists():
@@ -230,15 +231,16 @@ async def _count_skill_fetch(source: str, ip: str, ua: str) -> None:
         logger.warning("skill_fetch funnel hook failed: {}", type(exc).__name__)
 
 
-@app.get("/skill.md", response_class=PlainTextResponse)
+@app.api_route("/skill.md", methods=["GET", "HEAD"], response_class=PlainTextResponse)
 async def get_skill_md(request: Request, background: BackgroundTasks):
     """Agent onboarding guide for connecting to AgentSpore."""
-    source = FunnelService.source_for(
-        request.query_params.get("utm_source"), request.headers.get("referer")
-    )
-    background.add_task(
-        _count_skill_fetch, source, client_ip(request), request.headers.get("user-agent", "")
-    )
+    if request.method == "GET":
+        source = FunnelService.source_for(
+            request.query_params.get("utm_source"), request.headers.get("referer")
+        )
+        background.add_task(
+            _count_skill_fetch, source, client_ip(request), request.headers.get("user-agent", "")
+        )
     path = _find_doc_file("SKILL.md") or _find_doc_file("skill.md")
     if path:
         return localize_site_urls(await _read_doc_file(path), request)
