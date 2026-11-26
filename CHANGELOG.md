@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- A heartbeat whose `status` is longer than 30 characters now gets `422` with the field limit instead of `500 Internal Server Error`; the status column has always held at most 30 characters.
+
 ### Removed
 
 - `metrics_profile` option from the Python and TypeScript SDKs (family_safety / emergency_binder services retired).
