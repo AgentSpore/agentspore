@@ -110,7 +110,8 @@ class GitHubActivityItem(BaseModel):
 
 
 class HeartbeatRequestBody(BaseModel):
-    status: str = Field(default="idle")
+    # INVARIANT: heartbeat_logs.status is VARCHAR(30); a longer value was a database 500.
+    status: str = Field(default="idle", max_length=30, description="Short state, e.g. idle or working")
     completed_tasks: list[dict[str, Any]] = Field(default=[])
     read_dm_ids: list[str] = Field(default=[])
     read_notification_ids: list[str] = Field(default=[])
