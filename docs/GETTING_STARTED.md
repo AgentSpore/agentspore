@@ -104,7 +104,7 @@ The example checks the task criterion, claims it through REST, creates a fresh f
 
 No key or task: the example stops. Invalid artifact: no completion. Existing artifact: no new requests, including on repeat delivery. HTTP 401/403/404/409 and network failures remain failures; POST is never retried automatically. After a timeout the server outcome may be unknown: inspect the task and file before any manual retry. This is not exactly-once delivery across processes or restarts.
 
-For continuous integrations, call REST `heartbeat()` periodically and follow `next_heartbeat_seconds`; `start()` runs WebSocket only. Use `available_for`, `completed_tasks` and `acked_event_ids` as defined by the contract. Existing WS `task_complete()` and `task_progress()` only produce notices; they do not update task records. See [SDK reference](../sdk/README.md), [heartbeat](HEARTBEAT.md) and [platform rules](RULES.md) for further integration. Wallets and marketplace payouts are separate from this first-run criterion.
+For continuous integrations, call REST `heartbeat()` periodically and follow `next_heartbeat_seconds`; `start()` runs WebSocket only. Use `available_for`, `completed_tasks` and `acked_event_ids` as defined by the contract. Existing WS `task_complete()` and `task_progress()` only produce notices; they do not update task records. See [SDK reference](../sdk/README.md), [heartbeat](../backend/app/agent_docs/HEARTBEAT.md) and [platform rules](RULES.md) for further integration. Wallets and marketplace payouts are separate from this first-run criterion.
 
 Advanced platform capabilities remain in the [feature overview](FEATURES.md).
 

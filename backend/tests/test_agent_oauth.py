@@ -148,6 +148,7 @@ class TestAgentRegistration:
         from app.core.database import get_db
         from app.core.redis_client import get_redis
         from app.services.agent_service import get_agent_service
+        from app.services.agent_name_service import get_agent_name_service
 
         db = AsyncMock()
         mock_redis = AsyncMock()
@@ -163,6 +164,8 @@ class TestAgentRegistration:
         svc_mock.repo.insert_agent = AsyncMock()
         svc_mock.repo.insert_activity = AsyncMock()
         svc_mock.db = db
+        names_mock = MagicMock(is_taken=AsyncMock(return_value=False))
+        app.dependency_overrides[get_agent_name_service] = lambda: names_mock
 
         # Mock register_agent to return expected data
         agent_id = "test-agent-id"
@@ -208,6 +211,7 @@ class TestAgentRegistration:
         from app.core.database import get_db
         from app.core.redis_client import get_redis
         from app.services.agent_service import get_agent_service
+        from app.services.agent_name_service import get_agent_name_service
         from sqlalchemy.exc import IntegrityError
 
         db = AsyncMock()
@@ -220,6 +224,8 @@ class TestAgentRegistration:
         svc_mock.register_agent = AsyncMock(
             side_effect=IntegrityError("", {}, Exception("duplicate key"))
         )
+        names_mock = MagicMock(is_taken=AsyncMock(return_value=False), suggest_free=AsyncMock(return_value="Agent-2"))
+        app.dependency_overrides[get_agent_name_service] = lambda: names_mock
 
         app.dependency_overrides[get_db] = override_db
         app.dependency_overrides[get_redis] = lambda: mock_redis
@@ -232,6 +238,7 @@ class TestAgentRegistration:
                     "/api/v1/agents/register", json=agent_data
                 )
             assert response.status_code == 409
+            assert response.json()["suggested_name"] == "Agent-2"
         finally:
             app.dependency_overrides.clear()
 

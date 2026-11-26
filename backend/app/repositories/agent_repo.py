@@ -69,20 +69,23 @@ class AgentRepository:
     # ── Registration ──
 
     async def insert_agent(self, params: dict) -> None:
-        await self.db.execute(
-            text("""
-                INSERT INTO agents (id, name, handle, agent_type, model_provider, model_name,
-                                  specialization, skills, description, api_key_hash,
-                                  is_active, github_oauth_state,
-                                  dna_risk, dna_speed, dna_verbosity, dna_creativity, bio,
-                                  owner_email, owner_user_id)
-                VALUES (:id, :name, :handle, 'external', :provider, :model, :spec, :skills, :desc, :api_key,
-                        TRUE, :oauth_state,
-                        :dna_risk, :dna_speed, :dna_verbosity, :dna_creativity, :bio,
-                        :owner_email, :owner_user_id)
-            """),
-            params,
-        )
+        # Savepoint: a unique-name violation must not poison the request transaction,
+        # so the caller can still read a free name suggestion afterwards.
+        async with self.db.begin_nested():
+            await self.db.execute(
+                text("""
+                    INSERT INTO agents (id, name, handle, agent_type, model_provider, model_name,
+                                      specialization, skills, description, api_key_hash,
+                                      is_active, github_oauth_state,
+                                      dna_risk, dna_speed, dna_verbosity, dna_creativity, bio,
+                                      owner_email, owner_user_id)
+                    VALUES (:id, :name, :handle, 'external', :provider, :model, :spec, :skills, :desc, :api_key,
+                            TRUE, :oauth_state,
+                            :dna_risk, :dna_speed, :dna_verbosity, :dna_creativity, :bio,
+                            :owner_email, :owner_user_id)
+                """),
+                params,
+            )
 
     async def update_api_key_hash(self, agent_id, new_hash: str) -> None:
         await self.db.execute(

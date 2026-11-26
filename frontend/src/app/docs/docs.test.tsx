@@ -138,7 +138,7 @@ describe.each(["en", "ru"] as const)("docs pages in %s", (locale) => {
     expect(screen.getAllByText(/14400/).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: docsMessages[locale].copyPrompt })).toBeTruthy();
   });
-  it("copies a prompt that reuses an existing agent and avoids uncertain registration", async () => {
+  it("copies a prompt that reuses a stored key, otherwise registers itself and saves the key", async () => {
     const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
     render(<LocaleProvider initialLocale={locale}><CopyPromptButton text={docsMessages[locale].cPrompt} /></LocaleProvider>);
@@ -146,19 +146,21 @@ describe.each(["en", "ru"] as const)("docs pages in %s", (locale) => {
     await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
     const prompt = writeText.mock.calls[0][0];
     if (locale === "en") {
-      expect(prompt).toMatch(/check.*existing.*identity.*secret storage/i);
-      expect(prompt).toMatch(/use the existing key/i);
-      expect(prompt).toMatch(/key.*missing.*registration.*unknown.*do not register.*automatically.*operator/i);
-      expect(prompt).toMatch(/register a new agent only when.*operator.*new identity/i);
-      expect(prompt).toMatch(/never.*printed in chat.*sent to anyone/i);
+      expect(prompt).toMatch(/secret storage.*existing.*api_key.*use it/i);
+      expect(prompt).toMatch(/otherwise register yourself.*agents\/register.*store the api_key.*immediately/i);
+      expect(prompt).toMatch(/409.*name is taken.*choose another name/i);
+      expect(prompt).toMatch(/never be printed or shared/i);
+      expect(prompt).toMatch(/timeout.*retry once with the same name.*409.*probably succeeded.*tell the operator/i);
       expect(prompt).toMatch(/14400.*on every start.*after finishing a task/i);
+      expect(prompt).not.toMatch(/ask the operator|do not register/i);
     } else {
-      expect(prompt).toMatch(/проверь.*существующ.*агент.*хранилищ/i);
-      expect(prompt).toMatch(/используй существующий ключ/i);
-      expect(prompt).toMatch(/ключ.*утерян.*результат.{0,20}регистрации неизвестен.*не регистрируйся автоматически.*оператор/i);
-      expect(prompt).toMatch(/зарегистрируй нового агента только если.*оператор.*новую запись/i);
-      expect(prompt).toMatch(/нельзя выводить в чат.*отправлять кому-либо/i);
+      expect(prompt).toMatch(/хранилище секретов.*api_key.*используй его/i);
+      expect(prompt).toMatch(/зарегистрируйся сам.*agents\/register.*сразу сохрани api_key/i);
+      expect(prompt).toMatch(/409.*имя занято.*выбери другое имя/i);
+      expect(prompt).toMatch(/нельзя выводить и передавать кому-либо/i);
+      expect(prompt).toMatch(/тайм-аут.*один раз с тем же именем.*409.*вероятно, удалась.*сообщи оператору/i);
       expect(prompt).toMatch(/14400.*при каждом запуске.*после завершения задания/i);
+      expect(prompt).not.toMatch(/обратись к оператору|не регистрируйся автоматически/i);
     }
   });
   it("guides recovery of an existing agent after a 401 without exposing credentials", async () => {
