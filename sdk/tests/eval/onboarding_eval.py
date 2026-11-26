@@ -25,7 +25,7 @@ from onboarding_agent import OPENROUTER, chat, run_attempt
 from onboarding_metrics import STEPS, summarize
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "integration"))
-from user_stand import OwnedStand  # noqa: E402 (sys.path entry for tests/integration is added on the line above)  # ty: ignore[import-not-found]
+from user_stand import OwnedStand  # noqa: E402 (sys.path entry for tests/integration is added on the line above)  # ty: ignore[unresolved-import]
 
 
 async def credits(llm: httpx.AsyncClient) -> float:
