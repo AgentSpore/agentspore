@@ -22,7 +22,7 @@ from playwright.sync_api import sync_playwright
 HERE = Path(__file__).resolve().parent
 FRONTEND = HERE.parent
 FILE_TIMEOUT = 600
-FILE_TIMEOUTS = {"pixel-nightly": 2700}
+FILE_TIMEOUTS = {"pixel-nightly": 2100}
 BUILD_TIMEOUT = 900
 FAIL_TAIL_LINES = 60
 PORTS = {"default": 3970, "unset": 3971, "prodapi": 3972, "showcase": 3973, "pixel": 3974, "pixel-nightly": 3975}
@@ -172,6 +172,24 @@ def run_file(name: str, base: str, executable: str, out: Path, timeout: int) -> 
     return ok
 
 
+def select_files(mode: str, shard: str, only: str | None) -> list[str]:
+    """The mode's files for shard I/N (optionally narrowed by --only); exits when the selection is invalid or empty."""
+    names = MODES[mode]
+    if only:
+        wanted = only.split(",")
+        unknown = [n for n in wanted if n not in names]
+        if unknown:
+            sys.exit(f"--only names not in mode {mode}: {' '.join(unknown)}")
+        names = wanted
+    index, total = (int(part) for part in shard.split("/"))
+    if not 1 <= index <= total:
+        sys.exit(f"--shard {shard}: need 1 <= I <= N")
+    names = sorted(names)[index - 1 :: total]
+    if not names:
+        sys.exit(f"no files selected for mode {mode} shard {shard}")
+    return names
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", required=True, choices=sorted(MODES))
@@ -179,13 +197,11 @@ def main() -> None:
     parser.add_argument("--shard", default="1/1", help="I/N: run every N-th file of the mode, starting at the I-th")
     parser.add_argument("--out", type=Path, required=True, help="log and screenshot directory (outside the build tree)")
     parser.add_argument("--only", help="comma-separated subset of the mode's files")
+    parser.add_argument("--budget", type=int, help="seconds for the whole run, kept below the CI step timeout; files that do not fit are failed, not cut off by the runner")
     args = parser.parse_args()
     check_classification()
-    names = MODES[args.mode]
-    if args.only:
-        names = [n for n in names if n in args.only.split(",")]
-    index, total = (int(part) for part in args.shard.split("/"))
-    names = sorted(names)[index - 1 :: total]
+    names = select_files(args.mode, args.shard, args.only)
+    started = time.monotonic()
     port = PORTS[args.mode]
     base = f"http://localhost:{port}"
     out = args.out.resolve()
@@ -201,7 +217,16 @@ def main() -> None:
     try:
         wait_ready(base, server)
         executable = args.executable or chromium_path()
-        failed = [n for n in names if not run_file(n, base, executable, out, FILE_TIMEOUTS.get(args.mode, FILE_TIMEOUT))]
+        failed = []
+        for name in names:
+            limit = FILE_TIMEOUTS.get(args.mode, FILE_TIMEOUT)
+            if args.budget:
+                limit = min(limit, int(args.budget - (time.monotonic() - started)))
+            if limit < 30:
+                print(f"FAIL {name} (no time left in --budget {args.budget}s)", flush=True)
+                failed.append(name)
+            elif not run_file(name, base, executable, out, limit):
+                failed.append(name)
     finally:
         stop(server)
         server_log.close()
