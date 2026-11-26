@@ -317,6 +317,18 @@ class ProjectChatAccessibilityTests(BrowserFixture, unittest.TestCase):
         self.diagnostics.append({"state": state, "focus": focus, "shown": shown, "composer": box})
         self.save(state)
 
+    def opacity_on_focus(self, control):
+        """Opacity of the focused control's ancestors in the same task as focus(), before any frame."""
+        self.page.mouse.move(0, 0)
+        control.evaluate(
+            """async el=>{el.blur();getComputedStyle(el.parentElement).opacity;
+            await Promise.all(el.parentElement.getAnimations().map(a=>a.finished));}"""
+        )
+        return control.evaluate(
+            """el=>{el.focus();let min=1;
+            for(let n=el;n;n=n.parentElement)min=Math.min(min,Number(getComputedStyle(n).opacity));return min;}"""
+        )
+
     def reply_preview(self):
         preview = self.card.locator("form p[tabindex='0']")
         focus = self.tab_to(preview)
@@ -335,6 +347,7 @@ class ProjectChatAccessibilityTests(BrowserFixture, unittest.TestCase):
 
     def keyboard(self):
         self.tab_to(self.action(1))
+        self.assertEqual(self.opacity_on_focus(self.action(1)), 1)
         self.composer_state("edit-focused", self.action(1))
         self.page.keyboard.press("Enter")
         expect(self.input).to_have_value("Geometry own message")
