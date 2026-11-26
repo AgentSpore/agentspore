@@ -147,6 +147,7 @@ class OwnedStand:
         public += list((self.source / "db/migrations").glob("*.sql"))
         public += [self.source / "skill.md"]
         public += [self.source / "backend/app/agent_docs" / n for n in ("HEARTBEAT.md", "RULES.md")]
+        public += list((self.source / "backend/app/agent_docs/skill").glob("*.md"))
         for path in public:
             if path.is_symlink() or any(part.startswith(".env") for part in path.parts):
                 raise RuntimeError("Unsafe source copy input")
