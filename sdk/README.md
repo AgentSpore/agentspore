@@ -2,14 +2,16 @@
 
 <!-- mcp-name: io.github.Exzentttt/agentspore -->
 
-2 November 2026 · Source candidate `0.2.0rc3` is unpublished; GitHub prerelease `0.2.0rc2` remains available. Publication MCP tools are merged source and require separate installation and operator wiring.
+Stable release `0.2.0`, 27 November 2026. Publication MCP tools are merged source and require separate installation and operator wiring.
 Owner: Roman Konnov. Review by: 16 November 2026.
 
 Use `agentspore-sdk` and import `AgentClient`. Follow the [first-result tutorial](../docs/GETTING_STARTED.md) ([Russian](../docs/GETTING_STARTED_RU.md)) for private registration, a constrained demo and independent acceptance. The older `sdk/python` package is a separate legacy contract.
 
 ## Installation
 
-Python 3.11 or newer is required. Install `0.2.0rc2` from the [published GitHub prerelease](https://github.com/AgentSpore/agentspore/releases/tag/sdk-v0.2.0rc2). It bounds the MCP extra to the compatible 1.x API; `0.2.0rc1` could resolve MCP 2.3.0 and fail during tool registration with `AttributeError: 'Server' object has no attribute 'list_tools'`. Existing rc1 archives are not replaced.
+Python 3.11 or newer is required. Install the stable release from PyPI: `uv pip install agentspore-sdk` for the core, or `uv pip install "agentspore-sdk[mcp]"` for the MCP server and the `agentspore-mcp` entry point. The rc2 and rc3 sections below are kept as dated historical evidence.
+
+Historical: install `0.2.0rc2` from the [published GitHub prerelease](https://github.com/AgentSpore/agentspore/releases/tag/sdk-v0.2.0rc2). It bounds the MCP extra to the compatible 1.x API; `0.2.0rc1` could resolve MCP 2.3.0 and fail during tool registration with `AttributeError: 'Server' object has no attribute 'list_tools'`. Existing rc1 archives are not replaced.
 
 Use the published [installation guide](https://github.com/AgentSpore/agentspore/releases/download/sdk-v0.2.0rc2/install.md). Save the [wheel](https://github.com/AgentSpore/agentspore/releases/download/sdk-v0.2.0rc2/agentspore_sdk-0.2.0rc2-py3-none-any.whl) and [SHA256SUMS](https://github.com/AgentSpore/agentspore/releases/download/sdk-v0.2.0rc2/SHA256SUMS) under `dist` in an absolute directory outside the checkout and verify the archive checksum. Set `SDK_PACKAGE` to that directory, `SDK_CACHE` to a separate absolute dependency cache, and `SDK_PYTHON` to a prepared native interpreter. From `$SDK_PACKAGE`, create a new environment without private index settings or credentials:
 
@@ -22,7 +24,9 @@ These published command templates were exercised on 14 October 2026 with Python 
 
 The wheel omits examples. Keep a repository checkout for the tutorial's `sdk/examples/first_result.py`; the [rc2 sdist](https://github.com/AgentSpore/agentspore/releases/download/sdk-v0.2.0rc2/agentspore_sdk-0.2.0rc2.tar.gz) also contains the examples, but installation from sdist was not checked in that matrix.
 
-### Local source candidate `0.2.0rc3` (unpublished)
+### Historical: source candidate `0.2.0rc3`
+
+Superseded by the stable `0.2.0`. The text below records the candidate as checked on the stated dates, including a PyPI state (`0.1.4`) that no longer applies.
 
 The current source prepares the next candidate, `0.2.0rc3`, with 29 MCP tools: the retained registry, five agent workflow tools and five [publication tools](#publication-mcp-tools). The hosted-only `agentspore_get_self` and `agentspore_update_self` tools remain removed. The public [PyPI release](https://pypi.org/project/agentspore-sdk/) is `0.1.4` as checked on 2 November 2026; a generic package install does not provide this source candidate. The published rc2 archives and their dated verification history above remain unchanged.
 

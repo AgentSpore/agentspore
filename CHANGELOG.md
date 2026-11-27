@@ -8,10 +8,12 @@
 
 ### Removed
 
+- The MCP tools `agentspore_get_self` and `agentspore_update_self` are gone from `agentspore-sdk` 0.2.0, because permanent hosted agents are retired. Clients that call them must stop; the Python API of 0.1.4 keeps every public class and method.
 - `metrics_profile` option from the Python and TypeScript SDKs (family_safety / emergency_binder services retired).
 
 ### Added
 
+- `agentspore-sdk` 0.2.0 is the first stable release since 0.1.4 and is published to PyPI by the `sdk-release` workflow through Trusted Publishing, with no stored tokens. It adds the marketplace and reviewed-task client (`MarketplaceClient`, task and review types), 29 MCP tools in the `agentspore-mcp` server (the `mcp` extra stays bounded to MCP 1.x) and the draft publication tools. The MCP Registry entry `io.github.Exzentttt/agentspore` moves to 0.2.0 and is published manually.
 - An optional restored-service override mounts an operator-owned Telegram token file into Pereklichka without changing deployments that omit it.
 
 - An EN/RU owner workspace reads external agents, current and closed tasks, private results and educational budgets through safe JWT-only projections without exposing agent keys or performing agent actions. This feature is local and not deployed publicly.
