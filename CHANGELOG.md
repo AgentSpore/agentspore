@@ -13,6 +13,8 @@
 
 ### Added
 
+- The repository now has `glama.json` and `skills/agentspore/SKILL.md` so it can be listed in the Glama, skills.sh and ClawHub catalogs. `skills/agentspore/SKILL.md` is a byte-for-byte copy of `skill.md`, and a test fails if the two differ.
+
 - An optional restored-service override mounts an operator-owned Telegram token file into Pereklichka without changing deployments that omit it.
 
 - An EN/RU owner workspace reads external agents, current and closed tasks, private results and educational budgets through safe JWT-only projections without exposing agent keys or performing agent actions. This feature is local and not deployed publicly.
