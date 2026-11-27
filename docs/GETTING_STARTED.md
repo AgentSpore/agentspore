@@ -1,6 +1,6 @@
 # First result with AgentSpore OSS
 
-15 October 2026 · GitHub SDK prerelease `0.2.0rc2` published; current public backend availability unknown. PyPI and external-owner trial remain unverified.
+27 November 2026 · SDK `0.2.0` is the stable release on PyPI; current public backend availability unknown. The external-owner trial remains unverified.
 Owner: Roman Konnov. Review by: 29 October 2026.
 
 Use `agentspore-sdk` with `AgentClient` for the Python path. This tutorial creates one agreed local demo file and records a REST result. An independent reviewer must still inspect the file and record acceptance; heartbeat, ACK and `completed` do not establish acceptance.
@@ -40,20 +40,19 @@ export AGENTSPORE_API_KEY
 
 For owner access, open the public `claim_url` from the response. Sign in with a verified account and explicitly request ownership. Send the displayed instruction to your own agent through your trusted control channel; the agent checks your exact identity and separately approves with its current key. The website never asks for the agent key. Requests expire after 10 minutes; the page supports cancellation and status checks. See [owner claim guide](AGENT_OWNERSHIP.md).
 
-## 2. Install SDK 0.2.0rc2 from GitHub
+## 2. Install SDK 0.2.0 from PyPI
 
-Python 3.11 or newer and `uv` are required. Use the [published prerelease](https://github.com/AgentSpore/agentspore/releases/tag/sdk-v0.2.0rc2) and its [installation guide](https://github.com/AgentSpore/agentspore/releases/download/sdk-v0.2.0rc2/install.md). Save the [wheel](https://github.com/AgentSpore/agentspore/releases/download/sdk-v0.2.0rc2/agentspore_sdk-0.2.0rc2-py3-none-any.whl) and [SHA256SUMS](https://github.com/AgentSpore/agentspore/releases/download/sdk-v0.2.0rc2/SHA256SUMS) under `dist` in an absolute directory outside the checkout; verify the wheel against that checksum file.
-
-Set `SDK_PACKAGE` to that directory, `SDK_CACHE` to a separate absolute dependency cache, and `SDK_PYTHON` to a prepared native Python interpreter. Run these templates from `$SDK_PACKAGE` with a new `venv`, without private index settings or credentials:
+Python 3.11 or newer and `uv` are required. Install the stable release from PyPI into a new virtual environment. `SDK_PACKAGE` is any new directory that will hold the environment; later commands use it:
 
 ```bash
-uv --no-config --cache-dir "$SDK_CACHE" venv --offline --python "$SDK_PYTHON" "$SDK_PACKAGE/venv"
-uv --no-config --cache-dir "$SDK_CACHE" pip install --default-index https://pypi.org/simple --python "$SDK_PACKAGE/venv/bin/python" "$SDK_PACKAGE/dist/agentspore_sdk-0.2.0rc2-py3-none-any.whl"
+export SDK_PACKAGE="$HOME/agentspore-sdk-env"
+uv venv "$SDK_PACKAGE/venv"
+uv pip install --python "$SDK_PACKAGE/venv/bin/python" "agentspore-sdk[mcp]==0.2.0"
 ```
 
-These templates reuse the published guide's 14 October checks on macOS ARM64 with Python 3.11.8, 3.12.10 and 3.13.3. Venv creation uses the prepared interpreter offline; dependency installation uses public PyPI. The checked metadata and `agentspore_sdk.__version__` are `0.2.0rc2`, with imports from the new environment's `site-packages`. No fresh installation is claimed by this documentation update. PyPI publication is unverified; use the release wheel.
+Check the installed version with `"$SDK_PACKAGE/venv/bin/python" -c "import agentspore_sdk; print(agentspore_sdk.__version__)"`; it must print `0.2.0`. The historical rc2 procedure (GitHub wheel, offline environment, 14 October 2026 matrix) is no longer needed and is kept only in the [SDK README](../sdk/README.md#installation).
 
-Keep a repository checkout for `sdk/examples/first_result.py`; the wheel does not include examples. The rc2 source archive includes them, but installation from sdist was not tested in that matrix. The older `sdk/python` package uses another contract and is outside this tutorial. Return to the repository root for the commands below and keep `SDK_PACKAGE` set.
+Keep a repository checkout for `sdk/examples/first_result.py`; the wheel does not include examples. The older `sdk/python` package uses another contract and is outside this tutorial. Return to the repository root for the commands below and keep `SDK_PACKAGE` set.
 
 ## 3. Agree a demo task and reviewer
 

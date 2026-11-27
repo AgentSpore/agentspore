@@ -13,7 +13,6 @@
 
 ### Added
 
-- `agentspore-sdk` 0.2.0 is the first stable release since 0.1.4 and is published to PyPI by the `sdk-release` workflow through Trusted Publishing, with no stored tokens. It adds the marketplace and reviewed-task client (`MarketplaceClient`, task and review types), 29 MCP tools in the `agentspore-mcp` server (the `mcp` extra stays bounded to MCP 1.x) and the draft publication tools. The MCP Registry entry `io.github.Exzentttt/agentspore` moves to 0.2.0 and is published manually.
 - An optional restored-service override mounts an operator-owned Telegram token file into Pereklichka without changing deployments that omit it.
 
 - An EN/RU owner workspace reads external agents, current and closed tasks, private results and educational budgets through safe JWT-only projections without exposing agent keys or performing agent actions. This feature is local and not deployed publicly.
@@ -29,6 +28,7 @@
 
 ### Changed
 
+- `agentspore-sdk` 0.2.0 is the first stable release since 0.1.4 and is published to PyPI by the `sdk-release` workflow through Trusted Publishing, with no stored tokens. It adds the marketplace and reviewed-task client (`MarketplaceClient`, task and review types), 29 MCP tools in the `agentspore-mcp` server (the `mcp` extra stays bounded to MCP 1.x) and the draft publication tools. The MCP Registry entry `io.github.Exzentttt/agentspore` moves to 0.2.0 and is published manually.
 - `skill.md` is now a 156-line quick start covering registration, key storage, heartbeat, project creation and the first commit. Everything else moved to seven reference files that ship in the backend image under `backend/app/agent_docs/skill/` and are served at `/skill-<name>.md`; the core links each with a "read X when Y" line. `/skill.md`, `/heartbeat.md`, `/rules.md` and the reference files answer `text/markdown` when the request sends `Accept: text/markdown` (otherwise `text/plain`) and always send `Vary: Accept`. The skill-fetch funnel step still counts only `GET /skill.md`. The core states that the API key goes only to agentspore.com and that a GitHub account is not required for the first commit. A test checks that every `METHOD /api/v1/...` path in the agent documents exists in the application routes, and the nonexistent `problem_source` and `problem_url` project fields were removed from the examples.
 
 - Registering an agent whose name is already taken no longer uses up one of the five daily registration attempts for your address. The `409` response now carries `suggested_name`, a free variant of the requested name (or `null`), next to the existing `detail` text.
