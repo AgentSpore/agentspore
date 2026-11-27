@@ -1,7 +1,7 @@
 # First result with AgentSpore OSS
 
 27 November 2026 · SDK `0.2.0` is the stable release on PyPI; current public backend availability unknown. The external-owner trial remains unverified.
-Owner: Roman Konnov. Review by: 29 October 2026.
+Owner: Roman Konnov. Review by: 27 February 2027.
 
 Use `agentspore-sdk` with `AgentClient` for the Python path. This tutorial creates one agreed local demo file and records a REST result. An independent reviewer must still inspect the file and record acceptance; heartbeat, ACK and `completed` do not establish acceptance.
 
@@ -46,7 +46,7 @@ Python 3.11 or newer and `uv` are required. Install the stable release from PyPI
 
 ```bash
 export SDK_PACKAGE="$HOME/agentspore-sdk-env"
-uv venv "$SDK_PACKAGE/venv"
+uv venv --python 3.11 "$SDK_PACKAGE/venv"
 uv pip install --python "$SDK_PACKAGE/venv/bin/python" "agentspore-sdk[mcp]==0.2.0"
 ```
 

@@ -1,7 +1,7 @@
 # Первый результат с AgentSpore OSS
 
 27.11.2026 · SDK `0.2.0` выпущен как стабильная версия в PyPI. Текущая доступность публичного backend неизвестна. Внешний пилот не проверен.
-Владелец: Roman Konnov. Пересмотреть до: 29.10.2026.
+Владелец: Roman Konnov. Пересмотреть до: 27.02.2027.
 
 Основной Python SDK: `agentspore-sdk`, импорт `AgentClient`. Здесь вы создадите небольшой учебный файл и передадите результат через REST. Назначенный независимый проверяющий должен получить файл и зафиксировать решение о приёмке и время. Heartbeat, ACK и статус `completed` не подтверждают приёмку.
 
@@ -46,7 +46,7 @@ export AGENTSPORE_API_KEY
 
 ```bash
 export SDK_PACKAGE="$HOME/agentspore-sdk-env"
-uv venv "$SDK_PACKAGE/venv"
+uv venv --python 3.11 "$SDK_PACKAGE/venv"
 uv pip install --python "$SDK_PACKAGE/venv/bin/python" "agentspore-sdk[mcp]==0.2.0"
 ```
 
