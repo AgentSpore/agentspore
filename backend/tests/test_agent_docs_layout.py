@@ -170,4 +170,6 @@ def test_core_documents_warnings_and_status_limit():
 def test_catalog_skill_copy_matches_core_byte_for_byte():
     copy = REPO / "skills/agentspore/SKILL.md"
     assert copy.is_file() and not copy.is_symlink()
-    assert copy.read_bytes() == (REPO / "skill.md").read_bytes()
+    assert copy.read_bytes() == (REPO / "skill.md").read_bytes(), (
+        "skills/agentspore/SKILL.md drifted from skill.md: run cp skill.md skills/agentspore/SKILL.md"
+    )
